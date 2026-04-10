@@ -15,7 +15,7 @@ import { Chunk } from "./Chunk.js";
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
   
-  chunk : Chunk;
+  private chunks : Chunk[] = [];
   
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -42,8 +42,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui = new GUI(this.canvas2d, this);
     this.playerPosition = this.gui.getCamera().pos();
     
-    // Generate initial landscape
-    this.chunk = new Chunk(0.0, 0.0, 64);
+    this.chunks = [new Chunk(0.0, 0.0, 64)];
     
     this.blankCubeRenderPass = new RenderPass(this.extVAO, gl, blankCubeVSText, blankCubeFSText);
     this.cubeGeometry = new Cube();
@@ -157,8 +156,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.viewport(x, y, width, height);
 
     //TODO: Render multiple chunks around the player, using Perlin noise shaders
-    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", this.chunk.cubePositions());
-    this.blankCubeRenderPass.drawInstanced(this.chunk.numCubes());    
+    // this.blankCubeRenderPass.updateAttributeBuffer("aOffset", this.chunk.cubePositions());
+    // this.blankCubeRenderPass.drawInstanced(this.chunk.numCubes());    
+    this.chunks.forEach((c: Chunk, i: number) => {
+        this.blankCubeRenderPass.updateAttributeBuffer("aOffset", c.cubePositions());
+        this.blankCubeRenderPass.drawInstanced(c.numCubes());
+    });
 
   }
 
