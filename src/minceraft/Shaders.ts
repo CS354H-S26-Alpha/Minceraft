@@ -9,10 +9,12 @@ export const blankCubeVSText = `
     attribute vec4 aVertPos;
     attribute vec4 aOffset;
     attribute vec2 aUV;
+    attribute vec3 aColor;
     
     varying vec4 normal;
     varying vec4 wsPos;
     varying vec2 uv;
+    varying vec3 color;
 
     void main () {
 
@@ -20,6 +22,7 @@ export const blankCubeVSText = `
         wsPos = aVertPos + aOffset;
         normal = normalize(aNorm);
         uv = aUV;
+        color = aColor;
     }
 `;
 
@@ -31,9 +34,10 @@ export const blankCubeFSText = `
     varying vec4 normal;
     varying vec4 wsPos;
     varying vec2 uv;
-    
+    varying vec3 color;
+
     void main() {
-        vec3 kd = vec3(1.0, 1.0, 1.0);
+        vec3 kd = color;
         vec3 ka = vec3(0.1, 0.1, 0.1);
 
         /* Compute light fall off */

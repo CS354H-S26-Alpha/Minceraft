@@ -11,6 +11,7 @@ import { Vec4, Vec3 } from "gl-matrix";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
+import { FlatTerrain, NoTerrain } from "./Terrain.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
@@ -42,7 +43,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui = new GUI(this.canvas2d, this);
     this.playerPosition = this.gui.getCamera().pos();
     
-    this.chunks = [new Chunk(0.0, 0.0, 64)];
+    this.chunks = [new Chunk(0.0, 0.0, new FlatTerrain()), new Chunk(0.0, 0.0, new FlatTerrain())];
     
     this.blankCubeRenderPass = new RenderPass(this.extVAO, gl, blankCubeVSText, blankCubeFSText);
     this.cubeGeometry = new Cube();
@@ -108,6 +109,16 @@ export class MinecraftAnimation extends CanvasAnimation {
       new Float32Array(0)
     );
 
+    this.blankCubeRenderPass.addInstancedAttribute("aColor",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0)
+    );
+
     this.blankCubeRenderPass.addUniform("uLightPos",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
         gl.uniform4fv(loc, this.lightPosition);
@@ -158,8 +169,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     //TODO: Render multiple chunks around the player, using Perlin noise shaders
     // this.blankCubeRenderPass.updateAttributeBuffer("aOffset", this.chunk.cubePositions());
     // this.blankCubeRenderPass.drawInstanced(this.chunk.numCubes());    
-    this.chunks.forEach((c: Chunk, i: number) => {
+    this.chunks.forEach((c: Chunk) => {
         this.blankCubeRenderPass.updateAttributeBuffer("aOffset", c.cubePositions());
+        this.blankCubeRenderPass.updateAttributeBuffer("aColor", c.cubeColors());
         this.blankCubeRenderPass.drawInstanced(c.numCubes());
     });
 
