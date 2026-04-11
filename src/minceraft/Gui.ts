@@ -1,6 +1,7 @@
 import { type Mat4, Vec3 } from "gl-matrix";
 import { Camera } from "../lib/webglutils/Camera.js";
 import type { MinecraftAnimation } from "./App.js";
+import { InventoryOverlay } from "./Inventory.js";
 
 /**
  * Might be useful for designing any animation GUI
@@ -8,6 +9,7 @@ import type { MinecraftAnimation } from "./App.js";
 interface IGUI {
   viewMatrix(): Mat4;
   projMatrix(): Mat4;
+  drawOverlay(): void;
   dragStart(me: MouseEvent): void;
   drag(me: MouseEvent): void;
   dragEnd(me: MouseEvent): void;
@@ -31,6 +33,8 @@ export class GUI implements IGUI {
   private width: number;
 
   private animation: MinecraftAnimation;
+  private inventoryOpen: boolean;
+  private inventory: InventoryOverlay;
 
   private Adown: boolean = false;
   private Wdown: boolean = false;
@@ -48,8 +52,10 @@ export class GUI implements IGUI {
     this.prevX = 0;
     this.prevY = 0;
     this.dragging = false;
+    this.inventoryOpen = false;
 
     this.animation = animation;
+    this.inventory = new InventoryOverlay(canvas);
 
     this.reset();
 
@@ -69,6 +75,7 @@ export class GUI implements IGUI {
       0.1,
       1000.0,
     );
+    this.setInventoryOpen(false);
   }
 
   /**
@@ -105,12 +112,27 @@ export class GUI implements IGUI {
     return this.camera;
   }
 
+  public drawOverlay(): void {
+    this.inventory.draw();
+  }
+
   public dragStart(mouse: MouseEvent): void {
+    if (this.inventoryOpen) {
+      this.inventory.handleMouseDown(mouse);
+      return;
+    }
+
     this.prevX = mouse.screenX;
     this.prevY = mouse.screenY;
     this.dragging = true;
   }
-  public dragEnd(_mouse: MouseEvent): void {
+
+  public dragEnd(mouse: MouseEvent): void {
+    if (this.inventoryOpen) {
+      this.inventory.handleMouseUp(mouse);
+      return;
+    }
+
     this.dragging = false;
   }
 
@@ -121,8 +143,11 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
-    const _x = mouse.offsetX;
-    const _y = mouse.offsetY;
+    if (this.inventoryOpen) {
+      this.inventory.handleMouseMove(mouse);
+      return;
+    }
+
     const dx = mouse.screenX - this.prevX;
     const dy = mouse.screenY - this.prevY;
     this.prevX = mouse.screenX;
@@ -131,6 +156,23 @@ export class GUI implements IGUI {
       this.camera.rotate(new Vec3([0, 1, 0]), -GUI.rotationSpeed * dx);
       this.camera.rotate(this.camera.right(), -GUI.rotationSpeed * dy);
     }
+  }
+
+  public dragWindow(mouse: MouseEvent): void {
+    if (this.inventoryOpen && this.inventory.isDragging()) {
+      this.inventory.handleMouseMove(mouse);
+    }
+  }
+
+  public onMouseLeave(): void {
+    if (this.inventoryOpen) {
+      this.inventory.handleMouseLeave();
+    }
+  }
+
+  public onWindowBlur(): void {
+    this.dragging = false;
+    this.inventory.cancelDrag();
   }
 
   public walkDir(): Vec3 {
@@ -149,6 +191,14 @@ export class GUI implements IGUI {
    * @param key
    */
   public onKeydown(key: KeyboardEvent): void {
+    if (key.code === "KeyE") {
+      if (key.repeat) return;
+      this.setInventoryOpen(!this.inventoryOpen);
+      return;
+    }
+
+    if (this.inventoryOpen) return;
+
     switch (key.code) {
       case "KeyW": {
         this.Wdown = true;
@@ -202,6 +252,20 @@ export class GUI implements IGUI {
     }
   }
 
+  private setInventoryOpen(open: boolean): void {
+    this.inventoryOpen = open;
+    this.dragging = false;
+    this.clearMovementKeys();
+    this.inventory.setOpen(open);
+  }
+
+  private clearMovementKeys(): void {
+    this.Wdown = false;
+    this.Adown = false;
+    this.Sdown = false;
+    this.Ddown = false;
+  }
+
   /**
    * Registers all event listeners for the GUI
    * @param canvas The canvas being used
@@ -217,7 +281,13 @@ export class GUI implements IGUI {
 
     canvas.addEventListener("mousemove", (mouse: MouseEvent) => this.drag(mouse));
 
-    canvas.addEventListener("mouseup", (mouse: MouseEvent) => this.dragEnd(mouse));
+    canvas.addEventListener("mouseleave", () => this.onMouseLeave());
+
+    window.addEventListener("mousemove", (mouse: MouseEvent) => this.dragWindow(mouse));
+
+    window.addEventListener("mouseup", (mouse: MouseEvent) => this.dragEnd(mouse));
+
+    window.addEventListener("blur", () => this.onWindowBlur());
 
     /* Event listener to stop the right click menu */
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());

@@ -154,6 +154,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
     this.drawScene(0, 0, 1280, 960);
+    this.gui.drawOverlay();
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
