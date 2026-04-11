@@ -24,8 +24,8 @@ export class CameraController {
       fov: 45,
       zNear: 0.1,
       zFar: 1000,
-      eye: new Vec3([0, 100, 0]),
-      target: new Vec3([0, 100, -1]),
+      eye: new Vec3([0, 70, 20]),
+      target: new Vec3([0, 70, 19]),
       ...opts,
     };
     this.camera = this.createCamera();
@@ -67,6 +67,16 @@ export class CameraController {
     if (keys.space) out.add(new Vec3([0, 1, 0]));
     if (keys.shift) out.add(new Vec3([0, -1, 0]));
     return out;
+  }
+
+  yaw(): number {
+    const lookDir = this.camera.forward().negate();
+    return Math.atan2(lookDir.x, -lookDir.z);
+  }
+
+  pitch(): number {
+    const lookDir = this.camera.forward().negate();
+    return Math.asin(Math.max(-1, Math.min(1, lookDir.y)));
   }
 
   setPosition(pos: Vec3): void {

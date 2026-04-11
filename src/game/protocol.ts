@@ -1,5 +1,10 @@
 import type { PlayerInput, PlayerState } from "./player";
 
+export interface PlayerCredentials {
+  playerId: string;
+  name: string;
+}
+
 export interface RoomSnapshot {
   tick: number;
   players: Record<string, PlayerState>;
@@ -11,10 +16,11 @@ export interface RoomSessionApi {
   leave(): void;
 }
 
+export interface AuthenticatedApi {
+  get credentials(): PlayerCredentials;
+  join(roomId: string, onSnapshot: (snap: RoomSnapshot) => void): Promise<RoomSessionApi>;
+}
+
 export interface GameApi {
-  join(
-    roomId: string,
-    playerId: string,
-    onSnapshot: (snap: RoomSnapshot) => void,
-  ): Promise<RoomSessionApi>;
+  authenticate(name: string): Promise<AuthenticatedApi>;
 }

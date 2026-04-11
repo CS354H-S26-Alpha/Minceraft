@@ -7,7 +7,7 @@ export default function App() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
   const [textCanvas, setTextCanvas] = createSignal<HTMLCanvasElement>();
 
-  const { player, input } = createRoom("world-1", crypto.randomUUID());
+  const { player, input } = createRoom("world-1");
 
   const game = createGame({
     glCanvas,

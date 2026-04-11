@@ -5,6 +5,7 @@ const DEFAULT_DRIFT_SQ = 4;
 export class ClientEntity<S extends object, I> {
   private inputHistory: I[] = [];
   private lastAcked = 0;
+  private initialized = false;
 
   constructor(
     public entity: Entity<S, I>,
@@ -22,8 +23,13 @@ export class ClientEntity<S extends object, I> {
     this.lastAcked = acked;
     this.inputHistory.splice(0, newlyAcked);
 
-    if (this.distanceSq(this.entity.state, authoritative) < this.threshold) return;
+    if (
+      this.initialized &&
+      this.distanceSq(this.entity.state, authoritative) < this.threshold
+    )
+      return;
 
+    this.initialized = true;
     Object.assign(this.entity.state, authoritative);
     for (const input of this.inputHistory) {
       this.entity.step(input);

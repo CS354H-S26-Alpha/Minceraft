@@ -1,18 +1,30 @@
 import { Actor } from "@cloudflare/actors";
 import { RpcTarget } from "capnweb";
-import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
-import { Player, type PlayerInput, type PlayerState } from "./player";
-import type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
+import type { EntityCollection } from "./entity-collection";
+import type { PlayerInput } from "./player";
+import { PlayerCollection } from "./player-collection";
+import type {
+  AuthenticatedApi,
+  GameApi,
+  PlayerCredentials,
+  RoomSessionApi,
+  RoomSnapshot,
+} from "./protocol";
 
-export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
+export type {
+  AuthenticatedApi,
+  GameApi,
+  PlayerCredentials,
+  RoomSessionApi,
+  RoomSnapshot,
+} from "./protocol";
 
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
-const SPAWN_POSITION = { x: 0, y: 100, z: 0 };
 
 type SnapshotListener = (snap: RoomSnapshot) => unknown;
 
@@ -28,112 +40,78 @@ function notify(cb: SnapshotListener, snap: RoomSnapshot) {
 }
 
 export class GameRoom extends Actor<Env> {
-  private players = new Map<string, Player>();
-  private inputQueues = new Map<string, PlayerInput[]>();
-  private acks = new Map<string, number>();
+  private playerCollection = new PlayerCollection();
+  private collections: EntityCollection[] = [this.playerCollection];
   private listeners = new Map<string, SnapshotListener>();
-  private dirty = new Set<string>();
   private tick = 0;
   private db!: DrizzleSqliteDODatabase<typeof schema>;
 
   override async onInit() {
     this.db = drizzle(this.ctx.storage, { schema });
     migrate(this.db, migrations);
-
-    for (const row of this.db.select().from(schema.players).all()) {
-      this.players.set(row.id, new Player({ id: row.id, x: row.x, y: row.y, z: row.z }));
+    for (const col of this.collections) {
+      col.hydrate(this.db);
     }
   }
 
-  join(playerId: string, onSnapshot: SnapshotListener) {
-    if (!this.players.has(playerId)) {
-      this.players.set(playerId, new Player({ id: playerId, ...SPAWN_POSITION }));
-      this.dirty.add(playerId);
-    }
+  join(playerId: string, name: string, onSnapshot: SnapshotListener) {
+    this.playerCollection.join(playerId, name);
     this.listeners.set(playerId, onSnapshot);
     notify(onSnapshot, this.snapshot());
     this.ensureAlarm();
   }
 
   sendInputs(playerId: string, inputs: PlayerInput[]) {
-    const queue = this.inputQueues.get(playerId);
-    if (queue) {
-      queue.push(...inputs);
-    } else {
-      this.inputQueues.set(playerId, [...inputs]);
-    }
+    this.playerCollection.queueInputs(playerId, inputs);
   }
 
   leave(playerId: string) {
     this.listeners.delete(playerId);
-    this.inputQueues.delete(playerId);
+    this.playerCollection.leave(playerId);
   }
 
   override async onAlarm(): Promise<void> {
     this.tick++;
 
-    let changedThisTick = false;
-    for (const [id, queue] of this.inputQueues) {
-      if (queue.length === 0) continue;
-      const player = this.players.get(id);
-      if (!player) continue;
-      const { x, z } = player.state;
-      for (const input of queue) {
-        player.step(input);
-      }
-      this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
-      queue.length = 0;
-      if (player.state.x !== x || player.state.z !== z) {
-        this.dirty.add(id);
-        changedThisTick = true;
-      }
+    let changed = false;
+    for (const col of this.collections) {
+      if (col.tick()) changed = true;
     }
 
-    if (changedThisTick && this.listeners.size > 0) {
+    if (changed && this.listeners.size > 0) {
       const snap = this.snapshot();
       for (const cb of this.listeners.values()) {
         notify(cb, snap);
       }
     }
 
-    if (this.tick % PERSIST_EVERY_N_TICKS === 0 && this.dirty.size > 0) {
-      this.flush();
+    if (this.tick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
+      this.flushAll();
     }
 
     if (this.listeners.size > 0) {
       this.ctx.storage.setAlarm(Date.now() + TICK_MS);
-    } else if (this.dirty.size > 0) {
-      this.flush();
+    } else if (this.hasDirty()) {
+      this.flushAll();
     }
   }
 
   private snapshot(): RoomSnapshot {
-    const players: Record<string, PlayerState> = {};
-    const acks: Record<string, number> = {};
-    for (const [id, player] of this.players) {
-      players[id] = player.state;
-      acks[id] = this.acks.get(id) ?? 0;
-    }
-    return { tick: this.tick, players, acks };
+    return {
+      tick: this.tick,
+      players: this.playerCollection.snapshot(),
+      acks: this.playerCollection.getAcks(),
+    };
   }
 
-  private flush() {
-    for (const id of this.dirty) {
-      const player = this.players.get(id);
-      if (player) {
-        this.db
-          .insert(schema.players)
-          .values(player.state)
-          .onConflictDoUpdate({
-            target: schema.players.id,
-            set: { x: player.state.x, y: player.state.y, z: player.state.z },
-          })
-          .run();
-      } else {
-        this.db.delete(schema.players).where(eq(schema.players.id, id)).run();
-      }
+  private hasDirty(): boolean {
+    return this.collections.some((col) => col.hasDirty());
+  }
+
+  private flushAll() {
+    for (const col of this.collections) {
+      col.flush(this.db);
     }
-    this.dirty.clear();
   }
 
   private ensureAlarm() {
@@ -169,6 +147,38 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   }
 }
 
+export class AuthSession extends RpcTarget implements AuthenticatedApi {
+  #env: Env;
+  #playerId: string;
+  #name: string;
+
+  constructor(env: Env, playerId: string, name: string) {
+    super();
+    this.#env = env;
+    this.#playerId = playerId;
+    this.#name = name;
+  }
+
+  get credentials(): PlayerCredentials {
+    return { playerId: this.#playerId, name: this.#name };
+  }
+
+  async join(roomId: string, onSnapshot: SnapshotListener) {
+    const id = this.#env.GameRoom.idFromName(roomId);
+    const stub = this.#env.GameRoom.get(id);
+    await stub.join(this.#playerId, this.#name, onSnapshot);
+    return new RoomSession(stub, this.#playerId);
+  }
+}
+
+async function derivePlayerId(name: string): Promise<string> {
+  const data = new TextEncoder().encode(name);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash.slice(0, 16)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export class GameServer extends RpcTarget implements GameApi {
   #env: Env;
 
@@ -177,10 +187,8 @@ export class GameServer extends RpcTarget implements GameApi {
     this.#env = env;
   }
 
-  async join(roomId: string, playerId: string, onSnapshot: SnapshotListener) {
-    const id = this.#env.GameRoom.idFromName(roomId);
-    const stub = this.#env.GameRoom.get(id);
-    await stub.join(playerId, onSnapshot);
-    return new RoomSession(stub, playerId);
+  async authenticate(name: string) {
+    const playerId = await derivePlayerId(name);
+    return new AuthSession(this.#env, playerId, name);
   }
 }

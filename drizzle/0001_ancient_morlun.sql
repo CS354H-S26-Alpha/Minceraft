@@ -1,0 +1,1 @@
+ALTER TABLE `players` ADD `name` text NOT NULL;

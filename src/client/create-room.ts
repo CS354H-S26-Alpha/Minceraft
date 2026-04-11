@@ -1,28 +1,33 @@
 import { makeTimer } from "@solid-primitives/timer";
-import { newWebSocketRpcSession } from "capnweb";
 import { createSignal, onCleanup } from "solid-js";
 import { Player, type PlayerInput, playerDistanceSq } from "../game/player";
-import type { GameApi, RoomSnapshot } from "../game/protocol";
+import type { RoomSessionApi, RoomSnapshot } from "../game/protocol";
 import { ClientEntity } from "./replication";
+import { useSession } from "./session";
 
 const INPUT_SEND_INTERVAL_MS = 50;
 
-export function createRoom(roomId: string, playerId: string) {
-  const player = new Player({ id: playerId, x: 0, y: 100, z: 0 });
+export function createRoom(roomId: string) {
+  const { credentials, join } = useSession();
+  const { playerId, name } = credentials;
+
+  const player = new Player({ id: playerId, name, x: 0, y: 70, z: 20, yaw: 0, pitch: 0 });
   const replicated = new ClientEntity(player, playerDistanceSq);
   const [snapshot, setSnapshot] = createSignal<RoomSnapshot>({ tick: 0, players: {}, acks: {} });
 
-  const api = newWebSocketRpcSession<GameApi>(`wss://${window.location.host}/api`);
-  const session = api.join(roomId, playerId, (snap: RoomSnapshot) => {
+  let session: RoomSessionApi | undefined;
+  join(roomId, (snap: RoomSnapshot) => {
     setSnapshot(snap);
     const auth = snap.players[playerId];
     if (auth) replicated.reconcile(auth, snap.acks[playerId] ?? 0);
+  }).then((s) => {
+    session = s;
   });
 
   let unsent: PlayerInput[] = [];
   makeTimer(
     () => {
-      if (unsent.length === 0) return;
+      if (unsent.length === 0 || !session) return;
       session.sendInputs(unsent);
       unsent = [];
     },
@@ -36,8 +41,7 @@ export function createRoom(roomId: string, playerId: string) {
   }
 
   onCleanup(() => {
-    session.leave();
-    api[Symbol.dispose]();
+    session?.leave();
   });
 
   return { player, snapshot, input } as const;

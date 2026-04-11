@@ -120,7 +120,13 @@ export function createGame(args: CreateGameArgs): GameState {
       const mouse = input.consumeMouseDelta();
       camera.rotate(mouse.dx, mouse.dy);
       const walk = camera.walkDir(input.walkKeys());
-      args.sendInput({ dx: walk.x, dy: walk.y, dz: walk.z });
+      args.sendInput({
+        dx: walk.x,
+        dy: walk.y,
+        dz: walk.z,
+        yaw: camera.yaw(),
+        pitch: camera.pitch(),
+      });
       camera.setPosition(args.player.position);
 
       renderer.render({

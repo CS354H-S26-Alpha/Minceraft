@@ -70,15 +70,15 @@ describe("GameRoom Durable Object", () => {
     const received: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", (snap) => received.push(snap));
+      room.join("alice", "Alice", (snap) => received.push(snap));
     });
 
     expect(received).toHaveLength(1);
     const [snap] = received;
     expect(snap?.players.alice).toBeDefined();
     expect(snap?.players.alice?.x).toBeCloseTo(0);
-    expect(snap?.players.alice?.y).toBeCloseTo(100);
-    expect(snap?.players.alice?.z).toBeCloseTo(0);
+    expect(snap?.players.alice?.y).toBeCloseTo(70);
+    expect(snap?.players.alice?.z).toBeCloseTo(20);
   });
 
   it("applies buffered input on the next tick and broadcasts to listeners", async () => {
@@ -86,8 +86,8 @@ describe("GameRoom Durable Object", () => {
     const received: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", (snap) => received.push(snap));
-      room.sendInputs("alice", [{ dx: 1, dz: 0 }]);
+      room.join("alice", "Alice", (snap) => received.push(snap));
+      room.sendInputs("alice", [{ dx: 1, dy: 0, dz: 0, yaw: 0, pitch: 0 }]);
     });
 
     const alarmRan = await runDurableObjectAlarm(stub);
@@ -107,19 +107,19 @@ describe("GameRoom Durable Object", () => {
     const bobSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", (snap) => aliceSnaps.push(snap));
-      room.join("bob", (snap) => bobSnaps.push(snap));
-      room.sendInputs("alice", [{ dx: 0, dz: -1 }]);
-      room.sendInputs("bob", [{ dx: 1, dz: 0 }]);
+      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      room.sendInputs("alice", [{ dx: 0, dy: 0, dz: -1, yaw: 0, pitch: 0 }]);
+      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, yaw: 0, pitch: 0 }]);
     });
 
     await runDurableObjectAlarm(stub);
 
     const aliceLatest = aliceSnaps[aliceSnaps.length - 1];
     const bobLatest = bobSnaps[bobSnaps.length - 1];
-    expect(aliceLatest?.players.alice?.z).toBeLessThan(0);
+    expect(aliceLatest?.players.alice?.z).toBeLessThan(20);
     expect(aliceLatest?.players.bob?.x).toBeGreaterThan(0);
-    expect(bobLatest?.players.alice?.z).toBeLessThan(0);
+    expect(bobLatest?.players.alice?.z).toBeLessThan(20);
     expect(bobLatest?.players.bob?.x).toBeGreaterThan(0);
   });
 
@@ -128,11 +128,11 @@ describe("GameRoom Durable Object", () => {
     const aliceSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", (snap) => aliceSnaps.push(snap));
+      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
       room.leave("alice");
       // Another player keeps the room ticking so broadcasts would fire
-      room.join("bob", () => {});
-      room.sendInputs("bob", [{ dx: 1, dz: 0 }]);
+      room.join("bob", "Bob", () => {});
+      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, yaw: 0, pitch: 0 }]);
     });
 
     const initialCount = aliceSnaps.length;
@@ -145,7 +145,7 @@ describe("GameRoom Durable Object", () => {
     const received: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", (snap) => received.push(snap));
+      room.join("alice", "Alice", (snap) => received.push(snap));
     });
     // First alarm flushes the dirty-from-join broadcast.
     await runDurableObjectAlarm(stub);
@@ -157,18 +157,21 @@ describe("GameRoom Durable Object", () => {
 });
 
 describe("GameServer capnweb RPC", () => {
-  it("returns a RoomSession capability and delivers the initial snapshot via the callback", async () => {
+  it("authenticates and joins a room via the capability chain", async () => {
     const { api } = openGameApi();
     const received: RoomSnapshot[] = [];
 
-    const session = await api.join("rpc-room", "alice", (snap) => {
+    const auth = api.authenticate("alice");
+    const session = await auth.join("rpc-room", (snap: RoomSnapshot) => {
       received.push(snap);
     });
 
     expect(session).toBeDefined();
     // Initial snapshot should have flowed back through the batch response.
     expect(received.length).toBeGreaterThanOrEqual(1);
-    expect(received[0]?.players.alice).toBeDefined();
-    expect(received[0]?.players.alice?.y).toBeCloseTo(100);
+    // Player ID is a deterministic hash of "alice", check any player exists
+    const players = Object.values(received[0]?.players ?? {});
+    expect(players).toHaveLength(1);
+    expect(players[0]?.y).toBeCloseTo(70);
   });
 });

@@ -5,15 +5,20 @@ export const PLAYER_SPEED = 0.3;
 
 export interface PlayerState {
   id: string;
+  name: string;
   x: number;
   y: number;
   z: number;
+  yaw: number;
+  pitch: number;
 }
 
 export interface PlayerInput {
   dx: number;
   dy: number;
   dz: number;
+  yaw: number;
+  pitch: number;
 }
 
 export class Player extends Entity<PlayerState, PlayerInput> {
@@ -25,7 +30,9 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     return new Vec3([this.state.x, this.state.y, this.state.z]);
   }
 
-  step({ dx, dy, dz }: PlayerInput) {
+  step({ dx, dy, dz, yaw, pitch }: PlayerInput) {
+    this.state.yaw = yaw;
+    this.state.pitch = pitch;
     const mag2 = dx * dx + dy * dy + dz * dz;
     if (mag2 === 0) return;
     const inv = PLAYER_SPEED / Math.sqrt(mag2);
