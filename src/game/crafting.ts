@@ -19,9 +19,6 @@ export const recipes: Recipe[] = [
   {
     inputs: [{ itemId: ITEM_IDS.WOOD_PLANK, count: 2 }],
     output: { itemId: ITEM_IDS.STICK, count: 4 },
-    pattern: [
-      [ITEM_IDS.WOOD_PLANK],
-      [ITEM_IDS.WOOD_PLANK],
-    ],
+    pattern: [[ITEM_IDS.WOOD_PLANK], [ITEM_IDS.WOOD_PLANK]],
   },
 ];

@@ -1,5 +1,5 @@
-import { recipes, type Recipe } from "./crafting.ts";
-import { getItemById, ITEM_IDS, items, type Item } from "./item.ts";
+import { type Recipe, recipes } from "./crafting.ts";
+import { getItemById, ITEM_IDS, type Item, items } from "./item.ts";
 
 export type ItemId = Item["id"];
 
