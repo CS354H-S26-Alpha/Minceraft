@@ -116,7 +116,13 @@ export class GUI implements IGUI {
     this.inventory.draw();
   }
 
+  public shouldRenderHotbarPreviewCube(): boolean {
+    return this.inventory.selectedHotbarItemId() === "dirt";
+  }
+
   public dragStart(mouse: MouseEvent): void {
+    this.inventory.trackPointer(mouse);
+
     if (this.inventoryOpen) {
       this.inventory.handleMouseDown(mouse);
       return;
@@ -143,6 +149,8 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
+    this.inventory.trackPointer(mouse);
+
     if (this.inventoryOpen) {
       this.inventory.handleMouseMove(mouse);
       return;
@@ -165,14 +173,20 @@ export class GUI implements IGUI {
   }
 
   public onMouseLeave(): void {
-    if (this.inventoryOpen) {
-      this.inventory.handleMouseLeave();
-    }
+    this.inventory.handleMouseLeave();
+  }
+
+  public onWheel(event: WheelEvent): void {
+    if (event.deltaY === 0) return;
+
+    this.inventory.cycleHotbarSelection(event.deltaY > 0 ? 1 : -1);
+    event.preventDefault();
   }
 
   public onWindowBlur(): void {
     this.dragging = false;
     this.inventory.cancelDrag();
+    this.inventory.handleMouseLeave();
   }
 
   public walkDir(): Vec3 {
@@ -194,6 +208,13 @@ export class GUI implements IGUI {
     if (key.code === "KeyE") {
       if (key.repeat) return;
       this.setInventoryOpen(!this.inventoryOpen);
+      return;
+    }
+
+    const hotbarIndex = this.hotbarIndexForCode(key.code);
+    if (hotbarIndex !== null) {
+      if (key.repeat) return;
+      this.inventory.selectHotbarSlot(hotbarIndex);
       return;
     }
 
@@ -266,6 +287,31 @@ export class GUI implements IGUI {
     this.Ddown = false;
   }
 
+  private hotbarIndexForCode(code: string): number | null {
+    switch (code) {
+      case "Digit1":
+        return 0;
+      case "Digit2":
+        return 1;
+      case "Digit3":
+        return 2;
+      case "Digit4":
+        return 3;
+      case "Digit5":
+        return 4;
+      case "Digit6":
+        return 5;
+      case "Digit7":
+        return 6;
+      case "Digit8":
+        return 7;
+      case "Digit9":
+        return 8;
+      default:
+        return null;
+    }
+  }
+
   /**
    * Registers all event listeners for the GUI
    * @param canvas The canvas being used
@@ -280,6 +326,8 @@ export class GUI implements IGUI {
     canvas.addEventListener("mousedown", (mouse: MouseEvent) => this.dragStart(mouse));
 
     canvas.addEventListener("mousemove", (mouse: MouseEvent) => this.drag(mouse));
+
+    canvas.addEventListener("wheel", (event: WheelEvent) => this.onWheel(event), { passive: false });
 
     canvas.addEventListener("mouseleave", () => this.onMouseLeave());
 

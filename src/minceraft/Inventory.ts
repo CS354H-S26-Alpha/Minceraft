@@ -1,4 +1,4 @@
-type ItemId = "dirt" | "wood" | "plank";
+export type ItemId = "dirt" | "wood" | "plank" | "stick";
 
 type Point = {
   x: number;
@@ -36,6 +36,12 @@ type InventoryLayout = {
   titleY: number;
 };
 
+type HotbarLayout = {
+  barRect: Rect;
+  slotRects: Rect[];
+  slotSize: number;
+};
+
 type InventoryItem = {
   count: number;
   id: ItemId;
@@ -44,18 +50,25 @@ type InventoryItem = {
 };
 
 type CraftingResult = {
+  consumedSlots: {
+    count: number;
+    index: number;
+  }[];
   item: InventoryItem;
-  sourceIndex: number;
 };
 
 const INVENTORY_SLOT_COUNT = 36;
 const CRAFT_SLOT_COUNT = 4;
 const SLOT_COLUMNS = 9;
 const CRAFT_COLUMNS = 2;
+const HOTBAR_SIZE = 9;
+const HOTBAR_START_INDEX = INVENTORY_SLOT_COUNT - HOTBAR_SIZE;
 const MAX_STACK_SIZE = 64;
 
-const dirtTexture = new URL("../../assets/dirt.bmp", import.meta.url).href;
-const woodTexture = new URL("../../assets/wood.bmp", import.meta.url).href;
+const dirtIconTexture = new URL("../../assets/icons/dirt.png", import.meta.url).href;
+const stickIconTexture = new URL("../../assets/icons/stick.png", import.meta.url).href;
+const woodIconTexture = new URL("../../assets/icons/wood.png", import.meta.url).href;
+const plankIconTexture = new URL("../../assets/icons/wood_plank.png", import.meta.url).href;
 
 function loadTexture(src: string): HTMLImageElement {
   const image = new Image();
@@ -72,8 +85,10 @@ function targetKey(target: SlotTarget | null): string | null {
 export class InventoryOverlay {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly textures: {
+  private readonly iconTextures: {
     dirt: HTMLImageElement;
+    plank: HTMLImageElement;
+    stick: HTMLImageElement;
     wood: HTMLImageElement;
   };
   private carriedItem: InventoryItem | null;
@@ -81,11 +96,13 @@ export class InventoryOverlay {
   private craftSlots: (InventoryItem | null)[];
   private distributedDuringPress: boolean;
   private hoveredTargetKey: string | null;
+  private hoveredHotbarIndex: number | null;
   private inventorySlots: (InventoryItem | null)[];
   private lastDistributedTargetKey: string | null;
   private mouseIsDown: boolean;
   private open: boolean;
   private pressTarget: SlotTarget | null;
+  private selectedHotbarIndex: number;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -95,9 +112,11 @@ export class InventoryOverlay {
 
     this.canvas = canvas;
     this.ctx = ctx;
-    this.textures = {
-      dirt: loadTexture(dirtTexture),
-      wood: loadTexture(woodTexture),
+    this.iconTextures = {
+      dirt: loadTexture(dirtIconTexture),
+      plank: loadTexture(plankIconTexture),
+      stick: loadTexture(stickIconTexture),
+      wood: loadTexture(woodIconTexture),
     };
     this.inventorySlots = Array<InventoryItem | null>(INVENTORY_SLOT_COUNT).fill(null);
     this.craftSlots = Array<InventoryItem | null>(CRAFT_SLOT_COUNT).fill(null);
@@ -105,10 +124,12 @@ export class InventoryOverlay {
     this.carriedPointer = { x: canvas.width / 2, y: canvas.height / 2 };
     this.distributedDuringPress = false;
     this.hoveredTargetKey = null;
+    this.hoveredHotbarIndex = null;
     this.lastDistributedTargetKey = null;
     this.mouseIsDown = false;
     this.open = false;
     this.pressTarget = null;
+    this.selectedHotbarIndex = 0;
     this.reset();
   }
 
@@ -118,6 +139,7 @@ export class InventoryOverlay {
     this.inventorySlots[30] = this.createItem("wood", 8);
     this.craftSlots = Array<InventoryItem | null>(CRAFT_SLOT_COUNT).fill(null);
     this.carriedItem = null;
+    this.selectedHotbarIndex = this.findFirstOccupiedHotbarSlot();
     this.cancelDrag();
   }
 
@@ -134,16 +156,40 @@ export class InventoryOverlay {
     return this.carriedItem !== null;
   }
 
+  public trackPointer(mouse: MouseEvent): void {
+    const point = this.toCanvasPoint(mouse);
+    this.carriedPointer = point;
+    this.hoveredHotbarIndex = this.getPersistentHotbarIndexAtPoint(point);
+  }
+
+  public hasHoveredHotbarItem(): boolean {
+    return this.getHoveredHotbarItem() !== null;
+  }
+
+  public selectedHotbarItemId(): ItemId | null {
+    return this.inventorySlots[HOTBAR_START_INDEX + this.selectedHotbarIndex]?.id ?? null;
+  }
+
+  public selectHotbarSlot(index: number): void {
+    this.selectedHotbarIndex = ((index % HOTBAR_SIZE) + HOTBAR_SIZE) % HOTBAR_SIZE;
+  }
+
+  public cycleHotbarSelection(delta: number): void {
+    const step = Math.sign(delta);
+    if (step === 0) return;
+    this.selectHotbarSlot(this.selectedHotbarIndex + step);
+  }
+
   public handleMouseDown(mouse: MouseEvent): boolean {
     if (!this.open) return false;
 
-    const point = this.toCanvasPoint(mouse);
+    this.trackPointer(mouse);
+    const point = this.carriedPointer;
     const target = this.targetAtPoint(point);
     const key = targetKey(target);
     this.mouseIsDown = true;
     this.pressTarget = target;
     this.distributedDuringPress = false;
-    this.carriedPointer = point;
     this.hoveredTargetKey = key;
     this.lastDistributedTargetKey = key;
 
@@ -172,12 +218,12 @@ export class InventoryOverlay {
   }
 
   public handleMouseMove(mouse: MouseEvent): boolean {
+    this.trackPointer(mouse);
     if (!this.open) return false;
 
-    const point = this.toCanvasPoint(mouse);
+    const point = this.carriedPointer;
     const target = this.targetAtPoint(point);
     const key = targetKey(target);
-    this.carriedPointer = point;
     this.hoveredTargetKey = key;
 
     if (this.mouseIsDown && this.carriedItem && key !== this.lastDistributedTargetKey) {
@@ -194,10 +240,10 @@ export class InventoryOverlay {
   public handleMouseUp(mouse: MouseEvent): boolean {
     if (!this.open) return false;
 
-    const point = this.toCanvasPoint(mouse);
+    this.trackPointer(mouse);
+    const point = this.carriedPointer;
     const target = this.targetAtPoint(point);
     const releaseKey = targetKey(target);
-    this.carriedPointer = point;
     this.hoveredTargetKey = releaseKey;
 
     if (
@@ -220,11 +266,13 @@ export class InventoryOverlay {
 
   public handleMouseLeave(): void {
     this.hoveredTargetKey = null;
+    this.hoveredHotbarIndex = null;
     this.lastDistributedTargetKey = null;
   }
 
   public cancelDrag(): void {
     this.hoveredTargetKey = null;
+    this.hoveredHotbarIndex = null;
     this.lastDistributedTargetKey = null;
     this.mouseIsDown = false;
     this.distributedDuringPress = false;
@@ -235,17 +283,24 @@ export class InventoryOverlay {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    if (!this.open) return;
-
     const layout = this.getLayout();
-    const craftingResult = this.getCraftingResult();
+    const hotbarLayout = this.getHotbarLayout(layout.slotSize);
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
 
+    if (!this.open) {
+      this.drawPersistentHotbar(hotbarLayout);
+      ctx.restore();
+      return;
+    }
+
+    const craftingResult = this.getCraftingResult();
+
     ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
+    this.drawPersistentHotbar(hotbarLayout);
     this.drawPanel(layout);
     this.drawCraftingGuide(layout, craftingResult !== null);
 
@@ -258,6 +313,7 @@ export class InventoryOverlay {
         activeDropTarget: this.carriedItem !== null && this.hoveredTargetKey === key,
         filled: slot !== null,
         hovered: this.carriedItem === null && this.hoveredTargetKey === key,
+        selected: this.isSelectedHotbarInventorySlot(slotIndex),
       });
 
       if (slot) {
@@ -274,6 +330,7 @@ export class InventoryOverlay {
         activeDropTarget: this.carriedItem !== null && this.hoveredTargetKey === key,
         filled: slot !== null,
         hovered: this.carriedItem === null && this.hoveredTargetKey === key,
+        selected: false,
       });
 
       if (slot) {
@@ -294,11 +351,13 @@ export class InventoryOverlay {
   private createItem(id: ItemId, count: number): InventoryItem {
     switch (id) {
       case "dirt":
-        return { count, id, name: "Dirt", texture: this.textures.dirt };
+        return { count, id, name: "Dirt", texture: this.iconTextures.dirt };
       case "wood":
-        return { count, id, name: "Wood", texture: this.textures.wood };
+        return { count, id, name: "Wood", texture: this.iconTextures.wood };
       case "plank":
-        return { count, id, name: "Planks", texture: null };
+        return { count, id, name: "Planks", texture: this.iconTextures.plank };
+      case "stick":
+        return { count, id, name: "Stick", texture: this.iconTextures.stick };
       default:
         throw new Error(`Unknown item id: ${id satisfies never}`);
     }
@@ -427,20 +486,33 @@ export class InventoryOverlay {
   }
 
   private getCraftingResult(): CraftingResult | null {
-    let woodSourceIndex: number | null = null;
+    const occupiedSlots = this.craftSlots
+      .map((slot, index) => (slot ? { index, slot } : null))
+      .filter((slot): slot is { index: number; slot: InventoryItem } => slot !== null);
 
-    for (let slotIndex = 0; slotIndex < this.craftSlots.length; slotIndex += 1) {
-      const slot = this.craftSlots[slotIndex];
-      if (!slot) continue;
-      if (slot.id !== "wood" || woodSourceIndex !== null) return null;
-      woodSourceIndex = slotIndex;
+    if (occupiedSlots.length === 1 && occupiedSlots[0].slot.id === "wood") {
+      return {
+        consumedSlots: [{ count: 1, index: occupiedSlots[0].index }],
+        item: this.createItem("plank", 4),
+      };
     }
 
-    if (woodSourceIndex === null) return null;
+    if (occupiedSlots.length !== 2) return null;
+
+    const sortedSlots = occupiedSlots.sort((left, right) => left.index - right.index);
+    const [topSlot, bottomSlot] = sortedSlots;
+    const sameColumn = topSlot.index % CRAFT_COLUMNS === bottomSlot.index % CRAFT_COLUMNS;
+    const verticallyStacked = bottomSlot.index - topSlot.index === CRAFT_COLUMNS;
+    const bothPlanks = topSlot.slot.id === "plank" && bottomSlot.slot.id === "plank";
+
+    if (!sameColumn || !verticallyStacked || !bothPlanks) return null;
 
     return {
-      item: this.createItem("plank", 4),
-      sourceIndex: woodSourceIndex,
+      consumedSlots: [
+        { count: 1, index: topSlot.index },
+        { count: 1, index: bottomSlot.index },
+      ],
+      item: this.createItem("stick", 4),
     };
   }
 
@@ -450,19 +522,28 @@ export class InventoryOverlay {
 
     if (!this.canAcceptCraftingResult(result.item)) return false;
 
+    for (const consumedSlot of result.consumedSlots) {
+      const sourceSlot = this.craftSlots[consumedSlot.index];
+      if (!sourceSlot || sourceSlot.count < consumedSlot.count) {
+        return false;
+      }
+    }
+
     if (!this.carriedItem) {
       this.carriedItem = this.cloneItem(result.item);
     } else {
       this.carriedItem.count += result.item.count;
     }
 
-    const sourceSlot = this.craftSlots[result.sourceIndex];
-    if (!sourceSlot) return false;
+    for (const consumedSlot of result.consumedSlots) {
+      const sourceSlot = this.craftSlots[consumedSlot.index];
+      if (!sourceSlot) continue;
 
-    if (sourceSlot.count <= 1) {
-      this.craftSlots[result.sourceIndex] = null;
-    } else {
-      sourceSlot.count -= 1;
+      if (sourceSlot.count <= consumedSlot.count) {
+        this.craftSlots[consumedSlot.index] = null;
+      } else {
+        sourceSlot.count -= consumedSlot.count;
+      }
     }
 
     return true;
@@ -472,6 +553,49 @@ export class InventoryOverlay {
     if (!this.carriedItem) return true;
     if (this.carriedItem.id !== item.id) return false;
     return this.carriedItem.count + item.count <= MAX_STACK_SIZE;
+  }
+
+  private findFirstOccupiedHotbarSlot(): number {
+    for (let hotbarIndex = 0; hotbarIndex < HOTBAR_SIZE; hotbarIndex += 1) {
+      if (this.inventorySlots[HOTBAR_START_INDEX + hotbarIndex]) {
+        return hotbarIndex;
+      }
+    }
+
+    return 0;
+  }
+
+  private isSelectedHotbarInventorySlot(slotIndex: number): boolean {
+    return slotIndex === HOTBAR_START_INDEX + this.selectedHotbarIndex;
+  }
+
+  private getPersistentHotbarIndexAtPoint(point: Point): number | null {
+    const hotbarLayout = this.getHotbarLayout(this.getLayout().slotSize);
+
+    for (let hotbarIndex = 0; hotbarIndex < hotbarLayout.slotRects.length; hotbarIndex += 1) {
+      if (this.pointInRect(point, hotbarLayout.slotRects[hotbarIndex])) {
+        return hotbarIndex;
+      }
+    }
+
+    return null;
+  }
+
+  private getHoveredHotbarItem(): InventoryItem | null {
+    if (this.hoveredHotbarIndex !== null) {
+      return this.inventorySlots[HOTBAR_START_INDEX + this.hoveredHotbarIndex];
+    }
+
+    if (!this.hoveredTargetKey?.startsWith("inventory:")) {
+      return null;
+    }
+
+    const inventoryIndex = Number(this.hoveredTargetKey.slice("inventory:".length));
+    if (!Number.isFinite(inventoryIndex) || inventoryIndex < HOTBAR_START_INDEX || inventoryIndex >= INVENTORY_SLOT_COUNT) {
+      return null;
+    }
+
+    return this.inventorySlots[inventoryIndex];
   }
 
   private getLayout(): InventoryLayout {
@@ -566,6 +690,39 @@ export class InventoryOverlay {
     };
   }
 
+  private getHotbarLayout(referenceSlotSize: number): HotbarLayout {
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const gap = Math.max(8, Math.floor(Math.min(width, height) * 0.009));
+    const slotSize = Math.max(42, Math.min(referenceSlotSize, Math.floor(Math.min(width, height) * 0.07)));
+    const padding = Math.round(slotSize * 0.25);
+    const barWidth = HOTBAR_SIZE * slotSize + (HOTBAR_SIZE - 1) * gap + padding * 2;
+    const barHeight = slotSize + padding * 2;
+    const marginBottom = Math.max(18, Math.round(height * 0.03));
+    const barRect: Rect = {
+      x: Math.round((width - barWidth) / 2),
+      y: height - barHeight - marginBottom,
+      width: barWidth,
+      height: barHeight,
+    };
+    const slotRects: Rect[] = [];
+
+    for (let hotbarIndex = 0; hotbarIndex < HOTBAR_SIZE; hotbarIndex += 1) {
+      slotRects.push({
+        x: barRect.x + padding + hotbarIndex * (slotSize + gap),
+        y: barRect.y + padding,
+        width: slotSize,
+        height: slotSize,
+      });
+    }
+
+    return {
+      barRect,
+      slotRects,
+      slotSize,
+    };
+  }
+
   private drawPanel(layout: InventoryLayout): void {
     const ctx = this.ctx;
     const { panelRect } = layout;
@@ -589,6 +746,39 @@ export class InventoryOverlay {
     ctx.fillStyle = "#241b12";
     ctx.font = "700 30px monospace";
     ctx.fillText("INVENTORY", panelRect.x + 24, layout.titleY);
+  }
+
+  private drawPersistentHotbar(layout: HotbarLayout): void {
+    const ctx = this.ctx;
+    const numberSize = Math.max(10, Math.round(layout.slotSize * 0.18));
+
+    ctx.fillStyle = "rgba(30, 22, 14, 0.84)";
+    ctx.fillRect(layout.barRect.x, layout.barRect.y, layout.barRect.width, layout.barRect.height);
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(layout.barRect.x, layout.barRect.y, layout.barRect.width, layout.barRect.height);
+
+    for (let hotbarIndex = 0; hotbarIndex < HOTBAR_SIZE; hotbarIndex += 1) {
+      const rect = layout.slotRects[hotbarIndex];
+      const slot = this.inventorySlots[HOTBAR_START_INDEX + hotbarIndex];
+
+      this.drawSlot(rect, {
+        activeDropTarget: false,
+        filled: slot !== null,
+        hovered: hotbarIndex === this.hoveredHotbarIndex,
+        selected: hotbarIndex === this.selectedHotbarIndex,
+      });
+
+      if (slot) {
+        this.drawItem(slot, rect, layout.slotSize);
+      }
+
+      ctx.fillStyle = hotbarIndex === this.selectedHotbarIndex ? "#f1df9f" : "rgba(245, 239, 226, 0.72)";
+      ctx.font = `700 ${numberSize}px monospace`;
+      ctx.textBaseline = "top";
+      ctx.fillText(String(hotbarIndex + 1), rect.x + 6, rect.y + 4);
+    }
   }
 
   private drawCraftingGuide(layout: InventoryLayout, hasResult: boolean): void {
@@ -635,6 +825,7 @@ export class InventoryOverlay {
       activeDropTarget: false,
       filled: result !== null,
       hovered: this.carriedItem === null && hovered,
+      selected: false,
     });
 
     if (result) {
@@ -648,6 +839,7 @@ export class InventoryOverlay {
       activeDropTarget: boolean;
       filled: boolean;
       hovered: boolean;
+      selected: boolean;
     },
   ): void {
     const ctx = this.ctx;
@@ -655,8 +847,14 @@ export class InventoryOverlay {
     ctx.fillStyle = state.filled ? "#8f7c5a" : "#5c4e3b";
     ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
-    ctx.strokeStyle = state.activeDropTarget ? "#f1df9f" : state.hovered ? "#cfc2a4" : "#463728";
-    ctx.lineWidth = state.activeDropTarget ? 4 : 3;
+    ctx.strokeStyle = state.activeDropTarget
+      ? "#f1df9f"
+      : state.selected
+        ? "#fff3bf"
+        : state.hovered
+          ? "#cfc2a4"
+          : "#463728";
+    ctx.lineWidth = state.activeDropTarget || state.selected ? 4 : 3;
     ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
 
     ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
@@ -716,6 +914,12 @@ export class InventoryOverlay {
         ctx.fillRect(x, y + stripHeight * 5, size, Math.max(2, Math.round(size * 0.06)));
         break;
       }
+      case "stick": {
+        ctx.fillStyle = "#8e693d";
+        const stickWidth = Math.max(4, Math.round(size * 0.18));
+        ctx.fillRect(x + Math.round((size - stickWidth) / 2), y + 2, stickWidth, size - 4);
+        break;
+      }
       default:
         break;
     }
@@ -734,6 +938,7 @@ export class InventoryOverlay {
       activeDropTarget: false,
       filled: true,
       hovered: false,
+      selected: false,
     });
     this.drawItem(item, previewRect, previewSize);
   }

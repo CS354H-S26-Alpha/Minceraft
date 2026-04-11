@@ -44,3 +44,58 @@ export const blankCubeFSText = `
         gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0), 1.0);
     }
 `;
+
+export const previewCubeVSText = `
+    precision mediump float;
+
+    uniform mat4 uModel;
+    uniform mat4 uView;
+    uniform mat4 uProj;
+    uniform vec2 uScreenOffset;
+
+    attribute vec4 aNorm;
+    attribute vec4 aVertPos;
+    attribute vec2 aUV;
+
+    varying vec3 vNormal;
+    varying vec2 vUV;
+
+    void main () {
+        vec4 worldPos = uModel * aVertPos;
+        gl_Position = uProj * uView * worldPos;
+        gl_Position.xy += uScreenOffset * gl_Position.w;
+        vNormal = normalize((uModel * vec4(aNorm.xyz, 0.0)).xyz);
+        vUV = aUV;
+    }
+`;
+
+export const previewCubeFSText = `
+    precision mediump float;
+
+    uniform sampler2D uTopTexture;
+    uniform sampler2D uSideTexture;
+    uniform sampler2D uBottomTexture;
+    uniform vec3 uLightDir;
+
+    varying vec3 vNormal;
+    varying vec2 vUV;
+
+    void main() {
+        vec3 normal = normalize(vNormal);
+        vec4 texColor;
+        vec2 sideUV = vec2(vUV.x, 1.0 - vUV.y);
+
+        if (normal.y > 0.5) {
+            texColor = texture2D(uTopTexture, vUV);
+        } else if (normal.y < -0.5) {
+            texColor = texture2D(uBottomTexture, vUV);
+        } else {
+            texColor = texture2D(uSideTexture, sideUV);
+        }
+
+        float diffuse = max(dot(normal, normalize(uLightDir)), 0.0);
+        float lighting = 0.25 + diffuse * 0.75;
+
+        gl_FragColor = vec4(texColor.rgb * lighting, texColor.a);
+    }
+`;
