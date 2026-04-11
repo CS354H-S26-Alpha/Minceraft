@@ -6,6 +6,8 @@ import { Chunk, CHUNK_SIZE } from "./Chunk.js";
 import { FlatTerrain, NoTerrain } from "./Terrain.js";
 import { CubeType } from "./CubeType.js";
 import { ChunkMaster } from "./ChunkMaster.js";
+import { GUI } from "./Gui.js";
+import { blankCubeVSText, blankCubeFSText } from "./Shaders.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
