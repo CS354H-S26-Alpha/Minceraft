@@ -6,7 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "main": "./src/server/index.ts",
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    },
+    "logs": {
+      "enabled": true
+    }
   },
   "assets": {
     "not_found_handling": "single-page-application"

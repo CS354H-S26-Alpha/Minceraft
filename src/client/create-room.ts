@@ -1,3 +1,4 @@
+import { makeTimer } from "@solid-primitives/timer";
 import { newWebSocketRpcSession } from "capnweb";
 import { createSignal, onCleanup } from "solid-js";
 import { Player, type PlayerInput, playerDistanceSq } from "../game/player";
@@ -19,11 +20,15 @@ export function createRoom(roomId: string, playerId: string) {
   });
 
   let unsent: PlayerInput[] = [];
-  const sendTimer = setInterval(() => {
-    if (unsent.length === 0) return;
-    session.sendInputs(unsent);
-    unsent = [];
-  }, INPUT_SEND_INTERVAL_MS);
+  makeTimer(
+    () => {
+      if (unsent.length === 0) return;
+      session.sendInputs(unsent);
+      unsent = [];
+    },
+    INPUT_SEND_INTERVAL_MS,
+    setInterval,
+  );
 
   function input(next: PlayerInput) {
     replicated.predict(next);
@@ -31,7 +36,6 @@ export function createRoom(roomId: string, playerId: string) {
   }
 
   onCleanup(() => {
-    clearInterval(sendTimer);
     session.leave();
     api[Symbol.dispose]();
   });

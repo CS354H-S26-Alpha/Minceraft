@@ -3,6 +3,7 @@ import { Camera } from "~/lib/webglutils/Camera";
 import type { WalkKeys } from "./input";
 
 const ROTATION_SPEED = 0.01;
+const MAX_PITCH = Math.PI / 2 - 0.01;
 
 export interface CameraOptions {
   width: number;
@@ -34,19 +35,37 @@ export class CameraController {
     this.camera = this.createCamera();
   }
 
+  resize(width: number, height: number): void {
+    this.opts.width = width;
+    this.opts.height = height;
+    this.camera.setAspect(width / height);
+  }
+
   rotate(mouseDx: number, mouseDy: number): void {
     if (mouseDx === 0 && mouseDy === 0) return;
     this.camera.rotate(new Vec3([0, 1, 0]), -ROTATION_SPEED * mouseDx);
-    this.camera.rotate(this.camera.right(), -ROTATION_SPEED * mouseDy);
+
+    const lookDir = this.camera.forward().negate();
+    const currentPitch = Math.asin(Math.max(-1, Math.min(1, lookDir.y)));
+    const nextPitch = Math.max(
+      -MAX_PITCH,
+      Math.min(MAX_PITCH, currentPitch - ROTATION_SPEED * mouseDy),
+    );
+    const pitchDelta = nextPitch - currentPitch;
+    if (pitchDelta !== 0) {
+      this.camera.rotate(this.camera.right(), pitchDelta);
+    }
   }
 
-  /** Convert WASD flags into a world-space walk vector using camera basis. */
+  /** Convert movement flags into a world-space walk vector using camera basis. */
   walkDir(keys: Readonly<WalkKeys>): Vec3 {
     const out = new Vec3();
     if (keys.w) out.add(this.camera.forward().negate());
     if (keys.a) out.add(this.camera.right().negate());
     if (keys.s) out.add(this.camera.forward());
     if (keys.d) out.add(this.camera.right());
+    if (keys.space) out.add(new Vec3([0, 1, 0]));
+    if (keys.shift) out.add(new Vec3([0, -1, 0]));
     return out;
   }
 

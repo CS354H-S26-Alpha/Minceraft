@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { createRoom } from "./create-room";
 import { createGame } from "./engine";
 
@@ -8,7 +9,7 @@ export default function App() {
 
   const { player, input } = createRoom("world-1", crypto.randomUUID());
 
-  createGame({
+  const game = createGame({
     glCanvas,
     inputCanvas: textCanvas,
     player,
@@ -16,9 +17,15 @@ export default function App() {
   });
 
   return (
-    <div class="container">
-      <canvas ref={setGlCanvas} id="glCanvas" class="card" width={1280} height={960} />
-      <canvas ref={setTextCanvas} id="textCanvas" width={1280} height={960} />
+    <div class="relative h-screen w-screen overflow-hidden">
+      <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
+      <canvas ref={setTextCanvas} class="absolute inset-0 z-10 h-full w-full" />
+      <DiagnosticsPanel
+        fps={game.fps}
+        computeTimeMs={game.computeTimeMs}
+        computeTimeHistory={game.computeTimeHistory}
+        pointerLocked={game.mouse.pointerLocked}
+      />
     </div>
   );
 }
