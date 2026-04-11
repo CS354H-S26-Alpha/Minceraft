@@ -7,19 +7,40 @@ import { useSession } from "./session";
 
 const INPUT_SEND_INTERVAL_MS = 50;
 
+export interface Orientation {
+  yaw: number;
+  pitch: number;
+}
+
 export function createRoom(roomId: string) {
   const { credentials, join } = useSession();
   const { playerId, name } = credentials;
 
   const player = new Player({ id: playerId, name, x: 0, y: 70, z: 20, yaw: 0, pitch: 0 });
   const replicated = new ClientEntity(player, playerDistanceSq);
-  const [snapshot, setSnapshot] = createSignal<RoomSnapshot>({ tick: 0, players: {}, acks: {} });
+  const [snapshot, setSnapshot] = createSignal<RoomSnapshot>({
+    tick: 0,
+    players: {},
+    acks: {},
+    tickTimeMs: 0,
+  });
+  const [cameraOrientation, setCameraOrientation] = createSignal<Orientation | null>(null);
 
+  let snapCount = 0;
+
+  let synced = false;
   let session: RoomSessionApi | undefined;
   join(roomId, (snap: RoomSnapshot) => {
+    snapCount++;
     setSnapshot(snap);
     const auth = snap.players[playerId];
-    if (auth) replicated.reconcile(auth, snap.acks[playerId] ?? 0);
+    if (auth) {
+      const applied = replicated.reconcile(auth, snap.acks[playerId] ?? 0);
+      if (applied) {
+        setCameraOrientation({ yaw: auth.yaw, pitch: auth.pitch });
+      }
+      synced = true;
+    }
   }).then((s) => {
     session = s;
   });
@@ -36,6 +57,7 @@ export function createRoom(roomId: string) {
   );
 
   function input(next: PlayerInput) {
+    if (!synced) return;
     replicated.predict(next);
     unsent.push(next);
   }
@@ -44,5 +66,5 @@ export function createRoom(roomId: string) {
     session?.leave();
   });
 
-  return { player, snapshot, input } as const;
+  return { player, snapshot, snapCount: () => snapCount, input, cameraOrientation } as const;
 }

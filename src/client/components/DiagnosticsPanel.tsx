@@ -2,10 +2,19 @@ const FRAME_GRAPH_WIDTH = 240;
 const FRAME_GRAPH_HEIGHT = 80;
 const FRAME_GRAPH_MAX_MS = 16.67;
 
+const TICK_GRAPH_HEIGHT = 60;
+const TICK_GRAPH_MAX_MS = 50;
+
 interface DiagnosticsPanelProps {
+  playerName: string;
   fps: number;
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
+  tps: number;
+  mspt: number;
+  msptHistory: readonly number[];
+  snapsPerSec: number;
+  onlinePlayers: readonly string[];
   pointerLocked: boolean;
 }
 
@@ -15,77 +24,129 @@ const frameGuides = [
   { label: "60Hz / 16.67ms", ms: 16.67, stroke: "rgb(239 68 68 / 0.7)" },
 ] as const;
 
-const frameGuideY = (targetMs: number) =>
-  (FRAME_GRAPH_HEIGHT - (targetMs / FRAME_GRAPH_MAX_MS) * FRAME_GRAPH_HEIGHT).toFixed(1);
+const tickGuides = [
+  { label: "10ms", ms: 10, stroke: "rgb(34 197 94 / 0.7)" },
+  { label: "25ms", ms: 25, stroke: "rgb(250 204 21 / 0.7)" },
+  { label: "50ms", ms: 50, stroke: "rgb(239 68 68 / 0.7)" },
+] as const;
 
-const framePolyline = (history: readonly number[]) => {
-  const step = history.length > 1 ? FRAME_GRAPH_WIDTH / (history.length - 1) : FRAME_GRAPH_WIDTH;
+function guideY(height: number, maxMs: number, targetMs: number) {
+  return (height - (targetMs / maxMs) * height).toFixed(1);
+}
+
+function polyline(width: number, height: number, maxMs: number, history: readonly number[]) {
+  const step = history.length > 1 ? width / (history.length - 1) : width;
   return history
     .map((ms, index) => {
       const x = index * step;
-      const clamped = Math.min(ms, FRAME_GRAPH_MAX_MS);
-      const y = FRAME_GRAPH_HEIGHT - (clamped / FRAME_GRAPH_MAX_MS) * FRAME_GRAPH_HEIGHT;
+      const clamped = Math.min(ms, maxMs);
+      const y = height - (clamped / maxMs) * height;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
-};
+}
+
+function Graph(props: {
+  height: number;
+  maxMs: number;
+  guides: readonly { label: string; ms: number; stroke: string }[];
+  history: readonly number[];
+  stroke: string;
+  title: string;
+}) {
+  return (
+    <svg
+      viewBox={`0 0 ${FRAME_GRAPH_WIDTH} ${props.height}`}
+      class="h-20 w-full rounded border border-white/20 bg-black/40"
+      preserveAspectRatio="none"
+      aria-label={props.title}
+      role="img"
+    >
+      <title>{props.title}</title>
+      {props.guides.map((g) => {
+        const y = guideY(props.height, props.maxMs, g.ms);
+        return (
+          <>
+            <line
+              x1="0"
+              x2={FRAME_GRAPH_WIDTH.toString()}
+              y1={y}
+              y2={y}
+              stroke={g.stroke}
+              stroke-dasharray="4 3"
+              stroke-width="1"
+            />
+            <rect
+              x={(FRAME_GRAPH_WIDTH - 46).toString()}
+              y={(Number(y) - 7).toString()}
+              width="46"
+              height="12"
+              fill="rgb(0 0 0 / 0.55)"
+              rx="2"
+            />
+            <text
+              x={(FRAME_GRAPH_WIDTH - 42).toString()}
+              y={(Number(y) + 2.5).toString()}
+              fill={g.stroke}
+              font-size="8"
+            >
+              {g.label}
+            </text>
+          </>
+        );
+      })}
+      <polyline
+        fill="none"
+        points={polyline(FRAME_GRAPH_WIDTH, props.height, props.maxMs, props.history)}
+        stroke={props.stroke}
+        stroke-width="2"
+        stroke-linejoin="round"
+        stroke-linecap="round"
+      />
+    </svg>
+  );
+}
 
 export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
   return (
     <div class="absolute top-2 right-2 z-20 w-80 rounded bg-black/60 p-3 font-mono text-sm text-white">
       <div class="flex items-center justify-between gap-3">
-        <div>
-          {props.fps} fps ({props.computeTimeMs.toFixed(2)}ms)
-        </div>
+        <div class="text-gray-400">{props.playerName}</div>
         <div class="text-gray-400">{props.pointerLocked ? "(locked)" : null}</div>
       </div>
+      <div>
+        {props.fps} fps ({props.computeTimeMs.toFixed(2)}ms)
+      </div>
       <div class="my-2">
-        <svg
-          viewBox={`0 0 ${FRAME_GRAPH_WIDTH} ${FRAME_GRAPH_HEIGHT}`}
-          class="h-20 w-full rounded border border-white/20 bg-black/40"
-          preserveAspectRatio="none"
-          aria-label="Frame pacing graph"
-          role="img"
-        >
-          <title>Per-frame compute time graph</title>
-          {frameGuides.map((guide) => (
-            <>
-              <line
-                x1="0"
-                x2={FRAME_GRAPH_WIDTH.toString()}
-                y1={frameGuideY(guide.ms)}
-                y2={frameGuideY(guide.ms)}
-                stroke={guide.stroke}
-                stroke-dasharray="4 3"
-                stroke-width="1"
-              />
-              <rect
-                x={(FRAME_GRAPH_WIDTH - 76).toString()}
-                y={(Number(frameGuideY(guide.ms)) - 7).toString()}
-                width="76"
-                height="12"
-                fill="rgb(0 0 0 / 0.55)"
-                rx="2"
-              />
-              <text
-                x={(FRAME_GRAPH_WIDTH - 72).toString()}
-                y={(Number(frameGuideY(guide.ms)) + 2.5).toString()}
-                fill={guide.stroke}
-                font-size="8"
-              >
-                {guide.label}
-              </text>
-            </>
+        <Graph
+          height={FRAME_GRAPH_HEIGHT}
+          maxMs={FRAME_GRAPH_MAX_MS}
+          guides={frameGuides}
+          history={props.computeTimeHistory}
+          stroke="rgb(96 165 250)"
+          title="Per-frame compute time graph"
+        />
+      </div>
+      <div>
+        {props.tps} tps ({props.mspt.toFixed(2)}ms) · {props.snapsPerSec} snaps/s
+      </div>
+      <div class="my-2">
+        <Graph
+          height={TICK_GRAPH_HEIGHT}
+          maxMs={TICK_GRAPH_MAX_MS}
+          guides={tickGuides}
+          history={props.msptHistory}
+          stroke="rgb(52 211 153)"
+          title="Server tick time graph"
+        />
+      </div>
+      <div class="border-t border-white/20 pt-2">
+        <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
+        <ul class="mt-1">
+          {props.onlinePlayers.map((name) => (
+            <li>{name}</li>
           ))}
-          <polyline
-            fill="none"
-            points={framePolyline(props.computeTimeHistory)}
-            stroke="rgb(96 165 250)"
-            stroke-width="2"
-            stroke-linejoin="round"
-            stroke-linecap="round"
-          />
-        </svg>
+        </ul>
       </div>
     </div>
   );

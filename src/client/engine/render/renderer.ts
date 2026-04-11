@@ -2,8 +2,11 @@ import type { Mat4, Vec4 } from "gl-matrix";
 import { WebGLUtilities } from "~/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "~/lib/webglutils/RenderPass";
 import { Cube } from "./cube";
+import { Quad } from "./quad";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
+import playerFSText from "./shaders/player.frag";
+import playerVSText from "./shaders/player.vert";
 
 export interface RenderView {
   viewMatrix: Mat4;
@@ -12,6 +15,9 @@ export interface RenderView {
   numCubes: number;
   lightPosition: Vec4;
   backgroundColor: Vec4;
+  playerPositions: Float32Array;
+  playerPitches: Float32Array;
+  numPlayers: number;
 }
 
 export class Renderer {
@@ -19,6 +25,8 @@ export class Renderer {
   private readonly ctx: WebGLRenderingContext;
   private readonly cubeGeometry: Cube;
   private readonly blankCubeRenderPass: RenderPass;
+  private readonly quadGeometry: Quad;
+  private readonly playerRenderPass: RenderPass;
 
   private currentView!: RenderView;
 
@@ -31,6 +39,10 @@ export class Renderer {
     this.cubeGeometry = new Cube();
     this.blankCubeRenderPass = new RenderPass(extVAO, this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass();
+
+    this.quadGeometry = new Quad();
+    this.playerRenderPass = new RenderPass(extVAO, this.ctx, playerVSText, playerFSText);
+    this.initPlayerPass();
   }
 
   render(view: RenderView): void {
@@ -49,6 +61,85 @@ export class Renderer {
 
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
+
+    if (view.numPlayers > 0) {
+      gl.disable(gl.CULL_FACE);
+      this.playerRenderPass.updateAttributeBuffer("aOffset", view.playerPositions);
+      this.playerRenderPass.updateAttributeBuffer("aPitch", view.playerPitches);
+      this.playerRenderPass.drawInstanced(view.numPlayers);
+      gl.enable(gl.CULL_FACE);
+    }
+  }
+
+  private initPlayerPass(): void {
+    const gl = this.ctx;
+    const pass = this.playerRenderPass;
+    const quad = this.quadGeometry;
+
+    pass.setIndexBufferData(quad.indicesFlat());
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      quad.positionsFlat(),
+    );
+    pass.addAttribute(
+      "aNorm",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      quad.normalsFlat(),
+    );
+    pass.addAttribute(
+      "aUV",
+      2,
+      gl.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      quad.uvFlat(),
+    );
+    pass.addInstancedAttribute(
+      "aOffset",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aPitch",
+      1,
+      gl.FLOAT,
+      false,
+      1 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+
+    pass.addUniform("uLightPos", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform4fv(loc, this.currentView.lightPosition);
+    });
+    pass.addUniform("uProj", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
+    });
+    pass.addUniform("uView", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
+    });
+
+    pass.setDrawData(gl.TRIANGLES, quad.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
   }
 
   private initBlankCubePass(): void {

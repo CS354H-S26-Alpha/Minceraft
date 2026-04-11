@@ -1,4 +1,5 @@
-import { Actor } from "@cloudflare/actors";
+import { DurableObject } from "cloudflare:workers";
+import { Alarms } from "@cloudflare/actors/alarms";
 import { RpcTarget } from "capnweb";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
@@ -26,39 +27,67 @@ export type {
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
 
-type SnapshotListener = (snap: RoomSnapshot) => unknown;
+type SnapshotListener = ((snap: RoomSnapshot) => unknown) & {
+  dup?(): SnapshotListener;
+  onRpcBroken?(callback: () => void): void;
+  [Symbol.dispose]?(): void;
+};
 
-function notify(cb: SnapshotListener, snap: RoomSnapshot) {
+function notify(cb: SnapshotListener, snap: RoomSnapshot): Promise<boolean> {
   try {
     const result = cb(snap);
     if (result && typeof (result as Promise<unknown>).then === "function") {
-      (result as Promise<unknown>).catch(() => {});
+      return (result as Promise<unknown>).then(
+        () => true,
+        () => false,
+      );
     }
+    return Promise.resolve(true);
   } catch {
-    // capnweb surfaces broken stubs via onRpcBroken elsewhere
+    return Promise.resolve(false);
   }
 }
 
-export class GameRoom extends Actor<Env> {
+export class GameRoom extends DurableObject<Env> {
+  alarms: Alarms<this>;
   private playerCollection = new PlayerCollection();
   private collections: EntityCollection[] = [this.playerCollection];
   private listeners = new Map<string, SnapshotListener>();
-  private tick = 0;
-  private db!: DrizzleSqliteDODatabase<typeof schema>;
+  private gameTick = 0;
+  private lastTickTimeMs = 0;
+  private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private db: DrizzleSqliteDODatabase<typeof schema>;
+  private initialized = false;
 
-  override async onInit() {
-    this.db = drizzle(this.ctx.storage, { schema });
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.db = drizzle(ctx.storage, { schema });
+    this.alarms = new Alarms(ctx, this);
+  }
+
+  private ensureInitialized() {
+    if (this.initialized) return;
+    this.initialized = true;
     migrate(this.db, migrations);
     for (const col of this.collections) {
       col.hydrate(this.db);
     }
   }
 
-  join(playerId: string, name: string, onSnapshot: SnapshotListener) {
+  async join(playerId: string, name: string, onSnapshot: SnapshotListener) {
+    this.ensureInitialized();
     this.playerCollection.join(playerId, name);
-    this.listeners.set(playerId, onSnapshot);
-    notify(onSnapshot, this.snapshot());
-    this.ensureAlarm();
+    this.removeListener(playerId);
+    const listener = onSnapshot.dup?.() ?? onSnapshot;
+    listener.onRpcBroken?.(() => {
+      this.removeListener(playerId);
+      if (this.listeners.size > 0) {
+        void this.broadcast(this.snapshot());
+      }
+    });
+    this.listeners.set(playerId, listener);
+    await this.broadcast(this.snapshot());
+    this.startTickLoop();
   }
 
   sendInputs(playerId: string, inputs: PlayerInput[]) {
@@ -66,41 +95,63 @@ export class GameRoom extends Actor<Env> {
   }
 
   leave(playerId: string) {
-    this.listeners.delete(playerId);
+    this.removeListener(playerId);
     this.playerCollection.leave(playerId);
+    if (this.listeners.size > 0) {
+      void this.broadcast(this.snapshot());
+    }
   }
 
-  override async onAlarm(): Promise<void> {
-    this.tick++;
+  override async alarm(info?: AlarmInvocationInfo) {
+    await this.alarms.alarm(info);
+  }
 
+  async runTick() {
+    return this.tick();
+  }
+
+  private async tick() {
+    this.ensureInitialized();
+
+    const tickStart = performance.now();
+    this.gameTick++;
     let changed = false;
     for (const col of this.collections) {
       if (col.tick()) changed = true;
     }
+    this.lastTickTimeMs = performance.now() - tickStart;
 
     if (changed && this.listeners.size > 0) {
-      const snap = this.snapshot();
-      for (const cb of this.listeners.values()) {
-        notify(cb, snap);
-      }
+      await this.broadcast(this.snapshot());
     }
-
-    if (this.tick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
+    if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
       this.flushAll();
     }
+    if (this.listeners.size === 0) {
+      this.stopTickLoop();
+      if (this.hasDirty()) this.flushAll();
+    }
+  }
 
-    if (this.listeners.size > 0) {
-      this.ctx.storage.setAlarm(Date.now() + TICK_MS);
-    } else if (this.hasDirty()) {
-      this.flushAll();
+  private async broadcast(snap: RoomSnapshot): Promise<void> {
+    const entries = [...this.listeners.entries()];
+    const results = await Promise.all(entries.map(([, cb]) => notify(cb, snap)));
+    const broken = entries.filter((_, i) => !results[i]).map(([id]) => id);
+    for (const id of broken) {
+      this.removeListener(id);
+    }
+    if (broken.length > 0 && this.listeners.size > 0) {
+      await this.broadcast(this.snapshot());
     }
   }
 
   private snapshot(): RoomSnapshot {
+    const onlinePlayerIds = new Set(this.listeners.keys());
     return {
-      tick: this.tick,
-      players: this.playerCollection.snapshot(),
-      acks: this.playerCollection.getAcks(),
+      tick: this.gameTick,
+      players: this.playerCollection.snapshot(onlinePlayerIds),
+      acks: this.playerCollection.getAcks(onlinePlayerIds),
+      tickTimeMs: this.lastTickTimeMs,
     };
   }
 
@@ -114,8 +165,20 @@ export class GameRoom extends Actor<Env> {
     }
   }
 
-  private ensureAlarm() {
-    this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  private removeListener(playerId: string) {
+    this.listeners.get(playerId)?.[Symbol.dispose]?.();
+    this.listeners.delete(playerId);
+  }
+
+  private startTickLoop() {
+    if (this.tickInterval) return;
+    this.tickInterval = setInterval(() => this.tick(), TICK_MS);
+  }
+
+  private stopTickLoop() {
+    if (!this.tickInterval) return;
+    clearInterval(this.tickInterval);
+    this.tickInterval = null;
   }
 }
 
@@ -143,7 +206,7 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   }
 
   [Symbol.dispose]() {
-    this.leave();
+    Promise.resolve(this.leave()).catch(() => {});
   }
 }
 

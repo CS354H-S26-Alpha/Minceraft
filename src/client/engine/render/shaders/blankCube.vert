@@ -14,8 +14,8 @@ varying vec4 wsPos;
 varying vec2 uv;
 
 void main() {
-    gl_Position = uProj * uView * (aVertPos + aOffset);
-    wsPos = aVertPos + aOffset;
-    normal = normalize(aNorm);
-    uv = aUV;
+  gl_Position = uProj * uView * (aVertPos + aOffset);
+  wsPos = aVertPos + aOffset;
+  normal = normalize(aNorm);
+  uv = aUV;
 }

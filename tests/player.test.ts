@@ -13,7 +13,14 @@ const P = (
   }> = {},
 ) => new Player({ id: "p1", name: "test", x: 0, y: 0, z: 0, yaw: 0, pitch: 0, ...overrides });
 
-const I = (dx: number, dy: number, dz: number) => ({ dx, dy, dz, yaw: 0, pitch: 0 });
+const I = (dx: number, dy: number, dz: number) => ({
+  dx,
+  dy,
+  dz,
+  dtSeconds: 1,
+  yaw: 0,
+  pitch: 0,
+});
 
 describe("Player", () => {
   it("initializes with given position", () => {

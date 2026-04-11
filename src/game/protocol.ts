@@ -9,6 +9,7 @@ export interface RoomSnapshot {
   tick: number;
   players: Record<string, PlayerState>;
   acks: Record<string, number>;
+  tickTimeMs: number;
 }
 
 export interface RoomSessionApi {

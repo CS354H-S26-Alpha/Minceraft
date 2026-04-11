@@ -64,7 +64,11 @@ export class PlayerCollection implements EntityCollection {
       }
       this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
       queue.length = 0;
-      if (Object.keys(prev).some((k) => prev[k as keyof typeof prev] !== player.state[k as keyof typeof prev])) {
+      if (
+        Object.keys(prev).some(
+          (k) => prev[k as keyof typeof prev] !== player.state[k as keyof typeof prev],
+        )
+      ) {
         this.dirty.add(id);
         changed = true;
       }
@@ -72,17 +76,19 @@ export class PlayerCollection implements EntityCollection {
     return changed;
   }
 
-  snapshot(): Record<string, PlayerState> {
+  snapshot(visiblePlayerIds?: ReadonlySet<string>): Record<string, PlayerState> {
     const result: Record<string, PlayerState> = {};
     for (const [id, player] of this.players) {
+      if (visiblePlayerIds && !visiblePlayerIds.has(id)) continue;
       result[id] = player.state;
     }
     return result;
   }
 
-  getAcks(): Record<string, number> {
+  getAcks(visiblePlayerIds?: ReadonlySet<string>): Record<string, number> {
     const result: Record<string, number> = {};
     for (const [id] of this.players) {
+      if (visiblePlayerIds && !visiblePlayerIds.has(id)) continue;
       result[id] = this.acks.get(id) ?? 0;
     }
     return result;

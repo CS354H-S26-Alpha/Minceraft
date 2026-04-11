@@ -79,6 +79,22 @@ export class CameraController {
     return Math.asin(Math.max(-1, Math.min(1, lookDir.y)));
   }
 
+  setOrientation(yaw: number, pitch: number): void {
+    const eye = this.camera.pos();
+    const cp = Math.cos(pitch);
+    const lookDir = new Vec3([cp * Math.sin(yaw), Math.sin(pitch), -cp * Math.cos(yaw)]);
+    const target = Vec3.clone(eye).add(lookDir);
+    this.camera = new Camera(
+      eye,
+      target,
+      new Vec3([0, 1, 0]),
+      this.opts.fov,
+      this.opts.width / this.opts.height,
+      this.opts.zNear,
+      this.opts.zFar,
+    );
+  }
+
   setPosition(pos: Vec3): void {
     this.camera.setPos(pos);
   }

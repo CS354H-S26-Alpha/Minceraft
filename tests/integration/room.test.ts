@@ -1,53 +1,32 @@
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
-import { RpcSession, type RpcTransport } from "capnweb";
+import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { GameApi, RoomSnapshot } from "../../src/game/protocol.ts";
 import type { GameRoom } from "../../src/game/room.ts";
 
-// ---- capnweb HTTP batch transport routed through the in-process Worker ----
+// ---- capnweb WebSocket RPC session via in-process Worker ----
 
-class WorkersBatchTransport implements RpcTransport {
-  #toSend: string[] | null = [];
-  #toReceive: string[] | null = null;
-  #promise: Promise<void>;
-
-  constructor(path: string) {
-    this.#promise = (async () => {
-      await new Promise((r) => setTimeout(r, 0));
-      const batch = this.#toSend;
-      this.#toSend = null;
-      const res = await workerExports.default.fetch(
-        new Request(`http://test.local${path}`, {
-          method: "POST",
-          body: (batch ?? []).join("\n"),
-        }),
-      );
-      if (!res.ok) {
-        res.body?.cancel();
-        throw new Error(`RPC request failed: ${res.status} ${res.statusText}`);
-      }
-      const body = await res.text();
-      this.#toReceive = body === "" ? [] : body.split("\n");
-    })();
+async function openWebSocketGameApi(): Promise<RpcStub<GameApi>> {
+  const response = await workerExports.default.fetch(
+    new Request("http://test.local/api", {
+      headers: { Upgrade: "websocket" },
+    }),
+  );
+  if (response.status !== 101 || !response.webSocket) {
+    throw new Error(`Expected websocket upgrade, got ${response.status}`);
   }
-
-  async send(message: string): Promise<void> {
-    if (this.#toSend) this.#toSend.push(message);
-  }
-
-  async receive(): Promise<string> {
-    if (!this.#toReceive) await this.#promise;
-    const msg = this.#toReceive?.shift();
-    if (msg === undefined) throw new Error("Batch RPC request ended.");
-    return msg;
-  }
+  response.webSocket.accept();
+  return newWebSocketRpcSession<GameApi>(response.webSocket);
 }
 
-function openGameApi(): { api: GameApi; session: RpcSession<GameApi> } {
-  const transport = new WorkersBatchTransport("/api");
-  const session = new RpcSession<GameApi>(transport);
-  return { api: session.getRemoteMain() as unknown as GameApi, session };
+async function waitFor(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for condition");
 }
 
 // ---- Durable Object helpers ----
@@ -86,12 +65,10 @@ describe("GameRoom Durable Object", () => {
     const received: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", "Alice", (snap) => received.push(snap));
-      room.sendInputs("alice", [{ dx: 1, dy: 0, dz: 0, yaw: 0, pitch: 0 }]);
+      await room.join("alice", "Alice", (snap) => received.push(snap));
+      room.sendInputs("alice", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
+      await room.runTick();
     });
-
-    const alarmRan = await runDurableObjectAlarm(stub);
-    expect(alarmRan).toBe(true);
 
     // Initial join snapshot + tick-driven broadcast
     expect(received.length).toBeGreaterThanOrEqual(2);
@@ -107,13 +84,12 @@ describe("GameRoom Durable Object", () => {
     const bobSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
-      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
-      room.sendInputs("alice", [{ dx: 0, dy: 0, dz: -1, yaw: 0, pitch: 0 }]);
-      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, yaw: 0, pitch: 0 }]);
+      await room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      await room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      room.sendInputs("alice", [{ dx: 0, dy: 0, dz: -1, dtSeconds: 1, yaw: 0, pitch: 0 }]);
+      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
+      await room.runTick();
     });
-
-    await runDurableObjectAlarm(stub);
 
     const aliceLatest = aliceSnaps[aliceSnaps.length - 1];
     const bobLatest = bobSnaps[bobSnaps.length - 1];
@@ -128,16 +104,69 @@ describe("GameRoom Durable Object", () => {
     const aliceSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      await room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
       room.leave("alice");
       // Another player keeps the room ticking so broadcasts would fire
-      room.join("bob", "Bob", () => {});
-      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, yaw: 0, pitch: 0 }]);
+      await room.join("bob", "Bob", () => {});
+      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
+      const initialCount = aliceSnaps.length;
+      await room.runTick();
+      expect(aliceSnaps.length).toBe(initialCount);
+    });
+  });
+
+  it("removes offline players from snapshots", async () => {
+    const stub = makeRoomStub(roomName);
+    const bobSnaps: RoomSnapshot[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", () => {});
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      room.leave("alice");
     });
 
-    const initialCount = aliceSnaps.length;
-    await runDurableObjectAlarm(stub);
-    expect(aliceSnaps.length).toBe(initialCount);
+    const latest = bobSnaps[bobSnaps.length - 1];
+    expect(latest?.players.alice).toBeUndefined();
+    expect(latest?.players.bob).toBeDefined();
+    expect(latest?.acks.alice).toBeUndefined();
+    expect(latest?.acks.bob).toBeDefined();
+  });
+
+  it("removes players when their snapshot delivery fails", async () => {
+    const stub = makeRoomStub(roomName);
+    const bobSnaps: RoomSnapshot[] = [];
+    let disconnected = false;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", () => {
+        if (disconnected) throw new Error("connection lost");
+      });
+      await room.join("alice", "Alice", aliceListener);
+      await room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+    });
+
+    onBroken?.();
+
+    const latest = bobSnaps[bobSnaps.length - 1];
+    expect(latest?.players.alice).toBeUndefined();
+    expect(latest?.players.bob).toBeDefined();
+  });
+
+  it("does not show a previously disconnected player to a later joiner", async () => {
+    const stub = makeRoomStub(roomName);
+    const bobSnaps: RoomSnapshot[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      await room.join("alice", "Alice", () => {});
+      room.leave("alice");
+      await room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+    });
+
+    expect(bobSnaps.length).toBeGreaterThanOrEqual(1);
+    const initialBobSnap = bobSnaps[0];
+    expect(initialBobSnap?.players.alice).toBeUndefined();
+    expect(initialBobSnap?.players.bob).toBeDefined();
+    expect(initialBobSnap?.acks.alice).toBeUndefined();
   });
 
   it("does not broadcast when a tick fires with no pending input", async () => {
@@ -145,33 +174,61 @@ describe("GameRoom Durable Object", () => {
     const received: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.join("alice", "Alice", (snap) => received.push(snap));
+      await room.join("alice", "Alice", (snap) => received.push(snap));
+      // First tick flushes any dirty state
+      await room.runTick();
+      const beforeCount = received.length;
+      // Second tick: no input, no dirty, no broadcast
+      await room.runTick();
+      expect(received.length).toBe(beforeCount);
     });
-    // First alarm flushes the dirty-from-join broadcast.
-    await runDurableObjectAlarm(stub);
-    const beforeCount = received.length;
-    // Second alarm: no input, no dirty, no broadcast.
-    await runDurableObjectAlarm(stub);
-    expect(received.length).toBe(beforeCount);
   });
 });
 
 describe("GameServer capnweb RPC", () => {
   it("authenticates and joins a room via the capability chain", async () => {
-    const { api } = openGameApi();
+    const api = await openWebSocketGameApi();
     const received: RoomSnapshot[] = [];
 
     const auth = api.authenticate("alice");
-    const session = await auth.join("rpc-room", (snap: RoomSnapshot) => {
+    using roomSession = await auth.join("rpc-room", (snap: RoomSnapshot) => {
       received.push(snap);
     });
 
-    expect(session).toBeDefined();
-    // Initial snapshot should have flowed back through the batch response.
+    expect(roomSession).toBeDefined();
     expect(received.length).toBeGreaterThanOrEqual(1);
-    // Player ID is a deterministic hash of "alice", check any player exists
     const players = Object.values(received[0]?.players ?? {});
     expect(players).toHaveLength(1);
     expect(players[0]?.y).toBeCloseTo(70);
   });
+
+  it("removes a player from other clients when they leave the room", async () => {
+    const bobApi = await openWebSocketGameApi();
+    const bobSnaps: RoomSnapshot[] = [];
+
+    const bobAuth = bobApi.authenticate("bob");
+    using _bobSession = await bobAuth.join("ws-room", (snap: RoomSnapshot) => {
+      bobSnaps.push(snap);
+    });
+
+    {
+      const aliceApi = await openWebSocketGameApi();
+      const aliceAuth = aliceApi.authenticate("alice");
+      using _aliceSession = await aliceAuth.join("ws-room", () => {});
+
+      await waitFor(() => {
+        const latest = bobSnaps[bobSnaps.length - 1];
+        if (!latest) return false;
+        const names = Object.values(latest.players).map((p) => p.name);
+        return names.includes("alice") && names.includes("bob");
+      });
+    }
+
+    await waitFor(() => {
+      const latest = bobSnaps[bobSnaps.length - 1];
+      if (!latest) return false;
+      const names = Object.values(latest.players).map((p) => p.name);
+      return !names.includes("alice") && names.includes("bob");
+    }, 2000);
+  }, 4000);
 });
