@@ -10,13 +10,16 @@ import {
 import { Vec4, Vec3 } from "gl-matrix";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Cube } from "./Cube.js";
-import { Chunk } from "./Chunk.js";
+import { Chunk, CHUNK_SIZE } from "./Chunk.js";
 import { FlatTerrain, NoTerrain } from "./Terrain.js";
+import { CubeType } from "./CubeType.js";
+import { ChunkMaster } from "./ChunkMaster.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
   
   private chunks : Chunk[] = [];
+  private chunkMaster: ChunkMaster;
   
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -43,7 +46,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui = new GUI(this.canvas2d, this);
     this.playerPosition = this.gui.getCamera().pos();
     
-    this.chunks = [new Chunk(0.0, 0.0, new FlatTerrain()), new Chunk(0.0, 0.0, new FlatTerrain())];
+    // this.chunks = [];
+    // const terrain = new FlatTerrain(CubeType.Grass, 10);
+    // for (let cx = -1; cx <= 1; cx++) {
+    //     for (let cz = -1; cz <= 1; cz++) {
+    //         this.chunks.push(new Chunk(cx * CHUNK_SIZE, cz * CHUNK_SIZE, terrain));
+    //     }
+    // }
+    this.chunkMaster = new ChunkMaster(0, 0, new FlatTerrain(CubeType.Grass, 10));
+    this.chunks = this.chunkMaster.getChunksAroundPos(this.playerPosition.x, this.playerPosition.z);
     
     this.blankCubeRenderPass = new RenderPass(this.extVAO, gl, blankCubeVSText, blankCubeFSText);
     this.cubeGeometry = new Cube();
@@ -145,6 +156,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   public draw(): void {
     //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
     this.playerPosition.add(this.gui.walkDir());
+    
+    this.chunks = this.chunkMaster.getChunksAroundPos(this.playerPosition.x, this.playerPosition.z);
     
     this.gui.getCamera().setPos(this.playerPosition);
     

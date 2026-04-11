@@ -6,11 +6,15 @@ import { CubeType, CUBE_TYPE_INFO } from "./CubeType";
 export const CHUNK_SIZE = 64;
 export const MAX_HEIGHT = 100;
 
-function chunkOrigin(wx: number, wz: number): [number, number] {
+export function chunkOrigin(wx: number, wz: number): [number, number] {
     return [
         Math.floor(wx / CHUNK_SIZE) * CHUNK_SIZE,
         Math.floor(wz / CHUNK_SIZE) * CHUNK_SIZE,
     ];
+}
+
+export function chunkKey(originX: number, originZ: number): string {
+  return `${originX},${originZ}`;
 }
 
 export class Chunk {
