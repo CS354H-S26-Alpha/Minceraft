@@ -5,9 +5,10 @@ import type { GameApi, RoomSnapshot } from "../game/protocol";
 import { ClientEntity } from "./replication";
 
 const INPUT_SEND_INTERVAL_MS = 50;
+const DEFAULT_PLAYER_HEALTH = 100;
 
 export function createRoom(roomId: string, playerId: string) {
-  const player = new Player({ id: playerId, x: 0, y: 100, z: 0 });
+  const player = new Player({ id: playerId, x: 0, y: 100, z: 0, health: DEFAULT_PLAYER_HEALTH });
   const replicated = new ClientEntity(player, playerDistanceSq);
   const [snapshot, setSnapshot] = createSignal<RoomSnapshot>({ tick: 0, players: {}, acks: {} });
 

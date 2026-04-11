@@ -13,6 +13,7 @@ export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
 const SPAWN_POSITION = { x: 0, y: 100, z: 0 };
+const DEFAULT_PLAYER_HEALTH = 20;
 
 type SnapshotListener = (snap: RoomSnapshot) => unknown;
 
@@ -41,13 +42,19 @@ export class GameRoom extends Actor<Env> {
     migrate(this.db, migrations);
 
     for (const row of this.db.select().from(schema.players).all()) {
-      this.players.set(row.id, new Player({ id: row.id, x: row.x, y: row.y, z: row.z }));
+      this.players.set(
+        row.id,
+        new Player({ id: row.id, x: row.x, y: row.y, z: row.z, health: DEFAULT_PLAYER_HEALTH }),
+      );
     }
   }
 
   join(playerId: string, onSnapshot: SnapshotListener) {
     if (!this.players.has(playerId)) {
-      this.players.set(playerId, new Player({ id: playerId, ...SPAWN_POSITION }));
+      this.players.set(
+        playerId,
+        new Player({ id: playerId, ...SPAWN_POSITION, health: DEFAULT_PLAYER_HEALTH }),
+      );
       this.dirty.add(playerId);
     }
     this.listeners.set(playerId, onSnapshot);

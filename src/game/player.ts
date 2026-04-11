@@ -8,6 +8,7 @@ export interface PlayerState {
   x: number;
   y: number;
   z: number;
+  health: number;
 }
 
 export interface PlayerInput {

@@ -554,9 +554,9 @@ export class Debugger {
     argumentIndex: number,
     value: any,
   ): string {
-    var _funcInfo = (Debugger.glValidEnumContexts as any)[functionName];
-    if (funcInfo !== undefined) {
-      var funcInfo = funcInfo[numArgs];
+    var funcInfos = (Debugger.glValidEnumContexts as any)[functionName];
+    if (funcInfos !== undefined) {
+      var funcInfo = funcInfos[numArgs];
       if (funcInfo !== undefined) {
         if (funcInfo[argumentIndex]) {
           if (

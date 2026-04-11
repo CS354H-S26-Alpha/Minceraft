@@ -2,6 +2,7 @@ import { type Vec3, Vec4 } from "gl-matrix";
 import { type Accessor, createEffect, onCleanup } from "solid-js";
 import { createStore } from "solid-js/store";
 import { Chunk } from "~/game/chunk";
+import { InventoryOverlay } from "~/game/inventory";
 import type { Player, PlayerInput } from "~/game/player";
 import { CameraController } from "./camera-controller";
 import { InputController } from "./input";
@@ -58,7 +59,24 @@ export function createGame(args: CreateGameArgs): GameState {
     const renderer = new Renderer(gl);
     const chunk = new Chunk(0.0, 0.0, 64);
     const camera = new CameraController({ width: inputEl.width, height: inputEl.height });
-    const input = new InputController(inputEl, { onReset: () => camera.reset() });
+    const inventory = new InventoryOverlay(inputEl);
+    let input: InputController | undefined;
+    input = new InputController(inputEl, {
+      canLook: () => !inventory.isOpen(),
+      canMove: () => !inventory.isOpen(),
+      onHotbarCycle: (delta) => inventory.cycleHotbarSelection(delta),
+      onHotbarSelect: (index) => inventory.selectHotbarSlot(index),
+      onInventoryToggle: () => {
+        inventory.setOpen(!inventory.isOpen());
+        input?.clearWalkKeys();
+        input?.cancelPointerDrag();
+      },
+      onMouseDown: (event) => inventory.handleMouseDown(event),
+      onMouseLeave: () => inventory.handleMouseLeave(),
+      onMouseMove: (event) => inventory.handleMouseMove(event),
+      onMouseUp: (event) => inventory.handleMouseUp(event),
+      onReset: () => camera.reset(),
+    });
 
     let rafId = 0;
     let lastTime = performance.now();
@@ -71,8 +89,13 @@ export function createGame(args: CreateGameArgs): GameState {
       lastTime = now;
 
       const mouse = input.consumeMouseDelta();
-      camera.rotate(mouse.dx, mouse.dy);
-      const walk = camera.walkDir(input.walkKeys());
+      if (!inventory.isOpen()) {
+        camera.rotate(mouse.dx, mouse.dy);
+      }
+
+      const walk = camera.walkDir(
+        inventory.isOpen() ? { w: false, a: false, s: false, d: false } : input.walkKeys(),
+      );
       args.sendInput({ dx: walk.x, dz: walk.z });
       camera.setPosition(args.player.position);
 
@@ -84,6 +107,7 @@ export function createGame(args: CreateGameArgs): GameState {
         lightPosition: LIGHT_POSITION,
         backgroundColor: BACKGROUND_COLOR,
       });
+      inventory.draw();
 
       frame++;
       fpsAccumMs += dt;
@@ -106,7 +130,7 @@ export function createGame(args: CreateGameArgs): GameState {
 
     onCleanup(() => {
       cancelAnimationFrame(rafId);
-      input.destroy();
+      input?.destroy();
     });
   });
 

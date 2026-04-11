@@ -6,6 +6,15 @@ export interface WalkKeys {
 }
 
 export interface InputControllerOptions {
+  canLook?: () => boolean;
+  canMove?: () => boolean;
+  onHotbarCycle?: (delta: number) => void;
+  onHotbarSelect?: (index: number) => void;
+  onInventoryToggle?: () => void;
+  onMouseDown?: (event: MouseEvent) => boolean;
+  onMouseLeave?: () => void;
+  onMouseMove?: (event: MouseEvent) => boolean;
+  onMouseUp?: (event: MouseEvent) => boolean;
   onReset?: () => void;
   onJump?: () => void;
 }
@@ -28,6 +37,11 @@ export class InputController {
     canvas.addEventListener(
       "mousedown",
       (e) => {
+        const handled = opts.onMouseDown?.(e) ?? false;
+        if (handled || opts.canLook?.() === false) {
+          this.dragging = false;
+          return;
+        }
         this.dragging = true;
         this.prevX = e.screenX;
         this.prevY = e.screenY;
@@ -37,7 +51,8 @@ export class InputController {
     canvas.addEventListener(
       "mousemove",
       (e) => {
-        if (!this.dragging) return;
+        const handled = opts.onMouseMove?.(e) ?? false;
+        if (handled || !this.dragging || opts.canLook?.() === false) return;
         this.pendingMouseDx += e.screenX - this.prevX;
         this.pendingMouseDy += e.screenY - this.prevY;
         this.prevX = e.screenX;
@@ -45,12 +60,50 @@ export class InputController {
       },
       { signal },
     );
-    canvas.addEventListener("mouseup", () => (this.dragging = false), { signal });
+    canvas.addEventListener(
+      "mouseup",
+      (e) => {
+        opts.onMouseUp?.(e);
+        this.dragging = false;
+      },
+      { signal },
+    );
+    canvas.addEventListener(
+      "mouseleave",
+      () => {
+        opts.onMouseLeave?.();
+        this.dragging = false;
+      },
+      { signal },
+    );
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        opts.onHotbarCycle?.(e.deltaY);
+        if (opts.onHotbarCycle) {
+          e.preventDefault();
+        }
+      },
+      { signal, passive: false },
+    );
     canvas.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
   }
 
   walkKeys(): Readonly<WalkKeys> {
     return this.keys;
+  }
+
+  clearWalkKeys(): void {
+    this.keys.w = false;
+    this.keys.a = false;
+    this.keys.s = false;
+    this.keys.d = false;
+  }
+
+  cancelPointerDrag(): void {
+    this.dragging = false;
+    this.pendingMouseDx = 0;
+    this.pendingMouseDy = 0;
   }
 
   consumeMouseDelta(): { dx: number; dy: number } {
@@ -66,23 +119,39 @@ export class InputController {
   }
 
   private handleKeyDown(e: KeyboardEvent, opts: InputControllerOptions): void {
+    if (e.code.startsWith("Digit")) {
+      const hotbarIndex = Number(e.code.slice("Digit".length)) - 1;
+      if (Number.isInteger(hotbarIndex) && hotbarIndex >= 0 && hotbarIndex < 9) {
+        opts.onHotbarSelect?.(hotbarIndex);
+        return;
+      }
+    }
+
     switch (e.code) {
+      case "KeyE":
+        opts.onInventoryToggle?.();
+        break;
       case "KeyW":
+        if (opts.canMove?.() === false) break;
         this.keys.w = true;
         break;
       case "KeyA":
+        if (opts.canMove?.() === false) break;
         this.keys.a = true;
         break;
       case "KeyS":
+        if (opts.canMove?.() === false) break;
         this.keys.s = true;
         break;
       case "KeyD":
+        if (opts.canMove?.() === false) break;
         this.keys.d = true;
         break;
       case "KeyR":
         opts.onReset?.();
         break;
       case "Space":
+        if (opts.canMove?.() === false) break;
         opts.onJump?.();
         break;
     }
