@@ -43,23 +43,16 @@ type InventoryItem = {
   texture: HTMLImageElement | null;
 };
 
-type InventorySlot = InventoryItem | null;
-
-type InventoryDragState = {
-  pointer: Point;
-  source: SlotLocation;
-};
-
 type CraftingResult = {
   item: InventoryItem;
   sourceIndex: number;
 };
 
 const INVENTORY_SLOT_COUNT = 36;
-const HOTBAR_START_INDEX = 27;
 const CRAFT_SLOT_COUNT = 4;
 const SLOT_COLUMNS = 9;
 const CRAFT_COLUMNS = 2;
+const MAX_STACK_SIZE = 64;
 
 const dirtTexture = new URL("../../assets/dirt.bmp", import.meta.url).href;
 const woodTexture = new URL("../../assets/wood.bmp", import.meta.url).href;
@@ -83,11 +76,16 @@ export class InventoryOverlay {
     dirt: HTMLImageElement;
     wood: HTMLImageElement;
   };
-  private craftSlots: InventorySlot[];
-  private dragState: InventoryDragState | null;
+  private carriedItem: InventoryItem | null;
+  private carriedPointer: Point;
+  private craftSlots: (InventoryItem | null)[];
+  private distributedDuringPress: boolean;
   private hoveredTargetKey: string | null;
-  private inventorySlots: InventorySlot[];
+  private inventorySlots: (InventoryItem | null)[];
+  private lastDistributedTargetKey: string | null;
+  private mouseIsDown: boolean;
   private open: boolean;
+  private pressTarget: SlotTarget | null;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -101,30 +99,39 @@ export class InventoryOverlay {
       dirt: loadTexture(dirtTexture),
       wood: loadTexture(woodTexture),
     };
-    this.inventorySlots = Array<InventorySlot>(INVENTORY_SLOT_COUNT).fill(null);
-    this.craftSlots = Array<InventorySlot>(CRAFT_SLOT_COUNT).fill(null);
-    this.dragState = null;
+    this.inventorySlots = Array<InventoryItem | null>(INVENTORY_SLOT_COUNT).fill(null);
+    this.craftSlots = Array<InventoryItem | null>(CRAFT_SLOT_COUNT).fill(null);
+    this.carriedItem = null;
+    this.carriedPointer = { x: canvas.width / 2, y: canvas.height / 2 };
+    this.distributedDuringPress = false;
     this.hoveredTargetKey = null;
+    this.lastDistributedTargetKey = null;
+    this.mouseIsDown = false;
     this.open = false;
+    this.pressTarget = null;
     this.reset();
   }
 
   public reset(): void {
-    this.inventorySlots = Array<InventorySlot>(INVENTORY_SLOT_COUNT).fill(null);
+    this.inventorySlots = Array<InventoryItem | null>(INVENTORY_SLOT_COUNT).fill(null);
     this.inventorySlots[13] = this.createItem("dirt", 32);
     this.inventorySlots[30] = this.createItem("wood", 8);
-    this.craftSlots = Array<InventorySlot>(CRAFT_SLOT_COUNT).fill(null);
+    this.craftSlots = Array<InventoryItem | null>(CRAFT_SLOT_COUNT).fill(null);
+    this.carriedItem = null;
     this.cancelDrag();
   }
 
   public setOpen(open: boolean): void {
     this.open = open;
     this.hoveredTargetKey = null;
-    if (!open) this.dragState = null;
+    this.lastDistributedTargetKey = null;
+    this.mouseIsDown = false;
+    this.distributedDuringPress = false;
+    this.pressTarget = null;
   }
 
   public isDragging(): boolean {
-    return this.dragState !== null;
+    return this.carriedItem !== null;
   }
 
   public handleMouseDown(mouse: MouseEvent): boolean {
@@ -132,17 +139,35 @@ export class InventoryOverlay {
 
     const point = this.toCanvasPoint(mouse);
     const target = this.targetAtPoint(point);
-    this.hoveredTargetKey = targetKey(target);
+    const key = targetKey(target);
+    this.mouseIsDown = true;
+    this.pressTarget = target;
+    this.distributedDuringPress = false;
+    this.carriedPointer = point;
+    this.hoveredTargetKey = key;
+    this.lastDistributedTargetKey = key;
 
-    if (!target || target.kind === "output") return true;
+    if (this.carriedItem) {
+      if (target?.kind === "output") {
+        this.pickupCraftingOutput();
+        this.pressTarget = null;
+      }
+      return true;
+    }
 
-    const item = this.getSlotItem(target);
-    if (!item) return true;
+    if (!target) {
+      this.lastDistributedTargetKey = null;
+      return true;
+    }
 
-    this.dragState = {
-      pointer: point,
-      source: target,
-    };
+    if (target.kind === "output") {
+      this.pickupCraftingOutput();
+      this.pressTarget = null;
+      return true;
+    }
+
+    this.pickupFromSlot(target);
+    this.pressTarget = null;
     return true;
   }
 
@@ -151,12 +176,18 @@ export class InventoryOverlay {
 
     const point = this.toCanvasPoint(mouse);
     const target = this.targetAtPoint(point);
-    this.hoveredTargetKey = targetKey(target);
+    const key = targetKey(target);
+    this.carriedPointer = point;
+    this.hoveredTargetKey = key;
 
-    if (this.dragState) {
-      this.dragState.pointer = point;
+    if (this.mouseIsDown && this.carriedItem && key !== this.lastDistributedTargetKey) {
+      if (target && target.kind !== "output") {
+        const didDistribute = this.placeOneIntoSlot(target);
+        this.distributedDuringPress = this.distributedDuringPress || didDistribute;
+      }
     }
 
+    this.lastDistributedTargetKey = key;
     return true;
   }
 
@@ -165,35 +196,39 @@ export class InventoryOverlay {
 
     const point = this.toCanvasPoint(mouse);
     const target = this.targetAtPoint(point);
+    const releaseKey = targetKey(target);
+    this.carriedPointer = point;
+    this.hoveredTargetKey = releaseKey;
 
-    if (this.dragState) {
-      if (target && target.kind !== "output") {
-        this.swapSlots(this.dragState.source, target);
-      }
-      this.dragState = null;
-      this.hoveredTargetKey = targetKey(target);
-      return true;
+    if (
+      this.mouseIsDown &&
+      this.carriedItem &&
+      !this.distributedDuringPress &&
+      target &&
+      target.kind !== "output" &&
+      releaseKey === targetKey(this.pressTarget)
+    ) {
+      this.placeFullIntoSlot(target);
     }
 
-    if (target?.kind === "output") {
-      this.craftOnce();
-      this.hoveredTargetKey = targetKey(this.targetAtPoint(point));
-      return true;
-    }
-
-    this.hoveredTargetKey = targetKey(target);
+    this.mouseIsDown = false;
+    this.distributedDuringPress = false;
+    this.pressTarget = null;
+    this.lastDistributedTargetKey = releaseKey;
     return true;
   }
 
   public handleMouseLeave(): void {
-    if (!this.dragState) {
-      this.hoveredTargetKey = null;
-    }
+    this.hoveredTargetKey = null;
+    this.lastDistributedTargetKey = null;
   }
 
   public cancelDrag(): void {
-    this.dragState = null;
     this.hoveredTargetKey = null;
+    this.lastDistributedTargetKey = null;
+    this.mouseIsDown = false;
+    this.distributedDuringPress = false;
+    this.pressTarget = null;
   }
 
   public draw(): void {
@@ -218,17 +253,14 @@ export class InventoryOverlay {
       const rect = layout.inventorySlotRects[slotIndex];
       const slot = this.inventorySlots[slotIndex];
       const key = targetKey({ kind: "inventory", index: slotIndex });
-      const draggedHere =
-        this.dragState?.source.kind === "inventory" && this.dragState.source.index === slotIndex;
 
       this.drawSlot(rect, {
-        activeDropTarget: this.dragState !== null && this.hoveredTargetKey === key,
-        dimmed: draggedHere,
+        activeDropTarget: this.carriedItem !== null && this.hoveredTargetKey === key,
         filled: slot !== null,
-        hovered: this.dragState === null && this.hoveredTargetKey === key,
+        hovered: this.carriedItem === null && this.hoveredTargetKey === key,
       });
 
-      if (slot && !draggedHere) {
+      if (slot) {
         this.drawItem(slot, rect, layout.slotSize);
       }
     }
@@ -237,16 +269,14 @@ export class InventoryOverlay {
       const rect = layout.craftSlotRects[slotIndex];
       const slot = this.craftSlots[slotIndex];
       const key = targetKey({ kind: "craft", index: slotIndex });
-      const draggedHere = this.dragState?.source.kind === "craft" && this.dragState.source.index === slotIndex;
 
       this.drawSlot(rect, {
-        activeDropTarget: this.dragState !== null && this.hoveredTargetKey === key,
-        dimmed: draggedHere,
+        activeDropTarget: this.carriedItem !== null && this.hoveredTargetKey === key,
         filled: slot !== null,
-        hovered: this.dragState === null && this.hoveredTargetKey === key,
+        hovered: this.carriedItem === null && this.hoveredTargetKey === key,
       });
 
-      if (slot && !draggedHere) {
+      if (slot) {
         this.drawItem(slot, rect, layout.slotSize);
       }
     }
@@ -254,11 +284,8 @@ export class InventoryOverlay {
     this.drawOutputSlot(layout.outputRect, craftingResult, this.hoveredTargetKey === "output");
     this.drawDivider(layout);
 
-    if (this.dragState) {
-      const draggedItem = this.getSlotItem(this.dragState.source);
-      if (draggedItem) {
-        this.drawDragPreview(draggedItem, this.dragState.pointer, layout.slotSize);
-      }
+    if (this.carriedItem) {
+      this.drawCarriedItem(this.carriedItem, this.carriedPointer, layout.slotSize);
     }
 
     ctx.restore();
@@ -272,7 +299,13 @@ export class InventoryOverlay {
         return { count, id, name: "Wood", texture: this.textures.wood };
       case "plank":
         return { count, id, name: "Planks", texture: null };
+      default:
+        throw new Error(`Unknown item id: ${id satisfies never}`);
     }
+  }
+
+  private cloneItem(item: InventoryItem): InventoryItem {
+    return this.createItem(item.id, item.count);
   }
 
   private toCanvasPoint(mouse: MouseEvent): Point {
@@ -314,11 +347,11 @@ export class InventoryOverlay {
     );
   }
 
-  private getSlotItem(location: SlotLocation): InventorySlot {
+  private getSlotItem(location: SlotLocation): InventoryItem | null {
     return location.kind === "inventory" ? this.inventorySlots[location.index] : this.craftSlots[location.index];
   }
 
-  private setSlotItem(location: SlotLocation, item: InventorySlot): void {
+  private setSlotItem(location: SlotLocation, item: InventoryItem | null): void {
     if (location.kind === "inventory") {
       this.inventorySlots[location.index] = item;
       return;
@@ -327,10 +360,70 @@ export class InventoryOverlay {
     this.craftSlots[location.index] = item;
   }
 
-  private swapSlots(left: SlotLocation, right: SlotLocation): void {
-    const leftItem = this.getSlotItem(left);
-    this.setSlotItem(left, this.getSlotItem(right));
-    this.setSlotItem(right, leftItem);
+  private pickupFromSlot(location: SlotLocation): boolean {
+    const slot = this.getSlotItem(location);
+    if (!slot) return false;
+
+    this.carriedItem = this.cloneItem(slot);
+    this.setSlotItem(location, null);
+    return true;
+  }
+
+  private placeOneIntoSlot(target: SlotLocation): boolean {
+    if (!this.carriedItem) return false;
+
+    const targetSlot = this.getSlotItem(target);
+
+    if (!targetSlot) {
+      this.setSlotItem(target, this.createItem(this.carriedItem.id, 1));
+      this.consumeCarriedItem(1);
+      return true;
+    }
+
+    if (targetSlot.id !== this.carriedItem.id || targetSlot.count >= MAX_STACK_SIZE) {
+      return false;
+    }
+
+    targetSlot.count += 1;
+    this.consumeCarriedItem(1);
+    return true;
+  }
+
+  private placeFullIntoSlot(target: SlotLocation): boolean {
+    if (!this.carriedItem) return false;
+
+    const targetSlot = this.getSlotItem(target);
+
+    if (!targetSlot) {
+      this.setSlotItem(target, this.cloneItem(this.carriedItem));
+      this.carriedItem = null;
+      return true;
+    }
+
+    if (targetSlot.id === this.carriedItem.id) {
+      const availableSpace = MAX_STACK_SIZE - targetSlot.count;
+      if (availableSpace <= 0) return false;
+
+      const movedAmount = Math.min(availableSpace, this.carriedItem.count);
+      targetSlot.count += movedAmount;
+      this.consumeCarriedItem(movedAmount);
+      return movedAmount > 0;
+    }
+
+    const swappedItem = this.cloneItem(targetSlot);
+    this.setSlotItem(target, this.cloneItem(this.carriedItem));
+    this.carriedItem = swappedItem;
+    return true;
+  }
+
+  private consumeCarriedItem(amount: number): void {
+    if (!this.carriedItem) return;
+
+    this.carriedItem.count -= amount;
+    if (this.carriedItem.count <= 0) {
+      this.carriedItem = null;
+      this.lastDistributedTargetKey = null;
+    }
   }
 
   private getCraftingResult(): CraftingResult | null {
@@ -351,10 +444,17 @@ export class InventoryOverlay {
     };
   }
 
-  private craftOnce(): boolean {
+  private pickupCraftingOutput(): boolean {
     const result = this.getCraftingResult();
     if (!result) return false;
-    if (!this.storeItemInInventory(result.item)) return false;
+
+    if (!this.canAcceptCraftingResult(result.item)) return false;
+
+    if (!this.carriedItem) {
+      this.carriedItem = this.cloneItem(result.item);
+    } else {
+      this.carriedItem.count += result.item.count;
+    }
 
     const sourceSlot = this.craftSlots[result.sourceIndex];
     if (!sourceSlot) return false;
@@ -368,21 +468,10 @@ export class InventoryOverlay {
     return true;
   }
 
-  private storeItemInInventory(item: InventoryItem): boolean {
-    const matchingIndex = this.inventorySlots.findIndex((slot) => slot?.id === item.id);
-    if (matchingIndex >= 0) {
-      const matchingSlot = this.inventorySlots[matchingIndex];
-      if (matchingSlot) {
-        matchingSlot.count += item.count;
-        return true;
-      }
-    }
-
-    const emptyIndex = this.inventorySlots.findIndex((slot) => slot === null);
-    if (emptyIndex < 0) return false;
-
-    this.inventorySlots[emptyIndex] = this.createItem(item.id, item.count);
-    return true;
+  private canAcceptCraftingResult(item: InventoryItem): boolean {
+    if (!this.carriedItem) return true;
+    if (this.carriedItem.id !== item.id) return false;
+    return this.carriedItem.count + item.count <= MAX_STACK_SIZE;
   }
 
   private getLayout(): InventoryLayout {
@@ -544,9 +633,8 @@ export class InventoryOverlay {
   private drawOutputSlot(rect: Rect, result: CraftingResult | null, hovered: boolean): void {
     this.drawSlot(rect, {
       activeDropTarget: false,
-      dimmed: false,
       filled: result !== null,
-      hovered: this.dragState === null && hovered,
+      hovered: this.carriedItem === null && hovered,
     });
 
     if (result) {
@@ -558,7 +646,6 @@ export class InventoryOverlay {
     rect: Rect,
     state: {
       activeDropTarget: boolean;
-      dimmed: boolean;
       filled: boolean;
       hovered: boolean;
     },
@@ -575,11 +662,6 @@ export class InventoryOverlay {
     ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
     ctx.lineWidth = 2;
     ctx.strokeRect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6);
-
-    if (state.dimmed) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
-      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-    }
   }
 
   private drawItem(item: InventoryItem, rect: Rect, slotSize: number): void {
@@ -611,21 +693,19 @@ export class InventoryOverlay {
     const ctx = this.ctx;
 
     switch (id) {
-      case "dirt": {
+      case "dirt":
         ctx.fillStyle = "#6a4327";
         ctx.fillRect(x, y, size, size);
         ctx.fillStyle = "#547f39";
         ctx.fillRect(x, y, size, Math.max(6, Math.round(size * 0.28)));
         break;
-      }
-      case "wood": {
+      case "wood":
         ctx.fillStyle = "#8b6945";
         ctx.fillRect(x, y, size, size);
         ctx.fillStyle = "#6d5034";
         ctx.fillRect(x + size * 0.16, y, Math.max(4, size * 0.12), size);
         ctx.fillRect(x + size * 0.52, y, Math.max(4, size * 0.12), size);
         break;
-      }
       case "plank": {
         ctx.fillStyle = "#b58a57";
         ctx.fillRect(x, y, size, size);
@@ -636,10 +716,12 @@ export class InventoryOverlay {
         ctx.fillRect(x, y + stripHeight * 5, size, Math.max(2, Math.round(size * 0.06)));
         break;
       }
+      default:
+        break;
     }
   }
 
-  private drawDragPreview(item: InventoryItem, pointer: Point, slotSize: number): void {
+  private drawCarriedItem(item: InventoryItem, pointer: Point, slotSize: number): void {
     const previewSize = Math.round(slotSize * 1.08);
     const previewRect: Rect = {
       x: Math.round(pointer.x - previewSize / 2),
@@ -650,7 +732,6 @@ export class InventoryOverlay {
 
     this.drawSlot(previewRect, {
       activeDropTarget: false,
-      dimmed: false,
       filled: true,
       hovered: false,
     });
