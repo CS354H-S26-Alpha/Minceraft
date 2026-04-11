@@ -1,6 +1,8 @@
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup, onMount } from "solid-js";
 import { createRoom } from "./create-room";
 import { createGame } from "./engine";
+
+const backgroundAudioUrl = new URL("../../assets/audio/background.m4a", import.meta.url).href;
 
 export default function App() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
@@ -13,6 +15,39 @@ export default function App() {
     inputCanvas: textCanvas,
     player,
     sendInput: input,
+  });
+
+  onMount(() => {
+    const backgroundAudio = new Audio(backgroundAudioUrl);
+    backgroundAudio.loop = true;
+    backgroundAudio.preload = "auto";
+
+    let started = false;
+
+    const startBackgroundAudio = () => {
+      if (started) {
+        return;
+      }
+
+      void backgroundAudio.play().then(() => {
+        started = true;
+        window.removeEventListener("pointerdown", startBackgroundAudio);
+        window.removeEventListener("keydown", startBackgroundAudio);
+      }).catch(() => {
+        // Browsers can block autoplay until the user interacts with the page.
+      });
+    };
+
+    startBackgroundAudio();
+    window.addEventListener("pointerdown", startBackgroundAudio);
+    window.addEventListener("keydown", startBackgroundAudio);
+
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", startBackgroundAudio);
+      window.removeEventListener("keydown", startBackgroundAudio);
+      backgroundAudio.pause();
+      backgroundAudio.currentTime = 0;
+    });
   });
 
   return (
