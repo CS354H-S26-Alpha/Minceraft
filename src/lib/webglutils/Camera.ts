@@ -1,4 +1,4 @@
-import { Mat4, Mat3, Vec3, Quat } from "gl-matrix";
+import { Mat3, Mat4, Quat, Vec3 } from "gl-matrix";
 //import { Ray } from "../../ray/Ray"
 
 export class RayCamera {
@@ -45,7 +45,7 @@ export class RayCamera {
       yDir.z,
       zDir.x,
       zDir.y,
-      zDir.z
+      zDir.z,
     );
 
     this.u = new Vec3();
@@ -55,17 +55,13 @@ export class RayCamera {
     Vec3.transformMat3(
       this.u,
       new Vec3([this.normalizedHeight * this.aspect, 0, 0]),
-      this.rotationMatrix
+      this.rotationMatrix,
     );
-    Vec3.transformMat3(
-      this.v,
-      new Vec3([0, this.normalizedHeight, 0]),
-      this.rotationMatrix
-    );
+    Vec3.transformMat3(this.v, new Vec3([0, this.normalizedHeight, 0]), this.rotationMatrix);
     Vec3.transformMat3(this.look, new Vec3([0, 0, -1]), this.rotationMatrix);
   }
 
- /* public rayThrough(x: number, y: number): Ray {
+  /* public rayThrough(x: number, y: number): Ray {
     x -= .5;
     y -= .5;
     let dir = Vec3.sum(this.look, Vec3.sum(this.u.copy().scale(x), this.v.copy().scale(y)));
@@ -109,7 +105,7 @@ export class Camera {
     fov: number,
     aspect: number,
     zNear: number,
-    zFar: number
+    zFar: number,
   ) {
     // TODO: error checking parameters
     console.assert(target != null);

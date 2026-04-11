@@ -3,18 +3,13 @@
   "name": "minceraft",
   "account_id": "e796710ae39472ea7af7607a6d9156e3",
   "compatibility_date": "2026-04-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/server/index.ts",
   "observability": {
     "enabled": true
   },
   "assets": {
-    "directory": "dist"
+    "not_found_handling": "single-page-application"
   },
-  "preview_urls": true,
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
-  "build": {
-    "command": "bun run build:static",
-    "watch_dir": "./src"
-  }
+  "preview_urls": true
 }

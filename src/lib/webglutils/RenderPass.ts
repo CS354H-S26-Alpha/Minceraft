@@ -23,7 +23,7 @@ export class RenderPass {
   private drawType: GLenum;
   private drawOffset: number;
 
-  private textureMap: String;
+  private textureMap: string;
   private textureMapped: boolean;
   private textureLoaded: boolean;
   public texture: WebGLTexture;
@@ -31,7 +31,12 @@ export class RenderPass {
   private extInstanced: ANGLE_instanced_arrays | null;
   private instancedAttributes: Set<string>;
 
-  constructor(extVAO: OES_vertex_array_object, context: WebGLRenderingContext, vShader: string, fShader: string) {
+  constructor(
+    extVAO: OES_vertex_array_object,
+    context: WebGLRenderingContext,
+    vShader: string,
+    fShader: string,
+  ) {
     this.extVAO = extVAO;
     this.ctx = context;
     this.extInstanced = context.getExtension("ANGLE_instanced_arrays");
@@ -71,16 +76,12 @@ export class RenderPass {
     /* Setup Index Buffer */
     this.indexBuffer = gl.createBuffer() as WebGLBuffer;
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-    gl.bufferData(
-      gl.ELEMENT_ARRAY_BUFFER,
-      this.indexBufferData,
-      gl.STATIC_DRAW
-    );
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indexBufferData, gl.STATIC_DRAW);
 
     /* Setup Attributes */
     this.attributes.forEach((attr) => {
-      let attrLoc = gl.getAttribLocation(this.shaderProgram, attr.name);
-      let attrBuffer = this.attributeBuffers.get(attr.bufferName);
+      const attrLoc = gl.getAttribLocation(this.shaderProgram, attr.name);
+      const attrBuffer = this.attributeBuffers.get(attr.bufferName);
       if (attrBuffer) {
         attrBuffer.bufferId = gl.createBuffer() as WebGLBuffer;
         gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
@@ -91,8 +92,8 @@ export class RenderPass {
           attr.type,
           attr.normalized,
           attr.stride,
-          attr.offset
-        )
+          attr.offset,
+        );
         gl.enableVertexAttribArray(attrLoc);
         if (this.instancedAttributes.has(attr.name) && this.extInstanced) {
           this.extInstanced.vertexAttribDivisorANGLE(attrLoc, 1);
@@ -102,26 +103,35 @@ export class RenderPass {
       }
     });
 
-
     /* Setup Uniforms */
-    for (let [key, value] of this.uniforms) {
+    for (const [key, value] of this.uniforms) {
       value.location = gl.getUniformLocation(this.shaderProgram, key) as WebGLUniformLocation;
     }
 
     /* Setup Maps */
     if (this.textureMapped) {
       if (!this.textureLoaded) {
-        let createTextureResult = gl.createTexture();
+        const createTextureResult = gl.createTexture();
         if (createTextureResult === null) {
           console.error("Error creating texture");
         } else {
           this.texture = createTextureResult;
         }
         gl.bindTexture(gl.TEXTURE_2D, this.texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255])); // Temporary color
-        let img = new Image();
-        img.onload = (ev: Event) => {
-          console.log("Loaded texturemap: " + this.textureMap);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          1,
+          1,
+          0,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          new Uint8Array([0, 0, 255, 255]),
+        ); // Temporary color
+        const img = new Image();
+        img.onload = (_ev: Event) => {
+          console.log(`Loaded texturemap: ${this.textureMap}`);
           gl.useProgram(this.shaderProgram);
           this.extVAO.bindVertexArrayOES(this.VAO);
           gl.bindTexture(gl.TEXTURE_2D, this.texture);
@@ -131,8 +141,8 @@ export class RenderPass {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
           gl.useProgram(null);
           this.extVAO.bindVertexArrayOES(null);
-        }
-        img.src = "/static/assets/skinning/" + this.textureMap;
+        };
+        img.src = `/static/assets/skinning/${this.textureMap}`;
       }
     }
 
@@ -140,13 +150,12 @@ export class RenderPass {
     this.extVAO.bindVertexArrayOES(null);
   }
 
-
   public draw() {
-    let gl = this.ctx;
+    const gl = this.ctx;
     gl.useProgram(this.shaderProgram);
     this.extVAO.bindVertexArrayOES(this.VAO);
 
-    this.uniforms.forEach(uniform => {
+    this.uniforms.forEach((uniform) => {
       uniform.bindFunction(gl, uniform.location);
     });
     if (this.textureMapped) {
@@ -158,8 +167,16 @@ export class RenderPass {
     this.extVAO.bindVertexArrayOES(null);
   }
 
-  public addInstancedAttribute(attribName: string, size: number, type: GLenum, normalized: boolean,
-                                stride: number, offset: number, bufferName?: string, bufferData?: BufferData) {
+  public addInstancedAttribute(
+    attribName: string,
+    size: number,
+    type: GLenum,
+    normalized: boolean,
+    stride: number,
+    offset: number,
+    bufferName?: string,
+    bufferData?: BufferData,
+  ) {
     this.instancedAttributes.add(attribName);
     this.addAttribute(attribName, size, type, normalized, stride, offset, bufferName, bufferData);
   }
@@ -185,14 +202,20 @@ export class RenderPass {
     gl.useProgram(this.shaderProgram);
     this.extVAO.bindVertexArrayOES(this.VAO);
 
-    this.uniforms.forEach(uniform => {
+    this.uniforms.forEach((uniform) => {
       uniform.bindFunction(gl, uniform.location);
     });
     if (this.textureMapped) {
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
     }
     if (this.extInstanced) {
-      this.extInstanced.drawElementsInstancedANGLE(this.drawMode, this.drawCount, this.drawType, this.drawOffset, instanceCount);
+      this.extInstanced.drawElementsInstancedANGLE(
+        this.drawMode,
+        this.drawCount,
+        this.drawType,
+        this.drawOffset,
+        instanceCount,
+      );
     }
 
     gl.useProgram(null);
@@ -206,8 +229,10 @@ export class RenderPass {
     this.drawOffset = drawOffset;
   }
 
-  public addUniform(name: string,
-                    bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void) {
+  public addUniform(
+    name: string,
+    bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void,
+  ) {
     this.uniforms.set(name, new Uniform(0, bindFunction));
   }
 
@@ -215,9 +240,16 @@ export class RenderPass {
     this.indexBufferData = data;
   }
 
-  public addAttribute(attribName: string, size: number, type: GLenum, normalized: boolean,
-                      stride: number, offset: number, bufferName?: string, bufferData?: BufferData) {
-
+  public addAttribute(
+    attribName: string,
+    size: number,
+    type: GLenum,
+    normalized: boolean,
+    stride: number,
+    offset: number,
+    bufferName?: string,
+    bufferData?: BufferData,
+  ) {
     if (!bufferName) {
       bufferName = attribName;
       if (!bufferData) {
@@ -235,12 +267,18 @@ export class RenderPass {
       }
     }
 
-    this.attributes.push(new Attribute(attribName, size, type, normalized, stride, offset, bufferName));
+    this.attributes.push(
+      new Attribute(attribName, size, type, normalized, stride, offset, bufferName),
+    );
   }
 
-  public addTextureMap(texture: String, vShader?: string, fShader?: string) {
-    if (vShader) { this.vShader = vShader; }
-    if (fShader) { this.fShader = fShader; }
+  public addTextureMap(texture: string, vShader?: string, fShader?: string) {
+    if (vShader) {
+      this.vShader = vShader;
+    }
+    if (fShader) {
+      this.fShader = fShader;
+    }
     this.textureMapped = true;
     this.textureMap = texture;
   }
@@ -251,18 +289,26 @@ export class RenderPass {
     this.texture = tex;
   }
 
-  public setVertexShader(vShader: string) { this.vShader = vShader; }
-  public setFragmentShader(fShader: string) { this.fShader = fShader; }
-  public setShaders(vShader: string, fShader: string) { this.vShader = vShader; this.fShader = fShader; }
-
+  public setVertexShader(vShader: string) {
+    this.vShader = vShader;
+  }
+  public setFragmentShader(fShader: string) {
+    this.fShader = fShader;
+  }
+  public setShaders(vShader: string, fShader: string) {
+    this.vShader = vShader;
+    this.fShader = fShader;
+  }
 }
 
 class Uniform {
   public location: WebGLUniformLocation;
   public bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void;
 
-  constructor(location: WebGLUniformLocation,
-              bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void) {
+  constructor(
+    location: WebGLUniformLocation,
+    bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void,
+  ) {
     this.location = location;
     this.bindFunction = bindFunction;
   }
@@ -277,8 +323,15 @@ class Attribute {
   public offset: number;
   public bufferName: string;
 
-  constructor(name: string, size: number, type: GLenum, normalized: boolean, stride: number,
-              offset: number, bufferName: string) {
+  constructor(
+    name: string,
+    size: number,
+    type: GLenum,
+    normalized: boolean,
+    stride: number,
+    offset: number,
+    bufferName: string,
+  ) {
     this.name = name;
     this.size = size;
     this.type = type;

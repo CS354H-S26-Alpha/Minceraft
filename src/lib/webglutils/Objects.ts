@@ -1,4 +1,4 @@
-import { Mat3, Mat4, Vec3, Vec4 } from "gl-matrix";
+import type { Mat4, Vec3, Vec4 } from "gl-matrix";
 
 export interface MaterialObject {
   positions(): Vec4[];

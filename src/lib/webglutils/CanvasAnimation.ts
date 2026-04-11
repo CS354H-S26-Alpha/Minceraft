@@ -1,8 +1,7 @@
-import { Debugger } from "./Debugging.js";
 import type { GLCallback, GLErrorCallback } from "./Debugging.js";
+import { Debugger } from "./Debugging.js";
 
 export class WebGLUtilities {
-
   /**
    * Creates and compiles a WebGL Shader from given source
    * @param ctx a WebGL rendering context. This has methods for compiling the shader.
@@ -13,7 +12,7 @@ export class WebGLUtilities {
   public static createShader(
     ctx: WebGLRenderingContext,
     shaderType: number,
-    source: string
+    source: string,
   ): WebGLShader {
     /* TODO: error checking */
     const shader: WebGLShader = ctx.createShader(shaderType) as WebGLShader;
@@ -36,23 +35,19 @@ export class WebGLUtilities {
   public static createProgram(
     ctx: WebGLRenderingContext,
     vsSource: string,
-    fsSource: string
+    fsSource: string,
   ): WebGLProgram {
     /* TODO: error checking */
 
     const shaderProgram: WebGLProgram = ctx.createProgram() as WebGLProgram;
 
-    const vertexShader: WebGLShader = WebGLUtilities.createShader(
-      ctx,
-      ctx.VERTEX_SHADER,
-      vsSource
-    );
+    const vertexShader: WebGLShader = WebGLUtilities.createShader(ctx, ctx.VERTEX_SHADER, vsSource);
     ctx.attachShader(shaderProgram, vertexShader);
 
     const fragmentShader: WebGLShader = WebGLUtilities.createShader(
       ctx,
       ctx.FRAGMENT_SHADER,
-      fsSource
+      fsSource,
     );
     ctx.attachShader(shaderProgram, fragmentShader);
 
@@ -60,19 +55,13 @@ export class WebGLUtilities {
 
     /* Check for Linker Errors */
     if (!ctx.getProgramParameter(shaderProgram, ctx.LINK_STATUS)) {
-      console.error(
-        "ERROR linking program!",
-        ctx.getProgramInfoLog(shaderProgram)
-      );
+      console.error("ERROR linking program!", ctx.getProgramInfoLog(shaderProgram));
     }
 
     /* While debugging Validate Program */
     ctx.validateProgram(shaderProgram);
     if (!ctx.getProgramParameter(shaderProgram, ctx.VALIDATE_STATUS)) {
-      console.error(
-        "ERROR validating program!",
-        ctx.getProgramInfoLog(shaderProgram)
-      );
+      console.error("ERROR validating program!", ctx.getProgramInfoLog(shaderProgram));
     }
 
     return shaderProgram;
@@ -83,26 +72,19 @@ export class WebGLUtilities {
    * @param canvas any HTML canvas element
    * @return the WebGL rendering context for the canvas
    */
-  public static requestWebGLContext(
-    canvas: HTMLCanvasElement
-  ): WebGLRenderingContext {
+  public static requestWebGLContext(canvas: HTMLCanvasElement): WebGLRenderingContext {
     /* Request WebGL Context */
     let ctx: WebGLRenderingContext = canvas.getContext("webgl", {
-      preserveDrawingBuffer: true
+      preserveDrawingBuffer: true,
     }) as WebGLRenderingContext;
 
     if (!ctx) {
-      console.log(
-        "Your browser does not support WebGL, falling back",
-        "to Experimental WebGL"
-      );
+      console.log("Your browser does not support WebGL, falling back", "to Experimental WebGL");
       ctx = canvas.getContext("experimental-webgl") as WebGLRenderingContext;
     }
 
     if (!ctx) {
-      throw new Error(
-        "Your browser does not support WebGL or Experimental-WebGL"
-      );
+      throw new Error("Your browser does not support WebGL or Experimental-WebGL");
     }
 
     return ctx;
@@ -125,9 +107,7 @@ export class WebGLUtilities {
    * @param ctx the WebGL rendering context to extend
    * @return the VAO extension
    */
-  public static requestVAOExt(
-    ctx: WebGLRenderingContext
-  ): OES_vertex_array_object {
+  public static requestVAOExt(ctx: WebGLRenderingContext): OES_vertex_array_object {
     /* Request vao extension */
     const extVAO = ctx.getExtension("OES_vertex_array_object");
     if (!extVAO) {
@@ -135,7 +115,6 @@ export class WebGLUtilities {
     }
     return extVAO;
   }
-
 }
 
 /**
@@ -147,12 +126,13 @@ export abstract class CanvasAnimation {
   protected ctx: WebGLRenderingContext;
   protected extVAO: OES_vertex_array_object;
 
-  constructor(canvas: HTMLCanvasElement,
-    debugMode : boolean = false,
-    stopOnError: boolean = false,
+  constructor(
+    canvas: HTMLCanvasElement,
+    debugMode: boolean = false,
+    _stopOnError: boolean = false,
     glErrorCallback: GLErrorCallback = Debugger.throwOnError,
-    glCallback: GLCallback = Debugger.throwErrorOnUndefinedArg
-    ) {
+    glCallback: GLCallback = Debugger.throwErrorOnUndefinedArg,
+  ) {
     // Create webgl rendering context
     this.c = canvas;
     this.ctx = WebGLUtilities.requestWebGLContext(this.c);
@@ -178,9 +158,8 @@ export abstract class CanvasAnimation {
    * Draws and then requests a draw for the next frame.
    */
   public drawLoop(): void {
-      this.draw();
-      window.requestAnimationFrame(() => this.drawLoop());
-
+    this.draw();
+    window.requestAnimationFrame(() => this.drawLoop());
   }
 
   /**

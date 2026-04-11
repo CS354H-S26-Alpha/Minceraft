@@ -35,6 +35,7 @@ export class Chunk {
         terrain: ITerrain,
         // size = CHUNK_SIZE,
     ) {
+        this.cubes = 0; // fix
         [this.minX, this.minZ] = chunkOrigin(centerX, centerZ);
         this.heightMap = new Int32Array(CHUNK_SIZE * CHUNK_SIZE);
         this.blockGrid = new Uint8Array(MAX_HEIGHT * CHUNK_SIZE * CHUNK_SIZE);
