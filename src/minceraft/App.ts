@@ -46,14 +46,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui = new GUI(this.canvas2d, this);
     this.playerPosition = this.gui.getCamera().pos();
     
-    // this.chunks = [];
-    // const terrain = new FlatTerrain(CubeType.Grass, 10);
-    // for (let cx = -1; cx <= 1; cx++) {
-    //     for (let cz = -1; cz <= 1; cz++) {
-    //         this.chunks.push(new Chunk(cx * CHUNK_SIZE, cz * CHUNK_SIZE, terrain));
-    //     }
-    // }
     this.chunkMaster = new ChunkMaster(0, 0, new FlatTerrain(CubeType.Grass, 10));
+    // this.chunkMaster = new ChunkMaster(0, 0, new NoTerrain());
     this.chunks = this.chunkMaster.getChunksAroundPos(this.playerPosition.x, this.playerPosition.z);
     
     this.blankCubeRenderPass = new RenderPass(this.extVAO, gl, blankCubeVSText, blankCubeFSText);

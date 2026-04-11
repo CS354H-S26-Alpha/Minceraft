@@ -10,12 +10,12 @@ export class NoTerrain implements ITerrain {
     generate(heightMap: Int32Array, blockGrid: Uint8Array): void {
         const seed = "42";
         let rng = new Rand(seed);
-        for (let j = 0; j < CHUNK_SIZE; j++) {
-            for (let i = 0; i < CHUNK_SIZE; i++) {
+        for (let i = 0; i < CHUNK_SIZE; i++) {
+            for (let j = 0; j < CHUNK_SIZE; j++) {
                 const height = Math.floor(10.0 * rng.next());
-                heightMap[j * CHUNK_SIZE + i] = height;
+                heightMap[i * CHUNK_SIZE + j] = height;
                 blockGrid[
-                    height * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + i
+                    height * CHUNK_SIZE * CHUNK_SIZE + i * CHUNK_SIZE + j
                 ] = CubeType.White;
             }
         }
@@ -29,11 +29,11 @@ export class FlatTerrain implements ITerrain {
     ) {}
 
     generate(heightMap: Int32Array, blockGrid: Uint8Array): void {
-        for (let j = 0; j < CHUNK_SIZE; j++) {
-            for (let i = 0; i < CHUNK_SIZE; i++) {
-                heightMap[j * CHUNK_SIZE + i] = this.height;
+        for (let i = 0; i < CHUNK_SIZE; i++) {
+            for (let j = 0; j < CHUNK_SIZE; j++) {
+                heightMap[i * CHUNK_SIZE + j] = this.height;
                 blockGrid[
-                    this.height * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + i
+                    this.height * CHUNK_SIZE * CHUNK_SIZE + i * CHUNK_SIZE + j
                 ] = this.blockType;
             }
         }

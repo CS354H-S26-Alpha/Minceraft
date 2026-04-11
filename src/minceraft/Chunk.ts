@@ -50,16 +50,16 @@ export class Chunk {
         this.cubeColorsF32 = new Float32Array(3 * this.cubes);
 
         // grid z and x
-        for (let j = 0; j < CHUNK_SIZE; j++) {
-            for (let i = 0; i < CHUNK_SIZE; i++) {
-                const idx = CHUNK_SIZE * j + i;
+        for (let i = 0; i < CHUNK_SIZE; i++) {
+            for (let j = 0; j < CHUNK_SIZE; j++) {
+                const idx = CHUNK_SIZE * i + j;
                 const height = this.heightMap[idx] ?? 0;
-                this.cubePositionsF32[4 * idx + 0] = this.minX + j;
+                this.cubePositionsF32[4 * idx + 0] = this.minX + i;
                 this.cubePositionsF32[4 * idx + 1] = height;
-                this.cubePositionsF32[4 * idx + 2] = this.minZ + i;
+                this.cubePositionsF32[4 * idx + 2] = this.minZ + j;
                 this.cubePositionsF32[4 * idx + 3] = 0;
 
-                const type = (this.blockGrid[height * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + i] ?? 0) as CubeType;
+                const type = (this.blockGrid[height * CHUNK_SIZE * CHUNK_SIZE + i * CHUNK_SIZE + j] ?? 0) as CubeType;
                 this.cubeTypesF32[idx] = type;
                 const color = CUBE_TYPE_INFO[type]?.baseColor ?? [1.0, 0.0, 1.0];
                 this.cubeColorsF32[3 * idx + 0] = color[0];
