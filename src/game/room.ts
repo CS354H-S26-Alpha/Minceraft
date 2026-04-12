@@ -59,6 +59,8 @@ export class GameRoom extends DurableObject<Env> {
   private collections: EntityCollection[] = [this.playerCollection];
   private listeners = new Map<string, SnapshotListener>();
   private lastInputTime = new Map<string, number>();
+  private needsBroadcast = false;
+  private pendingSelfState = new Set<string>();
   private gameTick = 0;
   private lastTickTimeMs = 0;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -85,22 +87,21 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Registers a new player and sends the current snapshot to all listeners.
-   * Starts the tick loop if it wasn't already running.
+   * Registers a new player and queues a broadcast for the next tick.
+   * The joining player's own state is included in their first snapshot.
    */
-  async join(playerId: string, name: string, onSnapshot: SnapshotListener) {
+  join(playerId: string, name: string, onSnapshot: SnapshotListener) {
     this.ensureInitialized();
     this.playerCollection.join(playerId, name);
     this.removeListener(playerId);
     const listener = onSnapshot.dup?.() ?? onSnapshot;
     listener.onRpcBroken?.(() => {
       this.removeListener(playerId);
-      if (this.listeners.size > 0) {
-        void this.broadcast(this.snapshot());
-      }
+      this.needsBroadcast = true;
     });
     this.listeners.set(playerId, listener);
-    await this.broadcast(this.snapshot());
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
     this.startTickLoop();
   }
 
@@ -116,14 +117,18 @@ export class GameRoom extends DurableObject<Env> {
     this.playerCollection.queueInputs(playerId, inputs);
   }
 
-  /** Removes the player from the room and broadcasts the updated snapshot. */
+  /** Queues the player's own state for the next tick's snapshot. */
+  requestState(playerId: string) {
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Removes the player from the room; survivors see the change next tick. */
   leave(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
     this.playerCollection.leave(playerId);
-    if (this.listeners.size > 0) {
-      void this.broadcast(this.snapshot());
-    }
+    this.needsBroadcast = true;
   }
 
   override async alarm(info?: AlarmInvocationInfo) {
@@ -136,22 +141,22 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Core game loop body: advances all collections, broadcasts if anything
-   * changed, and flushes dirty state every N ticks. Stops the loop when no
-   * listeners remain.
+   * Core game loop body. Advances all collections, flushes all pending
+   * notifications to connected clients, and persists dirty state.
+   * The tick is the single point where data is sent to clients.
    */
   private async tick() {
     this.ensureInitialized();
 
     const tickStart = performance.now();
     this.gameTick++;
-    let changed = false;
     for (const col of this.collections) {
-      if (col.tick()) changed = true;
+      if (col.tick()) this.needsBroadcast = true;
     }
     this.lastTickTimeMs = performance.now() - tickStart;
 
-    if (changed && this.listeners.size > 0) {
+    if (this.needsBroadcast && this.listeners.size > 0) {
+      this.needsBroadcast = false;
       await this.broadcast(this.snapshot());
     }
     if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
@@ -164,21 +169,35 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Sends the snapshot to all registered listeners in parallel. Removes any
-   * listeners whose calls fail, then re-broadcasts to the survivors so they
-   * see the updated online player list.
+   * Sends a per-client snapshot to all registered listeners. Each client
+   * receives remote players in `players` and optionally their own state in
+   * `self` (when queued by join or requestState). Broken listeners are
+   * removed and a re-broadcast is queued for the next tick.
    */
   private async broadcast(snap: RoomSnapshot): Promise<void> {
     const entries = [...this.listeners.entries()];
-    const results = await Promise.all(entries.map(([, cb]) => notify(cb, snap)));
+    const results = await Promise.all(entries.map(([id, cb]) => notify(cb, this.personalizeSnapshot(snap, id))));
+    this.pendingSelfState.clear();
     const broken = entries.filter((_, i) => !results[i]).map(([id]) => id);
     for (const id of broken) {
       this.removeListener(id);
     }
-    if (broken.length > 0 && this.listeners.size > 0) {
-      const updated = this.snapshot();
-      await Promise.all([...this.listeners.values()].map((cb) => notify(cb, updated)));
+    if (broken.length > 0) {
+      this.needsBroadcast = true;
     }
+  }
+
+  /**
+   * Strips the player's own entry from `players` and optionally attaches it
+   * as `self` when the player has a pending state request.
+   */
+  private personalizeSnapshot(snap: RoomSnapshot, playerId: string): RoomSnapshot {
+    const { [playerId]: self, ...players } = snap.players;
+    return {
+      ...snap,
+      players,
+      self: this.pendingSelfState.has(playerId) ? self : undefined,
+    };
   }
 
   /** Builds a room snapshot from current state, filtered to online players. */
@@ -244,6 +263,11 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Forwards inputs to the authoritative `GameRoom`. */
   sendInputs(inputs: PlayerInput[]) {
     return this.#room.sendInputs(this.#playerId, inputs);
+  }
+
+  /** Asks the server to include own state in the next tick's snapshot. */
+  requestState() {
+    return this.#room.requestState(this.#playerId);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */

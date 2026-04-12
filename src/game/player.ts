@@ -39,6 +39,7 @@ export class Player extends Entity<PlayerState, PlayerInput> {
   /**
    * Applies one input frame: validates the input, normalises the movement
    * vector to a constant speed, and clamps coordinates within world bounds.
+   * TODO: Handle sending new snapshot to client when movement on server is unexpected.
    */
   step({ dx, dy, dz, dtSeconds, yaw, pitch }: PlayerInput) {
     if (
@@ -62,18 +63,4 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     this.state.y = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
     this.state.z = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
   }
-}
-
-/**
- * Squared "distance" between two player states, combining positional and
- * angular deltas. Used by `ClientEntity` to decide whether to snap or skip
- * server reconciliation.
- */
-export function playerDistanceSq(a: PlayerState, b: PlayerState): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  const dz = a.z - b.z;
-  const dyaw = a.yaw - b.yaw;
-  const dpitch = a.pitch - b.pitch;
-  return dx * dx + dy * dy + dz * dz + dyaw * dyaw + dpitch * dpitch;
 }

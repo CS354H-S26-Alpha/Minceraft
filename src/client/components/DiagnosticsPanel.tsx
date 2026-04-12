@@ -6,6 +6,7 @@ const TICK_GRAPH_HEIGHT = 60;
 const TICK_GRAPH_MAX_MS = 50;
 
 interface DiagnosticsPanelProps {
+  // TODO: reorganize these props
   playerName: string;
   fps: number;
   computeTimeMs: number;

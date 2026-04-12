@@ -50,32 +50,36 @@ describe("GameRoom Durable Object", () => {
 
     await runInDurableObject(stub, async (room: GameRoom) => {
       room.join("alice", "Alice", (snap) => received.push(snap));
+      await room.runTick();
     });
 
     expect(received).toHaveLength(1);
     const [snap] = received;
-    expect(snap?.players.alice).toBeDefined();
-    expect(snap?.players.alice?.x).toBeCloseTo(0);
-    expect(snap?.players.alice?.y).toBeCloseTo(70);
-    expect(snap?.players.alice?.z).toBeCloseTo(20);
+    expect(snap?.self).toBeDefined();
+    expect(snap?.self?.x).toBeCloseTo(0);
+    expect(snap?.self?.y).toBeCloseTo(70);
+    expect(snap?.self?.z).toBeCloseTo(20);
   });
 
   it("applies buffered input on the next tick and broadcasts to listeners", async () => {
     const stub = makeRoomStub(roomName);
-    const received: RoomSnapshot[] = [];
+    const aliceSnaps: RoomSnapshot[] = [];
+    const bobSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      await room.join("alice", "Alice", (snap) => received.push(snap));
+      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
       room.sendInputs("alice", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
       await room.runTick();
     });
 
-    // Initial join snapshot + tick-driven broadcast
-    expect(received.length).toBeGreaterThanOrEqual(2);
-    const latest = received[received.length - 1];
-    expect(latest?.players.alice?.x).toBeGreaterThan(0);
-    expect(latest?.tick).toBe(1);
-    expect(latest?.acks.alice).toBe(1);
+    // Bob sees alice's movement; alice sees only acks (own state excluded).
+    const bobLatest = bobSnaps[bobSnaps.length - 1];
+    expect(bobLatest?.players.alice?.x).toBeGreaterThan(0);
+    expect(bobLatest?.tick).toBe(1);
+    const aliceLatest = aliceSnaps[aliceSnaps.length - 1];
+    expect(aliceLatest?.acks.alice).toBe(1);
+    expect(aliceLatest?.players.alice).toBeUndefined();
   });
 
   it("broadcasts each player's input to every listener in the room", async () => {
@@ -84,8 +88,8 @@ describe("GameRoom Durable Object", () => {
     const bobSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      await room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
-      await room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
       room.sendInputs("alice", [{ dx: 0, dy: 0, dz: -1, dtSeconds: 1, yaw: 0, pitch: 0 }]);
       room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
       await room.runTick();
@@ -93,10 +97,11 @@ describe("GameRoom Durable Object", () => {
 
     const aliceLatest = aliceSnaps[aliceSnaps.length - 1];
     const bobLatest = bobSnaps[bobSnaps.length - 1];
-    expect(aliceLatest?.players.alice?.z).toBeLessThan(20);
+    // Each player sees the other but not themselves.
+    expect(aliceLatest?.players.alice).toBeUndefined();
     expect(aliceLatest?.players.bob?.x).toBeGreaterThan(0);
+    expect(bobLatest?.players.bob).toBeUndefined();
     expect(bobLatest?.players.alice?.z).toBeLessThan(20);
-    expect(bobLatest?.players.bob?.x).toBeGreaterThan(0);
   });
 
   it("stops delivering snapshots after a player leaves", async () => {
@@ -104,10 +109,10 @@ describe("GameRoom Durable Object", () => {
     const aliceSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      await room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
       room.leave("alice");
       // Another player keeps the room ticking so broadcasts would fire
-      await room.join("bob", "Bob", () => {});
+      room.join("bob", "Bob", () => {});
       room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
       const initialCount = aliceSnaps.length;
       await room.runTick();
@@ -123,11 +128,11 @@ describe("GameRoom Durable Object", () => {
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
       room.leave("alice");
+      await room.runTick();
     });
 
     const latest = bobSnaps[bobSnaps.length - 1];
     expect(latest?.players.alice).toBeUndefined();
-    expect(latest?.players.bob).toBeDefined();
     expect(latest?.acks.alice).toBeUndefined();
     expect(latest?.acks.bob).toBeDefined();
   });
@@ -141,15 +146,18 @@ describe("GameRoom Durable Object", () => {
       room.join("alice", "Alice", () => {
         if (disconnected) throw new Error("connection lost");
       });
-      await room.join("alice", "Alice", aliceListener);
-      await room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
-    });
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      await room.runTick(); // flush join snapshots
 
-    onBroken?.();
+      disconnected = true;
+      room.sendInputs("bob", [{ dx: 1, dy: 0, dz: 0, dtSeconds: 1, yaw: 0, pitch: 0 }]);
+      await room.runTick(); // alice's callback fails → removed
+      await room.runTick(); // bob sees state without alice
+    });
 
     const latest = bobSnaps[bobSnaps.length - 1];
     expect(latest?.players.alice).toBeUndefined();
-    expect(latest?.players.bob).toBeDefined();
+    expect(latest?.acks.bob).toBeDefined();
   });
 
   it("does not show a previously disconnected player to a later joiner", async () => {
@@ -157,15 +165,16 @@ describe("GameRoom Durable Object", () => {
     const bobSnaps: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      await room.join("alice", "Alice", () => {});
+      room.join("alice", "Alice", () => {});
       room.leave("alice");
-      await room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      await room.runTick();
     });
 
     expect(bobSnaps.length).toBeGreaterThanOrEqual(1);
     const initialBobSnap = bobSnaps[0];
     expect(initialBobSnap?.players.alice).toBeUndefined();
-    expect(initialBobSnap?.players.bob).toBeDefined();
+    expect(initialBobSnap?.self).toBeDefined();
     expect(initialBobSnap?.acks.alice).toBeUndefined();
   });
 
@@ -174,7 +183,7 @@ describe("GameRoom Durable Object", () => {
     const received: RoomSnapshot[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      await room.join("alice", "Alice", (snap) => received.push(snap));
+      room.join("alice", "Alice", (snap) => received.push(snap));
       // First tick flushes any dirty state
       await room.runTick();
       const beforeCount = received.length;
@@ -196,10 +205,9 @@ describe("GameServer capnweb RPC", () => {
     });
 
     expect(roomSession).toBeDefined();
-    expect(received.length).toBeGreaterThanOrEqual(1);
-    const players = Object.values(received[0]?.players ?? {});
-    expect(players).toHaveLength(1);
-    expect(players[0]?.y).toBeCloseTo(70);
+    // First snapshot arrives on the next server tick (tick-aligned).
+    await waitFor(() => received.length >= 1);
+    expect(received[0]?.self?.y).toBeCloseTo(70);
   });
 
   it("removes a player from other clients when they leave the room", async () => {
@@ -220,7 +228,7 @@ describe("GameServer capnweb RPC", () => {
         const latest = bobSnaps[bobSnaps.length - 1];
         if (!latest) return false;
         const names = Object.values(latest.players).map((p) => p.name);
-        return names.includes("alice") && names.includes("bob");
+        return names.includes("alice");
       });
     }
 
@@ -228,7 +236,7 @@ describe("GameServer capnweb RPC", () => {
       const latest = bobSnaps[bobSnaps.length - 1];
       if (!latest) return false;
       const names = Object.values(latest.players).map((p) => p.name);
-      return !names.includes("alice") && names.includes("bob");
+      return !names.includes("alice");
     }, 2000);
   }, 4000);
 });
