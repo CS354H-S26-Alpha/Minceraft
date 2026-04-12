@@ -1,5 +1,5 @@
 import { type Mat4, Vec3 } from "gl-matrix";
-import { Camera } from "~/lib/webglutils/Camera";
+import { Camera } from "@/lib/webglutils/Camera";
 import type { WalkKeys } from "./input";
 
 const ROTATION_SPEED = 0.01;

@@ -1,15 +1,15 @@
-import { createEventListener } from "@solid-primitives/event-listener";
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { Vec3, Vec4 } from "gl-matrix";
-import { createEffect, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { Chunk } from "~/game/chunk";
-import type { PlayerState } from "~/game/player";
-import type { joinWorld } from "../join-world";
+import { Chunk } from "@/game/chunk";
+import type { Player } from "@/game/player";
+import { createRateMeter, createRingBuffer } from "../primitives";
+import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
-import { createInput, type MouseDiagnostics } from "./input";
-import { lerp, lerpAngle, RemoteEntityStore } from "./remote-entities";
+import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
+import { createInput } from "./input";
 import { Renderer } from "./render/renderer";
+import { createRenderLoop } from "./render-loop";
 
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
@@ -26,7 +26,7 @@ export interface ClientDiagnostics {
   computeTimeMs: number;
   /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
-  mouse: MouseDiagnostics;
+  pointerLocked: boolean;
 }
 
 /** Server-side performance metrics derived from room snapshots. */
@@ -57,14 +57,23 @@ const BACKGROUND_COLOR = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
 const FPS_WINDOW_MS = 500;
 /** Number of samples kept in the compute-time and mspt ring buffers. */
 const FRAME_HISTORY_SIZE = 120;
-/** Target frame interval when the tab is backgrounded (throttled). */
-const BLURRED_FRAME_MS = 200;
 const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and send to client
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 
+function initRenderState(gl: HTMLCanvasElement, player: Player) {
+  const renderer = new Renderer(gl, [playerPassDef]);
+  const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
+  camera.setOrientation(player.state.yaw, player.state.pitch);
+  camera.setPosition(player.position);
+  return { renderer, camera };
+}
+
 /**
  * Reactive game primitive.
+ *
+ * The store is the reactive boundary: the rAF callback (an event-handler context)
+ * writes into it each frame, and SolidJS consumers track individual properties.
  */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
@@ -77,9 +86,7 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
-        mouse: {
-          pointerLocked: false,
-        },
+        pointerLocked: false,
       },
       server: {
         tps: 0,
@@ -90,215 +97,115 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  // Boots when canvases resolve and the server has sent the player's initial
-  // state. Re-runs (and cleans up) if any tracked signal changes.
-  createEffect(() => {
+  const chunk = new Chunk(0.0, 0.0, 64, TEMP_START_SEED);
+  const remotePlayers = createEntityPipeline(playerPipelineConfig);
+  const fpsMeter = createRateMeter(FPS_WINDOW_MS);
+  const tpsMeter = createRateMeter(FPS_WINDOW_MS);
+  const snapMeter = createRateMeter(FPS_WINDOW_MS);
+  const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  let frame = 0;
+  let lastYaw = 0;
+  let lastPitch = 0;
+  let lastSnapCount = 0;
+  let lastTick = 0;
+  let tickDelta = 0;
+
+  const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+  let needsResize = true;
+  createResizeObserver(args.glCanvas, () => {
+    needsResize = true;
+  });
+
+  // Lazy-initialized on the first frame where all signals have resolved.
+  let ctx: { renderer: Renderer; camera: CameraController } | undefined;
+
+  createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
     const player = room().player();
     if (!gl || !player) return;
 
-    const renderer = new Renderer(gl);
-    const chunk = new Chunk(0.0, 0.0, 64, TEMP_START_SEED);
-    const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
-    camera.setOrientation(player.state.yaw, player.state.pitch);
-    camera.setPosition(player.position);
-    const input = createInput(inputEl, { onReset: () => camera.reset() });
-    const remotePlayers = new RemoteEntityStore<PlayerState>((prev, curr, t) => ({
-      id: curr.id,
-      name: curr.name,
-      x: lerp(prev.x, curr.x, t),
-      y: lerp(prev.y, curr.y, t),
-      z: lerp(prev.z, curr.z, t),
-      yaw: lerpAngle(prev.yaw, curr.yaw, t),
-      pitch: lerp(prev.pitch, curr.pitch, t),
-    }));
+    ctx ??= initRenderState(gl, player);
+    const { renderer, camera } = ctx;
 
-    // Defer the actual resize to the next tick to batch multiple resize events.
-    let needsResize = true;
-    createResizeObserver(gl, () => {
-      needsResize = true;
+    const tickStart = performance.now();
+    const inputDt = Math.min(dt, MAX_INPUT_DT_MS) / 1000;
+
+    // --- Resize ---
+    if (needsResize) {
+      needsResize = false;
+      const dpr = window.devicePixelRatio || 1;
+      gl.width = Math.round(gl.clientWidth * dpr);
+      gl.height = Math.round(gl.clientHeight * dpr);
+      camera.resize(gl.clientWidth, gl.clientHeight);
+    }
+
+    // --- Input → server ---
+    const mouse = input.consumeMouseDelta();
+    camera.rotate(mouse.dx, mouse.dy);
+    const walk = camera.walkDir(input.walkKeys());
+    const yaw = camera.yaw();
+    const pitch = camera.pitch();
+    if (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch) {
+      lastYaw = yaw;
+      lastPitch = pitch;
+      room().input({
+        dx: walk.x,
+        dy: walk.y,
+        dz: walk.z,
+        dtSeconds: inputDt,
+        yaw,
+        pitch,
+      });
+    }
+    camera.setPosition(player.position);
+
+    // --- Remote entities ---
+    const snap = room().snapshot;
+    if (snap.tick !== lastTick) {
+      remotePlayers.onSnapshot(unwrap(snap.players), now);
+      tickDelta = snap.tick - lastTick;
+      lastTick = snap.tick;
+      msptHistory.push(snap.tickTimeMs);
+    }
+
+    // --- Render ---
+    const { buffers, count } = remotePlayers.frame(now);
+    const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    renderer.render({
+      viewMatrix: camera.viewMatrix(),
+      projMatrix: camera.projMatrix(),
+      cubePositions: chunk.cubePositions(),
+      numCubes: chunk.numCubes(),
+      lightPosition: LIGHT_POSITION,
+      backgroundColor: BACKGROUND_COLOR,
+      entities,
     });
 
-    let rafId = 0;
-    let timeoutId: number | undefined;
-    let lastTime = performance.now();
-    let fpsAccumMs = 0;
-    let fpsFrames = 0;
-    let frame = 0;
-    let hasFocus = document.visibilityState === "visible" && document.hasFocus();
-    const computeTimeHistory = Array.from({ length: FRAME_HISTORY_SIZE }, () => 0);
-    let computeTimeIndex = 0;
-    const msptHistory = Array.from({ length: FRAME_HISTORY_SIZE }, () => 0);
-    let msptIndex = 0;
-    let lastSeenTick = 0;
-    let tpsAccumMs = 0;
-    let tpsTicks = 0;
-    let snapAccumMs = 0;
-    let lastSnapCount = 0;
-    let lastYaw = 0;
-    let lastPitch = 0;
+    // --- Diagnostics (producers → store) ---
+    frame++;
+    const computeTimeMs = performance.now() - tickStart;
+    fpsMeter.sample(dt, 1);
+    computeHistory.push(computeTimeMs);
+    tpsMeter.sample(dt, tickDelta);
+    tickDelta = 0;
+    const currentSnapCount = room().snapCount();
+    snapMeter.sample(dt, currentSnapCount - lastSnapCount);
+    lastSnapCount = currentSnapCount;
 
-    const updateFocus = () => {
-      hasFocus = document.visibilityState === "visible" && document.hasFocus();
-    };
-
-    createEventListener(window, "focus", updateFocus);
-    createEventListener(window, "blur", updateFocus);
-    createEventListener(document, "visibilitychange", updateFocus);
-
-    const recordComputeTime = (duration: number) => {
-      computeTimeHistory[computeTimeIndex] = duration;
-      computeTimeIndex = (computeTimeIndex + 1) % computeTimeHistory.length;
-    };
-
-    const orderedComputeTimeHistory = () => [
-      ...computeTimeHistory.slice(computeTimeIndex),
-      ...computeTimeHistory.slice(0, computeTimeIndex),
-    ];
-
-    const orderedMsptHistory = () => [...msptHistory.slice(msptIndex), ...msptHistory.slice(0, msptIndex)];
-
-    // Use rAF when focused for vsync-aligned frames; fall back to a slow
-    // setTimeout when backgrounded so we keep processing snapshots.
-    const scheduleNextTick = () => {
-      if (hasFocus) {
-        rafId = window.requestAnimationFrame(tick);
-        return;
-      }
-      timeoutId = window.setTimeout(() => {
-        tick(performance.now());
-      }, BLURRED_FRAME_MS);
-    };
-
-    /** Main game loop: input → physics → render → diagnostics → schedule next. */
-    const tick = (now: number) => {
-      const tickStartedAt = performance.now();
-      const dt = now - lastTime;
-      lastTime = now;
-      const inputDtSeconds = Math.min(dt, MAX_INPUT_DT_MS) / 1000;
-
-      // --- Resize ---
-      if (needsResize) {
-        needsResize = false;
-        const dpr = window.devicePixelRatio || 1;
-        gl.width = Math.round(gl.clientWidth * dpr);
-        gl.height = Math.round(gl.clientHeight * dpr);
-        inputEl.width = gl.width;
-        inputEl.height = gl.height;
-        camera.resize(gl.clientWidth, gl.clientHeight);
-      }
-
-      // --- Input → server ---
-      // Only send an input packet when something actually changed.
-      const mouse = input.consumeMouseDelta();
-      camera.rotate(mouse.dx, mouse.dy);
-      const walk = camera.walkDir(input.walkKeys());
-      const yaw = camera.yaw();
-      const pitch = camera.pitch();
-      if (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch) {
-        lastYaw = yaw;
-        lastPitch = pitch;
-        room().input({
-          dx: walk.x,
-          dy: walk.y,
-          dz: walk.z,
-          dtSeconds: inputDtSeconds,
-          yaw,
-          pitch,
-        });
-      }
-      // Camera follows the local player's authoritative position.
-      camera.setPosition(player.position);
-
-      // --- Update remote entity store on new server tick ---
-      const snap = room().snapshot;
-      if (snap.tick !== lastSeenTick) {
-        remotePlayers.update(structuredClone(unwrap(snap.players)), now);
-        const tickDelta = snap.tick - lastSeenTick;
-        lastSeenTick = snap.tick;
-        tpsTicks += tickDelta;
-        msptHistory[msptIndex] = snap.tickTimeMs;
-        msptIndex = (msptIndex + 1) % msptHistory.length;
-      }
-
-      // --- Pack interpolated remote players into typed arrays for the GPU ---
-      const interpolated = remotePlayers.interpolated(now);
-      const playerPositions = new Float32Array(interpolated.length * 4);
-      const playerPitches = new Float32Array(interpolated.length);
-      let pi = 0;
-      for (let i = 0; i < interpolated.length; i++) {
-        const p = interpolated[i];
-        if (!p) continue;
-        playerPositions[pi] = p.x;
-        playerPositions[pi + 1] = p.y;
-        playerPositions[pi + 2] = p.z;
-        playerPositions[pi + 3] = p.yaw;
-        playerPitches[i] = p.pitch;
-        pi += 4;
-      }
-
-      renderer.render({
-        viewMatrix: camera.viewMatrix(),
-        projMatrix: camera.projMatrix(),
-        cubePositions: chunk.cubePositions(),
-        numCubes: chunk.numCubes(),
-        lightPosition: LIGHT_POSITION,
-        backgroundColor: BACKGROUND_COLOR,
-        playerPositions,
-        playerPitches,
-        numPlayers: interpolated.length,
-      });
-
-      // --- Diagnostics accumulation ---
-      frame++;
-      fpsAccumMs += dt;
-      fpsFrames++;
-      const computeTimeMs = performance.now() - tickStartedAt;
-      recordComputeTime(computeTimeMs);
-      tpsAccumMs += dt;
-      snapAccumMs += dt;
-
-      setState("playerPosition", player.position);
-      setState("diagnostics", "client", {
-        computeTimeMs,
-        computeTimeHistory: orderedComputeTimeHistory(),
-        frameCount: frame,
-        mouse: {
-          pointerLocked: input.diagnostics().pointerLocked,
-        },
-      });
-
-      setState("diagnostics", "server", {
-        mspt: snap.tickTimeMs,
-        msptHistory: orderedMsptHistory(),
-      });
-
-      // Flush windowed averages every FPS_WINDOW_MS.
-      if (fpsAccumMs >= FPS_WINDOW_MS) {
-        setState("diagnostics", "client", "fps", Math.round((fpsFrames * 1000) / fpsAccumMs));
-        fpsAccumMs = 0;
-        fpsFrames = 0;
-      }
-      if (tpsAccumMs >= FPS_WINDOW_MS) {
-        setState("diagnostics", "server", "tps", Math.round((tpsTicks * 1000) / tpsAccumMs));
-        tpsAccumMs = 0;
-        tpsTicks = 0;
-      }
-      if (snapAccumMs >= FPS_WINDOW_MS) {
-        const currentSnapCount = room().snapCount();
-        const delta = currentSnapCount - lastSnapCount;
-        setState("diagnostics", "server", "snapsPerSec", Math.round((delta * 1000) / snapAccumMs));
-        lastSnapCount = currentSnapCount;
-        snapAccumMs = 0;
-      }
-
-      scheduleNextTick();
-    };
-    scheduleNextTick();
-
-    onCleanup(() => {
-      cancelAnimationFrame(rafId);
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    setState("playerPosition", player.position);
+    setState("diagnostics", "client", {
+      fps: fpsMeter.rate,
+      frameCount: frame,
+      computeTimeMs,
+      computeTimeHistory: computeHistory.ordered(),
+      pointerLocked: input.pointerLocked(),
+    });
+    setState("diagnostics", "server", {
+      tps: tpsMeter.rate,
+      mspt: snap.tickTimeMs,
+      msptHistory: msptHistory.ordered(),
+      snapsPerSec: snapMeter.rate,
     });
   });
 

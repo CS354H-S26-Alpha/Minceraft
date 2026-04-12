@@ -10,7 +10,7 @@ import solid from "vite-plugin-solid";
 export const sharedPlugins = [glsl()];
 
 export const sharedAliases = {
-  "~": fileURLToPath(new URL("./src", import.meta.url)),
+  "@": fileURLToPath(new URL("./src", import.meta.url)),
 };
 
 export default defineConfig({

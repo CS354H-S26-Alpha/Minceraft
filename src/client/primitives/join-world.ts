@@ -1,10 +1,10 @@
 import { makeTimer } from "@solid-primitives/timer";
 import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { Player, type PlayerInput } from "../game/player";
-import type { RoomSessionApi, RoomSnapshot } from "../game/protocol";
-import { LocalPrediction } from "./engine/local-prediction";
-import { useSession } from "./session";
+import { LocalPrediction } from "@/client/engine/entities";
+import { useSession } from "@/client/session";
+import { Player, type PlayerInput } from "@/game/player";
+import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
 const INPUT_SEND_INTERVAL_MS = 50;
 

@@ -1,4 +1,4 @@
-import type { Entity } from "../../game/entity";
+import type { Entity } from "@/game/entity";
 
 /**
  * Client-side entity wrapper that implements client-side prediction with

@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { createGame } from "../engine";
-import { joinWorld } from "../join-world";
+import { joinWorld } from "../primitives/join-world";
 
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
