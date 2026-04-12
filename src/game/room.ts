@@ -26,7 +26,9 @@ export type {
 
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
-
+const MAX_NAME_LENGTH = 32;
+const NAME_PATTERN = /^[\w\s-]+$/;
+const MIN_INPUT_INTERVAL_MS = 25;
 type SnapshotListener = ((snap: RoomSnapshot) => unknown) & {
   dup?(): SnapshotListener;
   onRpcBroken?(callback: () => void): void;
@@ -53,6 +55,7 @@ export class GameRoom extends DurableObject<Env> {
   private playerCollection = new PlayerCollection();
   private collections: EntityCollection[] = [this.playerCollection];
   private listeners = new Map<string, SnapshotListener>();
+  private lastInputTime = new Map<string, number>();
   private gameTick = 0;
   private lastTickTimeMs = 0;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -91,11 +94,16 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   sendInputs(playerId: string, inputs: PlayerInput[]) {
+    const now = Date.now();
+    const last = this.lastInputTime.get(playerId) ?? 0;
+    if (now - last < MIN_INPUT_INTERVAL_MS) return;
+    this.lastInputTime.set(playerId, now);
     this.playerCollection.queueInputs(playerId, inputs);
   }
 
   leave(playerId: string) {
     this.removeListener(playerId);
+    this.lastInputTime.delete(playerId);
     this.playerCollection.leave(playerId);
     if (this.listeners.size > 0) {
       void this.broadcast(this.snapshot());
@@ -251,7 +259,11 @@ export class GameServer extends RpcTarget implements GameApi {
   }
 
   async authenticate(name: string) {
-    const playerId = await derivePlayerId(name);
-    return new AuthSession(this.#env, playerId, name);
+    const trimmed = name.trim();
+    if (trimmed.length < 1 || trimmed.length > MAX_NAME_LENGTH || !NAME_PATTERN.test(trimmed)) {
+      throw new Error("Invalid player name");
+    }
+    const playerId = await derivePlayerId(trimmed);
+    return new AuthSession(this.#env, playerId, trimmed);
   }
 }

@@ -6,6 +6,7 @@ import type { EntityCollection } from "./entity-collection";
 import { Player, type PlayerInput, type PlayerState } from "./player";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
+const MAX_QUEUED_INPUTS = 20;
 
 export class PlayerCollection implements EntityCollection {
   readonly key = "players";
@@ -45,10 +46,13 @@ export class PlayerCollection implements EntityCollection {
 
   queueInputs(playerId: string, inputs: PlayerInput[]): void {
     const queue = this.inputQueues.get(playerId);
+    const remaining = MAX_QUEUED_INPUTS - (queue?.length ?? 0);
+    if (remaining <= 0) return;
+    const toAdd = inputs.slice(0, remaining);
     if (queue) {
-      queue.push(...inputs);
+      queue.push(...toAdd);
     } else {
-      this.inputQueues.set(playerId, [...inputs]);
+      this.inputQueues.set(playerId, [...toAdd]);
     }
   }
 

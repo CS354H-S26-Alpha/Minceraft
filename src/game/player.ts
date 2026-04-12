@@ -2,6 +2,8 @@ import { Vec3 } from "gl-matrix";
 import { Entity } from "./entity";
 
 export const PLAYER_SPEED = 30;
+const MAX_DT_SECONDS = 2;
+const MAX_COORDINATE = 100_000;
 
 export interface PlayerState {
   id: string;
@@ -32,14 +34,26 @@ export class Player extends Entity<PlayerState, PlayerInput> {
   }
 
   step({ dx, dy, dz, dtSeconds, yaw, pitch }: PlayerInput) {
+    if (
+      !Number.isFinite(dx) ||
+      !Number.isFinite(dy) ||
+      !Number.isFinite(dz) ||
+      !Number.isFinite(dtSeconds) ||
+      !Number.isFinite(yaw) ||
+      !Number.isFinite(pitch) ||
+      dtSeconds <= 0 ||
+      dtSeconds > MAX_DT_SECONDS
+    )
+      return;
+
     this.state.yaw = yaw;
     this.state.pitch = pitch;
     const mag2 = dx * dx + dy * dy + dz * dz;
     if (mag2 === 0) return;
     const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
-    this.state.x += dx * inv;
-    this.state.y += dy * inv;
-    this.state.z += dz * inv;
+    this.state.x = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.x + dx * inv));
+    this.state.y = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
+    this.state.z = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
   }
 }
 

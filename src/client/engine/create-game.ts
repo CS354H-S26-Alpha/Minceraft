@@ -107,7 +107,6 @@ export function createGame(args: CreateGameArgs): GameState {
     const updateFocus = () => {
       hasFocus = document.visibilityState === "visible" && document.hasFocus();
     };
-    hasFocus = true;
 
     createEventListener(window, "focus", updateFocus);
     createEventListener(window, "blur", updateFocus);
