@@ -1,6 +1,6 @@
 import type { Entity } from "../game/entity";
 
-const DEFAULT_DRIFT_SQ = 40; // TODO: why is this being done on the client
+const DEFAULT_DRIFT_SQ = 4;
 
 export class ClientEntity<S extends object, I> {
   private inputHistory: I[] = [];
@@ -23,8 +23,7 @@ export class ClientEntity<S extends object, I> {
     this.lastAcked = acked;
     this.inputHistory.splice(0, newlyAcked);
 
-    if (this.initialized && this.distanceSq(this.entity.state, authoritative) < this.threshold)
-      return false;
+    if (this.initialized && this.distanceSq(this.entity.state, authoritative) < this.threshold) return false;
 
     this.initialized = true;
     Object.assign(this.entity.state, authoritative);

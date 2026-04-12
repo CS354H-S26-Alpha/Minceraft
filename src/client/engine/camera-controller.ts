@@ -47,10 +47,7 @@ export class CameraController {
 
     const lookDir = this.camera.forward().negate();
     const currentPitch = Math.asin(Math.max(-1, Math.min(1, lookDir.y)));
-    const nextPitch = Math.max(
-      -MAX_PITCH,
-      Math.min(MAX_PITCH, currentPitch - ROTATION_SPEED * mouseDy),
-    );
+    const nextPitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, currentPitch - ROTATION_SPEED * mouseDy));
     const pitchDelta = nextPitch - currentPitch;
     if (pitchDelta !== 0) {
       this.camera.rotate(this.camera.right(), pitchDelta);
@@ -109,14 +106,6 @@ export class CameraController {
 
   private createCamera(): Camera {
     const { eye, target, fov, width, height, zNear, zFar } = this.opts;
-    return new Camera(
-      Vec3.clone(eye),
-      Vec3.clone(target),
-      new Vec3([0, 1, 0]),
-      fov,
-      width / height,
-      zNear,
-      zFar,
-    );
+    return new Camera(Vec3.clone(eye), Vec3.clone(target), new Vec3([0, 1, 0]), fov, width / height, zNear, zFar);
   }
 }

@@ -31,14 +31,7 @@ export class Chunk {
   }
 
   // Bilinear interpolation with smoothstep
-  private bilerp(
-    v00: number,
-    v10: number,
-    v01: number,
-    v11: number,
-    tx: number,
-    tz: number,
-  ): number {
+  private bilerp(v00: number, v10: number, v01: number, v11: number, tx: number, tz: number): number {
     const sx = this.smoothstep(tx);
     const sz = this.smoothstep(tz);
     const v0 = v00 * (1 - sx) + v10 * sx;

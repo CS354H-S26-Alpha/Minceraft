@@ -68,11 +68,7 @@ export class PlayerCollection implements EntityCollection {
       }
       this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
       queue.length = 0;
-      if (
-        Object.keys(prev).some(
-          (k) => prev[k as keyof typeof prev] !== player.state[k as keyof typeof prev],
-        )
-      ) {
+      if (Object.keys(prev).some((k) => prev[k as keyof typeof prev] !== player.state[k as keyof typeof prev])) {
         this.dirty.add(id);
         changed = true;
       }

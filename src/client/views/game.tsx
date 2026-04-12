@@ -7,17 +7,12 @@ export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
   const [textCanvas, setTextCanvas] = createSignal<HTMLCanvasElement>();
 
-  const { player, snapshot, snapCount, input, cameraOrientation } = createRoom("world-1");
+  const room = createRoom("world-1");
 
   const game = createGame({
     glCanvas,
     inputCanvas: textCanvas,
-    player,
-    sendInput: input,
-    cameraOrientation,
-    snapshot,
-    snapCount,
-    localPlayerId: player.id,
+    room,
   });
 
   return (
@@ -25,16 +20,16 @@ export default function GameView() {
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
       <canvas ref={setTextCanvas} class="absolute inset-0 z-10 h-full w-full" />
       <DiagnosticsPanel
-        playerName={player.state.name}
-        fps={game.fps}
-        computeTimeMs={game.computeTimeMs}
-        computeTimeHistory={game.computeTimeHistory}
-        tps={game.tps}
-        mspt={game.mspt}
-        msptHistory={game.msptHistory}
-        snapsPerSec={game.snapsPerSec}
-        onlinePlayers={Object.values(snapshot().players).map((p) => p.name)}
-        pointerLocked={game.mouse.pointerLocked}
+        playerName={room.player.state.name}
+        fps={game.diagnostics.renderer.fps}
+        computeTimeMs={game.diagnostics.server.computeTimeMs}
+        computeTimeHistory={game.diagnostics.server.computeTimeHistory}
+        tps={game.diagnostics.server.tps}
+        mspt={game.diagnostics.server.mspt}
+        msptHistory={game.diagnostics.server.msptHistory}
+        snapsPerSec={game.diagnostics.server.snapsPerSec}
+        onlinePlayers={Object.values(room.snapshot().players).map((p) => p.name)}
+        pointerLocked={game.diagnostics.renderer.mouse.pointerLocked}
       />
     </div>
   );

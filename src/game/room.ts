@@ -8,13 +8,7 @@ import * as schema from "../server/schema";
 import type { EntityCollection } from "./entity-collection";
 import type { PlayerInput } from "./player";
 import { PlayerCollection } from "./player-collection";
-import type {
-  AuthenticatedApi,
-  GameApi,
-  PlayerCredentials,
-  RoomSessionApi,
-  RoomSnapshot,
-} from "./protocol";
+import type { AuthenticatedApi, GameApi, PlayerCredentials, RoomSessionApi, RoomSnapshot } from "./protocol";
 
 export type {
   AuthenticatedApi,
@@ -149,7 +143,8 @@ export class GameRoom extends DurableObject<Env> {
       this.removeListener(id);
     }
     if (broken.length > 0 && this.listeners.size > 0) {
-      await this.broadcast(this.snapshot());
+      const updated = this.snapshot();
+      await Promise.all([...this.listeners.values()].map((cb) => notify(cb, updated)));
     }
   }
 

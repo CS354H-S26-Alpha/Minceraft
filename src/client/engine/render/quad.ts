@@ -13,9 +13,7 @@ export class Quad {
 
     this.indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
 
-    this.normals = new Float32Array([
-      0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
-    ]);
+    this.normals = new Float32Array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
 
     this.uvs = new Float32Array([0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0]);
   }

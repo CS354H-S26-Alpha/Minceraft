@@ -35,9 +35,7 @@ export class Worker extends Entrypoint<Env> {
       return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(
-        JSON.stringify({ message: "worker fetch error", error: message, path: url.pathname }),
-      );
+      console.error(JSON.stringify({ message: "worker fetch error", error: message, path: url.pathname }));
       return new Response("Internal server error", { status: 500, headers: SECURITY_HEADERS });
     }
   }

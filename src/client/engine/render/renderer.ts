@@ -97,16 +97,7 @@ export class Renderer {
       undefined,
       quad.normalsFlat(),
     );
-    pass.addAttribute(
-      "aUV",
-      2,
-      gl.FLOAT,
-      false,
-      2 * Float32Array.BYTES_PER_ELEMENT,
-      0,
-      undefined,
-      quad.uvFlat(),
-    );
+    pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, quad.uvFlat());
     pass.addInstancedAttribute(
       "aOffset",
       4,
@@ -168,16 +159,7 @@ export class Renderer {
       undefined,
       cube.normalsFlat(),
     );
-    pass.addAttribute(
-      "aUV",
-      2,
-      gl.FLOAT,
-      false,
-      2 * Float32Array.BYTES_PER_ELEMENT,
-      0,
-      undefined,
-      cube.uvFlat(),
-    );
+    pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, cube.uvFlat());
     pass.addInstancedAttribute(
       "aOffset",
       4,
