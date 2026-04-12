@@ -8,8 +8,8 @@ export function chunkKey(originX: number, originZ: number): string {
 
 export function chunkOrigin(wx: number, wz: number): [number, number] {
     return [
-        Math.floor(wx / CHUNK_SIZE) * CHUNK_SIZE + CHUNK_SIZE / 2,
-        Math.floor(wz / CHUNK_SIZE) * CHUNK_SIZE + CHUNK_SIZE / 2,
+        Math.floor((wx + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE ,
+        Math.floor((wz + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE ,
     ];
 }
 

@@ -6,16 +6,7 @@ export class ChunkMaster {
     private nearChunks: Chunk[] = [];
 
     constructor(spawnX: number, spawnZ: number) {
-        for (let cx = -1; cx <= 1; cx++) {
-            for (let cz = -1; cz <= 1; cz++) {
-                const [originX, originZ] = [
-                    spawnX + cx * CHUNK_SIZE,
-                    spawnZ + cz * CHUNK_SIZE,
-                ];
-                const chunk = new Chunk(originX, originZ, CHUNK_SIZE);
-                this.chunkMap.set(chunkKey(originX, originZ), chunk);
-            }
-        }
+        this.updateChunksAroundPos(spawnX, spawnZ);
     }
 
     public updateChunksAroundPos(wx: number, wz: number): Chunk[] {
@@ -31,6 +22,7 @@ export class ChunkMaster {
                 if (chunk) {
                     chunks.push(chunk);
                 } else {
+                    // compute chunk, add to map, add to near chunks
                     const newChunk = new Chunk(chunkX, chunkZ, CHUNK_SIZE);
                     this.chunkMap.set(chunkKey(chunkX, chunkZ), newChunk);
                     chunks.push(newChunk);
