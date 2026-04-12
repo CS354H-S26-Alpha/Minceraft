@@ -1,5 +1,5 @@
 import { makeTimer } from "@solid-primitives/timer";
-import { createMemo, createSignal, onCleanup } from "solid-js";
+import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { Player, type PlayerInput } from "../game/player";
 import type { RoomSessionApi, RoomSnapshot } from "../game/protocol";
@@ -18,7 +18,6 @@ const INPUT_SEND_INTERVAL_MS = 50;
 export function joinWorld(roomId: string) {
   const { credentials, join } = useSession();
   const { playerId } = credentials;
-
   const [player, setPlayer] = createSignal<Player>();
   const replicated = createMemo(() => {
     const p = player();
@@ -32,18 +31,22 @@ export function joinWorld(roomId: string) {
     tickTimeMs: 0,
   });
 
-  let snapCount = 0;
+  const [snapCount, setSnapCount] = createSignal(0);
   let session: RoomSessionApi | undefined;
+
+  // The snapshot callback fires from capnweb (outside Solid's reactive scope).
+  // batch coalesces the store + signal writes into a single reactive flush.
   join(roomId, (snap: RoomSnapshot) => {
-    snapCount++;
-    setSnapshot(reconcile(snap));
+    batch(() => {
+      setSnapCount((c) => c + 1);
+      setSnapshot(reconcile(snap));
 
-    // Server includes our own state in `self` when we requested it.
-    if (snap.self && !player()) {
-      setPlayer(new Player(snap.self));
-    }
+      if (snap.self && !player()) {
+        setPlayer(new Player(snap.self));
+      }
 
-    replicated()?.acknowledge(snap.acks[playerId] ?? 0);
+      replicated()?.acknowledge(snap.acks[playerId] ?? 0);
+    });
   }).then((s) => {
     session = s;
   });
@@ -70,5 +73,5 @@ export function joinWorld(roomId: string) {
     session?.leave();
   });
 
-  return { player, snapshot, snapCount: () => snapCount, input } as const;
+  return { player, snapshot, snapCount, input } as const;
 }

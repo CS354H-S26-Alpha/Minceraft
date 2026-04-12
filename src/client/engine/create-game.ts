@@ -14,8 +14,6 @@ import { Renderer } from "./render/renderer";
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
-  /** Transparent overlay canvas that captures pointer/keyboard input. */
-  inputCanvas: () => HTMLCanvasElement | undefined;
   /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
   room: ReturnType<typeof joinWorld>;
 }
@@ -66,8 +64,7 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 const MAX_INPUT_DT_MS = 100;
 
 /**
- * Reactive game primitive. Call from a Solid reactive scope (e.g. component body).
- * Boots when both canvas accessors resolve; tears down via the enclosing scope.
+ * Reactive game primitive.
  */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
@@ -97,9 +94,8 @@ export function createGame(args: CreateGameArgs): GameState {
   // state. Re-runs (and cleans up) if any tracked signal changes.
   createEffect(() => {
     const gl = args.glCanvas();
-    const inputEl = args.inputCanvas();
     const player = room().player();
-    if (!gl || !inputEl || !player) return;
+    if (!gl || !player) return;
 
     const renderer = new Renderer(gl);
     const chunk = new Chunk(0.0, 0.0, 64, TEMP_START_SEED);
