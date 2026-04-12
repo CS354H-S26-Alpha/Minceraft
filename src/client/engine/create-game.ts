@@ -4,7 +4,7 @@ import { type Vec3, Vec4 } from "gl-matrix";
 import { type Accessor, createEffect, onCleanup } from "solid-js";
 import { createStore } from "solid-js/store";
 import { Chunk } from "~/game/chunk";
-import type { createRoom } from "../create-room";
+import type { joinWorld } from "../create-room";
 import { CameraController } from "./camera-controller";
 import { createInput, type MouseDiagnostics } from "./input";
 import { Renderer } from "./render/renderer";
@@ -14,8 +14,8 @@ export interface CreateGameArgs {
   glCanvas: Accessor<HTMLCanvasElement | undefined>;
   /** Transparent overlay canvas that captures pointer/keyboard input. */
   inputCanvas: Accessor<HTMLCanvasElement | undefined>;
-  /** Output of `createRoom()` — provides player, snapshot, input, etc. */
-  room: ReturnType<typeof createRoom>;
+  /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
+  room: ReturnType<typeof joinWorld>;
 }
 
 /** Client-side rendering metrics exposed to the diagnostics panel. */

@@ -12,7 +12,14 @@ export interface Orientation {
   pitch: number;
 }
 
-export function createRoom(roomId: string) {
+/**
+ * SolidJS primitive that connects to a game room over capnweb WebSocket RPC.
+ *
+ * Creates a local `Player`, joins the server room, and sets up an input
+ * batching interval. Returns reactive accessors consumed by `createGame`.
+ * Must be called inside a Solid reactive scope; tears down via `onCleanup`.
+ */
+export function joinWorld(roomId: string) {
   const { credentials, join } = useSession();
   const { playerId, name } = credentials;
 

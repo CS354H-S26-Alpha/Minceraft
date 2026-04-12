@@ -1,13 +1,13 @@
 import { createSignal } from "solid-js";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
-import { createRoom } from "../create-room";
+import { joinWorld } from "../create-room";
 import { createGame } from "../engine";
 
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
   const [textCanvas, setTextCanvas] = createSignal<HTMLCanvasElement>();
 
-  const room = createRoom("world-1");
+  const room = joinWorld("world-1");
 
   const game = createGame({
     glCanvas,

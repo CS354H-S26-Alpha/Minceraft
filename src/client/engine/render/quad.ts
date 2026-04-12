@@ -1,3 +1,7 @@
+/**
+ * Axis-aligned vertical quad geometry: a 1×1 square in the XY plane, centred
+ * at the origin. Used as the billboard geometry for player sprites.
+ */
 export class Quad {
   private positions: Float32Array;
   private indices: Uint32Array;
@@ -18,18 +22,22 @@ export class Quad {
     this.uvs = new Float32Array([0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0]);
   }
 
+  /** Flat `Float32Array` of vertex positions `[x, y, z, w]` per vertex. */
   positionsFlat(): Float32Array {
     return this.positions;
   }
 
+  /** Flat `Uint32Array` of triangle indices. */
   indicesFlat(): Uint32Array {
     return this.indices;
   }
 
+  /** Flat `Float32Array` of per-vertex normals `[nx, ny, nz, 0]`. */
   normalsFlat(): Float32Array {
     return this.normals;
   }
 
+  /** Flat `Float32Array` of per-vertex UV coordinates `[u, v]`. */
   uvFlat(): Float32Array {
     return this.uvs;
   }

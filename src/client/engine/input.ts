@@ -25,6 +25,16 @@ export interface InputHandle {
   diagnostics(): Readonly<MouseDiagnostics>;
 }
 
+/**
+ * SolidJS input primitive. Handles pointer lock, keyboard state, and mouse
+ * deltas for the game canvas.
+ *
+ * Prefers `pointerrawupdate` events (lower latency) when available, falling
+ * back to `mousemove`. Keyboard listeners are attached/detached with pointer
+ * lock to prevent ghost key state after losing focus.
+ *
+ * Must be called inside a Solid reactive scope; cleans up listeners via `onCleanup`.
+ */
 export function createInput(canvas: HTMLCanvasElement, opts: InputOptions = {}): InputHandle {
   if (opts.onReset) createShortcut(["R"], opts.onReset);
 
@@ -177,6 +187,10 @@ export function createInput(canvas: HTMLCanvasElement, opts: InputOptions = {}):
   };
 }
 
+/**
+ * Requests pointer lock with `unadjustedMovement: true` for raw mouse input.
+ * Falls back to standard pointer lock if the option is unsupported.
+ */
 async function requestPointerLock(canvas: HTMLCanvasElement): Promise<void> {
   const maybePointerLock = canvas.requestPointerLock as (options?: {
     unadjustedMovement?: boolean;

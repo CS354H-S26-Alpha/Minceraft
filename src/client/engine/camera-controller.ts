@@ -15,6 +15,11 @@ export interface CameraOptions {
   target?: Vec3;
 }
 
+/**
+ * First-person camera built on top of the vendor `Camera` class. Tracks yaw
+ * and pitch from pointer-lock mouse input, and converts WASD/Space/Shift key
+ * states into a world-space walk vector.
+ */
 export class CameraController {
   private camera: Camera;
   private readonly opts: Required<CameraOptions>;
@@ -31,16 +36,22 @@ export class CameraController {
     this.camera = this.createCamera();
   }
 
+  /** Resets the camera to its initial position and orientation. */
   reset(): void {
     this.camera = this.createCamera();
   }
 
+  /** Updates the projection matrix when the canvas is resized. */
   resize(width: number, height: number): void {
     this.opts.width = width;
     this.opts.height = height;
     this.camera.setAspect(width / height);
   }
 
+  /**
+   * Rotates the camera by a mouse delta. Yaw is unbounded; pitch is clamped
+   * to ±90° to prevent gimbal flip.
+   */
   rotate(mouseDx: number, mouseDy: number): void {
     if (mouseDx === 0 && mouseDy === 0) return;
     this.camera.rotate(new Vec3([0, 1, 0]), -ROTATION_SPEED * mouseDx);
@@ -66,16 +77,22 @@ export class CameraController {
     return out;
   }
 
+  /** Returns the current camera yaw in radians (atan2 of the look direction). */
   yaw(): number {
     const lookDir = this.camera.forward().negate();
     return Math.atan2(lookDir.x, -lookDir.z);
   }
 
+  /** Returns the current camera pitch in radians (asin of the look direction). */
   pitch(): number {
     const lookDir = this.camera.forward().negate();
     return Math.asin(Math.max(-1, Math.min(1, lookDir.y)));
   }
 
+  /**
+   * Rebuilds the camera to match an exact yaw/pitch. Used to sync orientation
+   * from a server-authoritative reconciliation.
+   */
   setOrientation(yaw: number, pitch: number): void {
     const eye = this.camera.pos();
     const cp = Math.cos(pitch);
@@ -92,14 +109,17 @@ export class CameraController {
     );
   }
 
+  /** Moves the camera eye to `pos` without changing the look direction. */
   setPosition(pos: Vec3): void {
     this.camera.setPos(pos);
   }
 
+  /** Returns the current view matrix. */
   viewMatrix(): Mat4 {
     return this.camera.viewMatrix();
   }
 
+  /** Returns the current projection matrix. */
   projMatrix(): Mat4 {
     return this.camera.projMatrix();
   }

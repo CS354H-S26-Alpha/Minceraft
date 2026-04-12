@@ -11,6 +11,11 @@ const SECURITY_HEADERS: Record<string, string> = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
 };
 
+/**
+ * Rejects cross-origin requests by comparing the `Origin` header's host
+ * against the request URL's host. Same-origin requests and requests without
+ * an `Origin` header are allowed.
+ */
 function isAllowedOrigin(request: Request): boolean {
   const origin = request.headers.get("Origin");
   if (!origin) return true;
@@ -22,6 +27,10 @@ function isAllowedOrigin(request: Request): boolean {
   }
 }
 
+/**
+ * Cloudflare Worker entrypoint. Routes `/api` to the capnweb RPC handler
+ * and rejects everything else with appropriate HTTP status codes.
+ */
 export class Worker extends Entrypoint<Env> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

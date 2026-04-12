@@ -24,15 +24,22 @@ export interface PlayerInput {
   pitch: number;
 }
 
+/** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
+  /** Unique player identifier (alias for `state.id`). */
   get id() {
     return this.state.id;
   }
 
+  /** Current world-space position as a Vec3. */
   get position(): Vec3 {
     return new Vec3([this.state.x, this.state.y, this.state.z]);
   }
 
+  /**
+   * Applies one input frame: validates the input, normalises the movement
+   * vector to a constant speed, and clamps coordinates within world bounds.
+   */
   step({ dx, dy, dz, dtSeconds, yaw, pitch }: PlayerInput) {
     if (
       !Number.isFinite(dx) ||
@@ -57,6 +64,11 @@ export class Player extends Entity<PlayerState, PlayerInput> {
   }
 }
 
+/**
+ * Squared "distance" between two player states, combining positional and
+ * angular deltas. Used by `ClientEntity` to decide whether to snap or skip
+ * server reconciliation.
+ */
 export function playerDistanceSq(a: PlayerState, b: PlayerState): number {
   const dx = a.x - b.x;
   const dy = a.y - b.y;

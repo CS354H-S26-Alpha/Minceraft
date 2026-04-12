@@ -1,5 +1,9 @@
 import { Vec3, Vec4 } from "gl-matrix";
 
+/**
+ * Unit cube geometry: 6 faces × 4 vertices, with per-face normals and UVs.
+ * Positions, normals, and indices are pre-packed into typed arrays for WebGL.
+ */
 export class Cube {
   private positionsRay: Vec4[];
   private indicesRay: Vec3[];
@@ -165,29 +169,35 @@ export class Cube {
     console.assert(this.uvF32.length === 4 * 6 * 2);
   }
 
+  /** Flat `Float32Array` of vertex positions `[x, y, z, w]` per vertex. */
   public positionsFlat(): Float32Array {
     console.assert(this.positionsF32.length === 24 * 4);
     return this.positionsF32;
   }
 
+  /** Array of triangle index triples (one `Vec3` per triangle). */
   public indices(): Vec3[] {
     console.assert(this.indicesRay.length === 12);
     return this.indicesRay;
   }
 
+  /** Flat `Uint32Array` of triangle indices. */
   public indicesFlat(): Uint32Array {
     console.assert(this.indicesU32.length === 12 * 3);
     return this.indicesU32;
   }
 
+  /** Array of per-vertex normals as `Vec4`. */
   public normals(): Vec4[] {
     return this.normalsRay;
   }
 
+  /** Flat `Float32Array` of per-vertex normals `[nx, ny, nz, 0]`. */
   public normalsFlat(): Float32Array {
     return this.normalsF32;
   }
 
+  /** Flat `Float32Array` of per-vertex UV coordinates `[u, v]`. */
   public uvFlat(): Float32Array {
     return this.uvF32;
   }

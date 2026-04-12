@@ -20,6 +20,10 @@ export interface RenderView {
   numPlayers: number;
 }
 
+/**
+ * WebGL renderer. Owns two instanced render passes: one for terrain cubes and
+ * one for billboarded player quads.
+ */
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: WebGLRenderingContext;
@@ -45,6 +49,7 @@ export class Renderer {
     this.initPlayerPass();
   }
 
+  /** Clears the framebuffer and draws all terrain cubes and remote players. */
   render(view: RenderView): void {
     this.currentView = view;
 
@@ -71,6 +76,7 @@ export class Renderer {
     }
   }
 
+  /** Sets up the instanced render pass for billboarded player quads. */
   private initPlayerPass(): void {
     const gl = this.ctx;
     const pass = this.playerRenderPass;
@@ -133,6 +139,7 @@ export class Renderer {
     pass.setup();
   }
 
+  /** Sets up the instanced render pass for terrain cubes. */
   private initBlankCubePass(): void {
     const gl = this.ctx;
     const pass = this.blankCubeRenderPass;

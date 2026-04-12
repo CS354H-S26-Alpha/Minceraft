@@ -29,6 +29,10 @@ type SnapshotListener = ((snap: RoomSnapshot) => unknown) & {
   [Symbol.dispose]?(): void;
 };
 
+/**
+ * Calls a snapshot listener, catching synchronous throws and rejected promises.
+ * Returns `false` if the call failed, signalling a broken connection.
+ */
 function notify(cb: SnapshotListener, snap: RoomSnapshot): Promise<boolean> {
   try {
     const result = cb(snap);
@@ -44,6 +48,11 @@ function notify(cb: SnapshotListener, snap: RoomSnapshot): Promise<boolean> {
   }
 }
 
+/**
+ * Durable Object for a single game room. Holds authoritative game state, runs
+ * the tick loop, broadcasts snapshots to connected clients, and periodically
+ * flushes state to Drizzle SQLite.
+ */
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerCollection = new PlayerCollection();
@@ -62,6 +71,10 @@ export class GameRoom extends DurableObject<Env> {
     this.alarms = new Alarms(ctx, this);
   }
 
+  /**
+   * Lazy one-time setup: runs DB migrations and hydrates all collections from
+   * SQLite. Called before any operation that needs entity state.
+   */
   private ensureInitialized() {
     if (this.initialized) return;
     this.initialized = true;
@@ -71,6 +84,10 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Registers a new player and sends the current snapshot to all listeners.
+   * Starts the tick loop if it wasn't already running.
+   */
   async join(playerId: string, name: string, onSnapshot: SnapshotListener) {
     this.ensureInitialized();
     this.playerCollection.join(playerId, name);
@@ -87,6 +104,10 @@ export class GameRoom extends DurableObject<Env> {
     this.startTickLoop();
   }
 
+  /**
+   * Enqueues player inputs, rate-limited to prevent flooding.
+   * Batches arriving faster than `MIN_INPUT_INTERVAL_MS` are silently dropped.
+   */
   sendInputs(playerId: string, inputs: PlayerInput[]) {
     const now = Date.now();
     const last = this.lastInputTime.get(playerId) ?? 0;
@@ -95,6 +116,7 @@ export class GameRoom extends DurableObject<Env> {
     this.playerCollection.queueInputs(playerId, inputs);
   }
 
+  /** Removes the player from the room and broadcasts the updated snapshot. */
   leave(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
@@ -108,10 +130,16 @@ export class GameRoom extends DurableObject<Env> {
     await this.alarms.alarm(info);
   }
 
+  /** Runs a single tick; exposed publicly for external callers (e.g. tests). */
   async runTick() {
     return this.tick();
   }
 
+  /**
+   * Core game loop body: advances all collections, broadcasts if anything
+   * changed, and flushes dirty state every N ticks. Stops the loop when no
+   * listeners remain.
+   */
   private async tick() {
     this.ensureInitialized();
 
@@ -135,6 +163,11 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Sends the snapshot to all registered listeners in parallel. Removes any
+   * listeners whose calls fail, then re-broadcasts to the survivors so they
+   * see the updated online player list.
+   */
   private async broadcast(snap: RoomSnapshot): Promise<void> {
     const entries = [...this.listeners.entries()];
     const results = await Promise.all(entries.map(([, cb]) => notify(cb, snap)));
@@ -148,6 +181,7 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /** Builds a room snapshot from current state, filtered to online players. */
   private snapshot(): RoomSnapshot {
     const onlinePlayerIds = new Set(this.listeners.keys());
     return {
@@ -158,26 +192,31 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  /** Returns `true` if any collection has unsaved dirty entities. */
   private hasDirty(): boolean {
     return this.collections.some((col) => col.hasDirty());
   }
 
+  /** Flushes all dirty collections to SQLite. */
   private flushAll() {
     for (const col of this.collections) {
       col.flush(this.db);
     }
   }
 
+  /** Disposes a player's dup'd snapshot callback and removes it from the listener map. */
   private removeListener(playerId: string) {
     this.listeners.get(playerId)?.[Symbol.dispose]?.();
     this.listeners.delete(playerId);
   }
 
+  /** Starts the `setInterval` tick loop if not already running. */
   private startTickLoop() {
     if (this.tickInterval) return;
     this.tickInterval = setInterval(() => this.tick(), TICK_MS);
   }
 
+  /** Clears the `setInterval` tick loop. */
   private stopTickLoop() {
     if (!this.tickInterval) return;
     clearInterval(this.tickInterval);
@@ -187,6 +226,10 @@ export class GameRoom extends DurableObject<Env> {
 
 type GameRoomStub = DurableObjectStub<GameRoom>;
 
+/**
+ * Scoped capability returned from `AuthSession.join()`. Clients use this to
+ * send inputs and leave the room. The session is invalidated after `leave()`.
+ */
 export class RoomSession extends RpcTarget implements RoomSessionApi {
   #room: GameRoomStub;
   #playerId: string;
@@ -198,21 +241,28 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     this.#playerId = playerId;
   }
 
+  /** Forwards inputs to the authoritative `GameRoom`. */
   sendInputs(inputs: PlayerInput[]) {
     return this.#room.sendInputs(this.#playerId, inputs);
   }
 
+  /** Leaves the room (idempotent; subsequent calls are no-ops). */
   leave() {
     if (this.#left) return;
     this.#left = true;
     return this.#room.leave(this.#playerId);
   }
 
+  /** Called automatically when the RPC session is disposed. */
   [Symbol.dispose]() {
     Promise.resolve(this.leave()).catch(() => {});
   }
 }
 
+/**
+ * Capability returned after successful authentication. Exposes player
+ * credentials and the ability to join a named room.
+ */
 export class AuthSession extends RpcTarget implements AuthenticatedApi {
   #env: Env;
   #playerId: string;
@@ -225,10 +275,15 @@ export class AuthSession extends RpcTarget implements AuthenticatedApi {
     this.#name = name;
   }
 
+  /** The authenticated player's ID and display name. */
   get credentials(): PlayerCredentials {
     return { playerId: this.#playerId, name: this.#name };
   }
 
+  /**
+   * Looks up (or creates) the named Durable Object room, registers the
+   * player, and returns a `RoomSession` capability.
+   */
   async join(roomId: string, onSnapshot: SnapshotListener) {
     const id = this.#env.GameRoom.idFromName(roomId);
     const stub = this.#env.GameRoom.get(id);
@@ -237,6 +292,10 @@ export class AuthSession extends RpcTarget implements AuthenticatedApi {
   }
 }
 
+/**
+ * Derives a deterministic player ID by SHA-256-hashing the player's name.
+ * The first 16 bytes are hex-encoded to form a 32-character ID.
+ */
 async function derivePlayerId(name: string): Promise<string> {
   const data = new TextEncoder().encode(name);
   const hash = await crypto.subtle.digest("SHA-256", data);
@@ -245,6 +304,7 @@ async function derivePlayerId(name: string): Promise<string> {
     .join("");
 }
 
+/** RPC entry point. Validates the player name and returns an `AuthSession`. */
 export class GameServer extends RpcTarget implements GameApi {
   #env: Env;
 
@@ -253,6 +313,11 @@ export class GameServer extends RpcTarget implements GameApi {
     this.#env = env;
   }
 
+  /**
+   * Validates and trims the name, then returns an `AuthSession` for the derived
+   * player ID.
+   * @throws If the name is empty, too long, or contains invalid characters.
+   */
   async authenticate(name: string) {
     const trimmed = name.trim();
     if (trimmed.length < 1 || trimmed.length > MAX_NAME_LENGTH || !NAME_PATTERN.test(trimmed)) {
