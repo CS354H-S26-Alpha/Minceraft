@@ -1,6 +1,7 @@
 export enum CubeType {
   White = 0,
-  Grass = 1,
+  Black = 1,
+  Grass = 2,
 }
 
 export interface CubeTypeInfo {
@@ -10,5 +11,6 @@ export interface CubeTypeInfo {
 
 export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   [CubeType.White]: { baseColor: [1.0, 1.0, 1.0] },
+  [CubeType.Black]: { baseColor: [0.0, 0.0, 0.0] },
   [CubeType.Grass]: {  baseColor: [0.0, 0.54, 0.0] },
 };
