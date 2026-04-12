@@ -18,6 +18,7 @@ interface MutableGameState {
   playerPosition: Vec3;
   fps: number;
   frameCount: number;
+  worldSeed: number;
 }
 
 export type GameState = Readonly<MutableGameState>;
@@ -41,10 +42,12 @@ function scaleCanvasToDPR(canvas: HTMLCanvasElement): void {
  * Boots when both canvas accessors resolve; tears down via the enclosing scope.
  */
 export function createGame(args: CreateGameArgs): GameState {
+  const worldSeed = Math.floor(Math.random() * 1000000);
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: args.player.position,
     fps: 0,
     frameCount: 0,
+    worldSeed,
   });
 
   createEffect(() => {
@@ -56,7 +59,7 @@ export function createGame(args: CreateGameArgs): GameState {
     scaleCanvasToDPR(inputEl);
 
     const renderer = new Renderer(gl);
-    const chunkMaster = new ChunkMaster(0, 0);
+    const chunkMaster = new ChunkMaster(0, 0, worldSeed);
     const camera = new CameraController({ width: inputEl.width, height: inputEl.height });
     const input = new InputController(inputEl, { onReset: () => camera.reset() });
 

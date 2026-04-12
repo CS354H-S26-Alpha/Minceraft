@@ -4,8 +4,10 @@ import { Chunk, CHUNK_SIZE, chunkKey, chunkOrigin } from './chunk';
 export class ChunkMaster {
     private chunkMap = new Map<string, Chunk>(); // pulls chunk by unique cordinate key
     private nearChunks: Chunk[] = [];
+    private seed: number;
 
-    constructor(spawnX: number, spawnZ: number) {
+    constructor(spawnX: number, spawnZ: number, seed: number) {
+        this.seed = seed;
         this.updateChunksAroundPos(spawnX, spawnZ);
     }
 
@@ -23,7 +25,7 @@ export class ChunkMaster {
                     chunks.push(chunk);
                 } else {
                     // compute chunk, add to map, add to near chunks
-                    const newChunk = new Chunk(chunkX, chunkZ, CHUNK_SIZE);
+                    const newChunk = new Chunk(chunkX, chunkZ, CHUNK_SIZE, this.seed);
                     this.chunkMap.set(chunkKey(chunkX, chunkZ), newChunk);
                     chunks.push(newChunk);
                 }

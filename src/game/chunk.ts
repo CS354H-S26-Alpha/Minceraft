@@ -23,13 +23,12 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private seed: number; // Seed for terrain generation
 
-  constructor(centerX: number, centerY: number, size: number, seed?: number) {
+  constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
     this.y = centerY;
     this.size = size;
     this.cubes = size * size;
-    this.seed = seed !== undefined ? seed : Math.floor(Math.random() * 1000000);
-    console.log("Chunk seed:", this.seed);
+    this.seed = seed;
     this.generateCubes();
   }
 
