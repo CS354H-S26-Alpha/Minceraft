@@ -1,6 +1,22 @@
+import { CUBE_TYPE_INFO, CubeType } from "~/client/engine/render/cube-types";
+
+export const CHUNK_SIZE = 64;
+
+export function chunkKey(originX: number, originZ: number): string {
+  return `${originX},${originZ}`;
+}
+
+export function chunkOrigin(wx: number, wz: number): [number, number] {
+    return [
+        Math.floor(wx / CHUNK_SIZE) * CHUNK_SIZE + CHUNK_SIZE / 2,
+        Math.floor(wz / CHUNK_SIZE) * CHUNK_SIZE + CHUNK_SIZE / 2,
+    ];
+}
+
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
+  private cubeColorsF32!: Float32Array;
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -96,6 +112,7 @@ export class Chunk {
 
     this.cubes = this.size * this.size;
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    this.cubeColorsF32 = new Float32Array(3 * this.cubes);
 
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
@@ -111,12 +128,22 @@ export class Chunk {
         this.cubePositionsF32[4 * idx + 1] = height;
         this.cubePositionsF32[4 * idx + 2] = globalZ;
         this.cubePositionsF32[4 * idx + 3] = 0;
+        
+        const type: CubeType = height < 50 ? CubeType.White : CubeType.Grass;
+        const color = CUBE_TYPE_INFO[type].baseColor ?? [1.0, 1.0, 1.0];
+        this.cubeColorsF32[3 * idx + 0] = color[0];
+        this.cubeColorsF32[3 * idx + 1] = color[1];
+        this.cubeColorsF32[3 * idx + 2] = color[2];
       }
     }
   }
 
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
+  }
+  
+  public cubeColors(): Float32Array {
+      return this.cubeColorsF32;
   }
 
   public numCubes(): number {

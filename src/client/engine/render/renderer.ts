@@ -9,6 +9,7 @@ export interface RenderView {
   viewMatrix: Mat4;
   projMatrix: Mat4;
   cubePositions: Float32Array;
+  cubeColors: Float32Array;
   numCubes: number;
   lightPosition: Vec4;
   backgroundColor: Vec4;
@@ -48,6 +49,7 @@ export class Renderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
+    this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
   }
 
@@ -96,6 +98,15 @@ export class Renderer {
       0,
       undefined,
       new Float32Array(0),
+    );
+    pass.addInstancedAttribute("aColor",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0)
     );
 
     pass.addUniform("uLightPos", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {

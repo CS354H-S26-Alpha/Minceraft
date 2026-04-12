@@ -6,6 +6,8 @@ import type { Player, PlayerInput } from "~/game/player";
 import { CameraController } from "./camera-controller";
 import { InputController } from "./input";
 import { Renderer } from "./render/renderer";
+import { CubeType } from "./render/cube-types";
+import { ChunkMaster } from "~/game/chunkmaster";
 
 export interface CreateGameArgs {
   glCanvas: Accessor<HTMLCanvasElement | undefined>;
@@ -56,7 +58,7 @@ export function createGame(args: CreateGameArgs): GameState {
     scaleCanvasToDPR(inputEl);
 
     const renderer = new Renderer(gl);
-    const chunk = new Chunk(0.0, 0.0, 64);
+    const chunkMaster = new ChunkMaster(0, 0);
     const camera = new CameraController({ width: inputEl.width, height: inputEl.height });
     const input = new InputController(inputEl, { onReset: () => camera.reset() });
 
@@ -76,11 +78,14 @@ export function createGame(args: CreateGameArgs): GameState {
       args.sendInput({ dx: walk.x, dz: walk.z });
       camera.setPosition(args.player.position);
 
+      chunkMaster.updateChunksAroundPos(args.player.position.x, args.player.position.z);
+
       renderer.render({
         viewMatrix: camera.viewMatrix(),
         projMatrix: camera.projMatrix(),
-        cubePositions: chunk.cubePositions(),
-        numCubes: chunk.numCubes(),
+        cubePositions: chunkMaster.getNearCubePositionsFlattened(),
+        cubeColors: chunkMaster.getNearCubeColorsFlattened(),
+        numCubes: chunkMaster.getNearCubeSize(),
         lightPosition: LIGHT_POSITION,
         backgroundColor: BACKGROUND_COLOR,
       });
