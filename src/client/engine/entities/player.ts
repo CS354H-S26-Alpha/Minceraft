@@ -1,4 +1,3 @@
-
 import type { PlayerPublicState } from "@/game/player";
 import { lerp, lerpAngle } from "@/utils/interpolations";
 import { Quad } from "../render/quad";
