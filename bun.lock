@@ -8,6 +8,7 @@
         "@cloudflare/actors": "^0.0.1-beta.6",
         "@solid-primitives/event-listener": "^2.4.5",
         "@solid-primitives/keyboard": "^1.3.5",
+        "@solid-primitives/mouse": "^2.1.6",
         "@solid-primitives/raf": "^2.3.4",
         "@solid-primitives/resize-observer": "^2.1.5",
         "@solid-primitives/storage": "^4.3.4",
@@ -283,6 +284,8 @@
     "@solid-primitives/event-listener": ["@solid-primitives/event-listener@2.4.5", "", { "dependencies": { "@solid-primitives/utils": "^6.4.0" }, "peerDependencies": { "solid-js": "^1.6.12" } }, "sha512-nwRV558mIabl4yVAhZKY8cb6G+O1F0M6Z75ttTu5hk+SxdOnKSGj+eetDIu7Oax1P138ZdUU01qnBPR8rnxaEA=="],
 
     "@solid-primitives/keyboard": ["@solid-primitives/keyboard@1.3.5", "", { "dependencies": { "@solid-primitives/event-listener": "^2.4.5", "@solid-primitives/rootless": "^1.5.3", "@solid-primitives/utils": "^6.4.0" }, "peerDependencies": { "solid-js": "^1.6.12" } }, "sha512-sav+l+PL+74z3yaftVs7qd8c2SXkqzuxPOVibUe5wYMt+U5Hxp3V3XCPgBPN2I6cANjvoFtz0NiU8uHVLdi9FQ=="],
+
+    "@solid-primitives/mouse": ["@solid-primitives/mouse@2.1.6", "", { "dependencies": { "@solid-primitives/event-listener": "^2.4.5", "@solid-primitives/rootless": "^1.5.3", "@solid-primitives/static-store": "^0.1.3", "@solid-primitives/utils": "^6.4.0" }, "peerDependencies": { "solid-js": "^1.6.12" } }, "sha512-wqnu9sOk8WGLmfGlWWNMLjxUbfG32++kDSh0lu7GHXF0peefpRAv2lznPqgqCSwbWGk/sGv1Y05dndiO1EpONA=="],
 
     "@solid-primitives/raf": ["@solid-primitives/raf@2.3.4", "", { "dependencies": { "@solid-primitives/utils": "^6.4.0" }, "peerDependencies": { "solid-js": "^1.6.12" } }, "sha512-sOAODxukCbEjl+nzSOQLlk9youQuj4tzC2JzPyUuSZANMwLADxisSxmsBISbVKGjdyUzbHYlTxWM8vP6C5wXGw=="],
 
