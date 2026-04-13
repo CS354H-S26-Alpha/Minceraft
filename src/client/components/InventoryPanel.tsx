@@ -1,7 +1,6 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { InventoryClickTarget, InventoryUiState } from "@/game/crafting";
-import { ITEM_DEFINITIONS_BY_ID } from "@/game/items";
 import {
   HOTBAR_SLOT_COUNT,
   HOTBAR_START_INDEX,
@@ -9,15 +8,14 @@ import {
   MAIN_INVENTORY_SLOT_COUNT,
   type Player,
 } from "@/game/player";
+import { InventorySlotButton, InventorySlotVisual } from "./InventorySlot";
 
 interface InventoryPanelProps {
   player: () => Player | undefined;
   playerVersion: () => number;
   inventoryUi: InventoryUiState;
   open: boolean;
-  onClose: () => void;
   onClickSlot: (target: InventoryClickTarget) => void;
-  onSelectHotbarSlot: (slotIndex: number) => void;
 }
 
 const MAIN_SLOT_INDICES = Array.from({ length: MAIN_INVENTORY_SLOT_COUNT }, (_, index) => index);
@@ -37,11 +35,6 @@ export function InventoryPanel(props: InventoryPanelProps) {
     return props.player()?.state.selectedHotbarSlot ?? 0;
   });
 
-  const selectedHotbarItemName = createMemo(() => {
-    const slot = inventory()[HOTBAR_START_INDEX + selectedHotbarSlot()];
-    return slot ? ITEM_DEFINITIONS_BY_ID[slot.itemId].name : "Empty Hand";
-  });
-
   const handlePointerMove = (event: MouseEvent) => {
     if (!props.open) return;
     setPointer({
@@ -55,29 +48,6 @@ export function InventoryPanel(props: InventoryPanelProps) {
 
   return (
     <>
-      <Show when={!props.open && props.player()}>
-        <div class="pointer-events-none absolute inset-x-0 bottom-5 z-30 flex justify-center px-4">
-          <div class="pointer-events-auto border-2 border-white/15 bg-[rgba(30,22,14,0.84)] px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.4)]">
-            <div class="mb-2 text-center font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#f1df9f]">
-              {selectedHotbarItemName()}
-            </div>
-            <div class="grid grid-cols-9 gap-2">
-              <For each={HOTBAR_SLOT_INDICES}>
-                {(slotIndex) => (
-                  <InventorySlotButton
-                    hotbarNumber={slotIndex + 1}
-                    label={`Hotbar slot ${slotIndex + 1}`}
-                    onClick={() => props.onSelectHotbarSlot(slotIndex)}
-                    selected={selectedHotbarSlot() === slotIndex}
-                    slot={inventory()[HOTBAR_START_INDEX + slotIndex]}
-                  />
-                )}
-              </For>
-            </div>
-          </div>
-        </div>
-      </Show>
-
       <Show when={props.open && props.player()}>
         <div class="absolute inset-0 z-40 flex items-center justify-center bg-[rgba(0,0,0,0.18)] px-4 py-6 backdrop-blur-[1px]">
           <div class="w-full max-w-[min(96vw,46rem)] border-4 border-[#20180f] bg-[#c5baa4] px-4 pt-4 pb-5 text-[#241b12] shadow-[0_28px_80px_rgba(0,0,0,0.45)] sm:px-6 sm:pt-5 sm:pb-6">
@@ -166,40 +136,6 @@ export function InventoryPanel(props: InventoryPanelProps) {
   );
 }
 
-function InventorySlotButton(props: {
-  slot: InventorySlot | undefined;
-  label: string;
-  selected?: boolean;
-  emphasized?: boolean;
-  hotbarNumber?: number;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      aria-label={props.label}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-      onMouseDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        props.onClick?.();
-      }}
-      tabIndex={-1}
-      title={slotTitle(props.slot, props.label)}
-      type="button"
-    >
-      <InventorySlotVisual
-        emphasized={props.emphasized}
-        hotbarNumber={props.hotbarNumber}
-        selected={props.selected}
-        slot={props.slot}
-      />
-    </button>
-  );
-}
-
 function FloatingInventoryItem(props: {
   slot: InventorySlot;
   pointer: {
@@ -218,63 +154,6 @@ function FloatingInventoryItem(props: {
       <InventorySlotVisual class="scale-105 shadow-[0_10px_22px_rgba(0,0,0,0.32)]" slot={props.slot} />
     </div>
   );
-}
-
-function InventorySlotVisual(props: {
-  slot: InventorySlot | undefined;
-  selected?: boolean;
-  emphasized?: boolean;
-  hotbarNumber?: number;
-  class?: string;
-}) {
-  const item = () => (props.slot ? ITEM_DEFINITIONS_BY_ID[props.slot.itemId] : undefined);
-
-  return (
-    <div
-      class={`relative flex h-12 w-12 items-center justify-center border-[3px] border-[#463728] bg-[#5c4e3b] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.35)] sm:h-14 sm:w-14 md:h-16 md:w-16 ${
-        props.class ?? ""
-      }`}
-      classList={{
-        "border-[#fff3bf] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.35),0_0_0_1px_rgba(255,243,191,0.55)]": Boolean(
-          props.selected,
-        ),
-        "border-[#f1df9f] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.35),0_0_0_1px_rgba(241,223,159,0.55)]": Boolean(
-          props.emphasized,
-        ),
-      }}
-    >
-      <div class="pointer-events-none absolute inset-[3px] border border-white/10" />
-
-      <Show when={props.hotbarNumber !== undefined}>
-        <span class="pointer-events-none absolute top-1 left-1 font-mono text-[10px] font-bold text-[rgba(245,239,226,0.72)]">
-          {props.hotbarNumber}
-        </span>
-      </Show>
-
-      <Show when={item()}>
-        {(resolvedItem) => (
-          <>
-            <img
-              alt=""
-              class="pointer-events-none h-7 w-7 object-contain drop-shadow-[0_2px_1px_rgba(0,0,0,0.7)] sm:h-8 sm:w-8 md:h-10 md:w-10"
-              src={resolvedItem().icon}
-            />
-            <Show when={props.slot && props.slot.quantity > 1}>
-              <span class="pointer-events-none absolute right-1 bottom-1 font-mono text-[10px] font-bold text-[#f5efe2] [text-shadow:0_1px_0_rgba(0,0,0,0.85),1px_0_0_rgba(0,0,0,0.85),-1px_0_0_rgba(0,0,0,0.85),0_-1px_0_rgba(0,0,0,0.85)] sm:text-[11px]">
-                {props.slot?.quantity}
-              </span>
-            </Show>
-          </>
-        )}
-      </Show>
-    </div>
-  );
-}
-
-function slotTitle(slot: InventorySlot | undefined, label: string): string {
-  if (!slot) return label;
-  const item = ITEM_DEFINITIONS_BY_ID[slot.itemId];
-  return `${item.name} x${slot.quantity}`;
 }
 
 function defaultPointerPosition() {

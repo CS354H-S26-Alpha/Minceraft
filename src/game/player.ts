@@ -3,6 +3,7 @@ import { Entity } from "./entity";
 import { ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
 
 export const PLAYER_SPEED = 30;
+export const PLAYER_MAX_HEALTH = 20;
 export const HOTBAR_SLOT_COUNT = 9;
 export const MAIN_INVENTORY_SLOT_COUNT = 27;
 export const INVENTORY_SLOT_COUNT = MAIN_INVENTORY_SLOT_COUNT + HOTBAR_SLOT_COUNT;
@@ -30,6 +31,7 @@ export interface PlayerPublicState {
 }
 
 export interface PlayerState extends PlayerPublicState {
+  health: number;
   inventory: InventorySlot[];
   selectedHotbarSlot: number;
 }
@@ -82,12 +84,14 @@ export function clampHotbarSlot(slotIndex: number): number {
 
 export function createPlayerState(
   args: PlayerPublicState & {
+    health?: number;
     inventory?: readonly InventorySlot[] | null;
     selectedHotbarSlot?: number;
   },
 ): PlayerState {
   return {
     ...args,
+    health: normalizeHealth(args.health),
     inventory: args.inventory === undefined ? createStarterInventory() : normalizeInventory(args.inventory),
     selectedHotbarSlot: clampHotbarSlot(args.selectedHotbarSlot ?? DEFAULT_SELECTED_HOTBAR_SLOT),
   };
@@ -101,7 +105,7 @@ export function clonePlayerState(state: PlayerState): PlayerState {
 }
 
 export function toPublicPlayerState(state: PlayerState): PlayerPublicState {
-  const { inventory: _inventory, selectedHotbarSlot: _selectedHotbarSlot, ...publicState } = state;
+  const { health: _health, inventory: _inventory, selectedHotbarSlot: _selectedHotbarSlot, ...publicState } = state;
   return publicState;
 }
 
@@ -211,4 +215,9 @@ function normalizeInventorySlot(slot: InventorySlot | undefined): InventorySlot 
     itemId: slot.itemId,
     quantity,
   };
+}
+
+function normalizeHealth(health?: number): number {
+  if (health === undefined || !Number.isFinite(health)) return PLAYER_MAX_HEALTH;
+  return Math.max(0, Math.min(PLAYER_MAX_HEALTH, Math.trunc(health)));
 }

@@ -121,6 +121,7 @@ export function joinWorld(roomId: string) {
 
 function syncPrivatePlayerState(player: Player, self: PlayerState) {
   player.state.name = self.name;
+  player.state.health = self.health;
   player.state.inventory = cloneInventory(self.inventory);
   player.state.selectedHotbarSlot = self.selectedHotbarSlot;
 }
