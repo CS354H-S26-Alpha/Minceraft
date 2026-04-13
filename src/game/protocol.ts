@@ -1,5 +1,5 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
-import type { PlayerInput, PlayerPublicState, PlayerState } from "./player";
+import type { PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
 /** Credentials returned after successful authentication. */
 export interface PlayerCredentials {
@@ -28,8 +28,8 @@ export interface RoomSnapshot {
 
 /** Per-session API surface available to a player once they've joined a room. */
 export interface RoomSessionApi {
-  /** Sends a batch of player inputs to the server. */
-  sendInputs(inputs: PlayerInput[]): void;
+  /** Sends the latest client-reported position packet to the server. */
+  sendPosition(packet: PlayerPositionPacket): void;
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState(): void;
   /** Teleports this player to the given coordinates. */

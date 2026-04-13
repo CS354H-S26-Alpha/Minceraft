@@ -2,7 +2,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import type { Player, PlayerInput } from "@/game/player";
+import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -111,8 +111,6 @@ export function createGame(args: CreateGameArgs): GameState {
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   let frame = 0;
-  let lastYaw = 0;
-  let lastPitch = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
@@ -123,13 +121,14 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   // TODO: refactor to be general packet handling rather than only inputs
-  let unsent: PlayerInput[] = [];
+  let nextPacketSequence = 1;
+  let pendingPacket: PlayerPositionPacket | undefined;
   makeTimer(
     () => {
       const s = room().session();
-      if (unsent.length === 0 || !s) return;
-      s.sendInputs(unsent);
-      unsent = [];
+      if (!pendingPacket || !s) return;
+      s.sendPosition(pendingPacket);
+      pendingPacket = undefined;
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -175,12 +174,17 @@ export function createGame(args: CreateGameArgs): GameState {
         };
     const yaw = camera.yaw();
     const pitch = camera.pitch();
-    if (inputEnabled() && (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch)) {
-      lastYaw = yaw;
-      lastPitch = pitch;
+    if (inputEnabled()) {
       const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
       room().replicated()?.predict(next);
-      unsent.push(next);
+      pendingPacket = {
+        sequence: nextPacketSequence++,
+        x: player.state.x,
+        y: player.state.y,
+        z: player.state.z,
+        yaw: player.state.yaw,
+        pitch: player.state.pitch,
+      };
     }
     camera.setPosition(player.position);
 

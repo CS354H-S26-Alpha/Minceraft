@@ -54,10 +54,10 @@ describe("LocalPrediction", () => {
 
     replicated.initialize(S({ x: 5 }));
 
-    expect(player.state.x).toBeCloseTo(5 + PLAYER_SPEED * 2);
+    expect(player.state.x).toBeCloseTo(5);
   });
 
-  it("trims history on acknowledge", () => {
+  it("acknowledge does not affect local prediction replay", () => {
     const { player, replicated } = makeReplicated();
 
     replicated.predict(I(1, 0, 0));
@@ -67,11 +67,10 @@ describe("LocalPrediction", () => {
     replicated.acknowledge(2);
     replicated.initialize(S({ x: PLAYER_SPEED * 2 }));
 
-    // Only 1 unacked input replayed
-    expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 3);
+    expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 2);
   });
 
-  it("trims correctly across multiple acknowledge calls", () => {
+  it("replaces local state on initialize before future local movement", () => {
     const { player, replicated } = makeReplicated();
 
     replicated.predict(I(1, 0, 0));
@@ -82,11 +81,10 @@ describe("LocalPrediction", () => {
     replicated.predict(I(0, 0, 1));
     replicated.acknowledge(3);
 
-    // After ack(3), only the last predict remains unacked
     replicated.initialize(S({ x: PLAYER_SPEED * 2, z: PLAYER_SPEED }));
 
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 2);
-    expect(player.state.z).toBeCloseTo(PLAYER_SPEED * 2);
+    expect(player.state.z).toBeCloseTo(PLAYER_SPEED);
   });
 
   it("predict applies input immediately", () => {

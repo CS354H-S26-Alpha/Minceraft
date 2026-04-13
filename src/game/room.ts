@@ -7,7 +7,7 @@ import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
 import type { InventoryClickTarget } from "./crafting";
 import type { EntityCollection } from "./entity-collection";
-import type { PlayerInput } from "./player";
+import type { PlayerPositionPacket } from "./player";
 import { PlayerCollection } from "./player-collection";
 import type { AuthenticatedApi, GameApi, PlayerCredentials, RoomSessionApi, RoomSnapshot } from "./protocol";
 
@@ -110,12 +110,17 @@ export class GameRoom extends DurableObject<Env> {
    * Enqueues player inputs, rate-limited to prevent flooding.
    * Batches arriving faster than `MIN_INPUT_INTERVAL_MS` are silently dropped.
    */
-  sendInputs(playerId: string, inputs: PlayerInput[]) {
+  sendPosition(playerId: string, packet: PlayerPositionPacket) {
+    this.ensureInitialized();
     const now = Date.now();
     const last = this.lastInputTime.get(playerId) ?? 0;
     if (now - last < MIN_INPUT_INTERVAL_MS) return;
     this.lastInputTime.set(playerId, now);
-    this.playerCollection.queueInputs(playerId, inputs);
+    const result = this.playerCollection.queuePosition(playerId, packet);
+    if (result === "invalid") {
+      this.pendingSelfState.add(playerId);
+      this.needsBroadcast = true;
+    }
   }
 
   /** Queues the player's own state for the next tick's snapshot. */
@@ -296,9 +301,9 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     this.#playerId = playerId;
   }
 
-  /** Forwards inputs to the authoritative `GameRoom`. */
-  sendInputs(inputs: PlayerInput[]) {
-    return this.#room.sendInputs(this.#playerId, inputs);
+  /** Forwards client position packets to the authoritative `GameRoom`. */
+  sendPosition(packet: PlayerPositionPacket) {
+    return this.#room.sendPosition(this.#playerId, packet);
   }
 
   /** Asks the server to include own state in the next tick's snapshot. */

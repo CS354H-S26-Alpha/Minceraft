@@ -10,7 +10,7 @@ export const INVENTORY_SLOT_COUNT = MAIN_INVENTORY_SLOT_COUNT + HOTBAR_SLOT_COUN
 export const HOTBAR_START_INDEX = MAIN_INVENTORY_SLOT_COUNT;
 
 const MAX_DT_SECONDS = 2;
-const MAX_COORDINATE = 100_000;
+export const MAX_COORDINATE = 100_000;
 const DEFAULT_SELECTED_HOTBAR_SLOT = 0;
 
 export interface ItemStack {
@@ -143,6 +143,15 @@ export function addItemToInventory(inventory: InventorySlot[], stack: ItemStack)
     itemId: stack.itemId,
     quantity: remaining,
   };
+}
+
+export interface PlayerPositionPacket {
+  sequence: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
 }
 
 /** Server/client-shared player entity. The same class runs on both sides. */

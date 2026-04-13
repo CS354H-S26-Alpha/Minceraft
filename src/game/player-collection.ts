@@ -20,29 +20,37 @@ import {
   HOTBAR_SLOT_COUNT,
   INVENTORY_SLOT_COUNT,
   type InventorySlot,
+  MAX_COORDINATE,
   normalizeInventory,
   Player,
-  type PlayerInput,
+  type PlayerPositionPacket,
   type PlayerPublicState,
   type PlayerState,
   toPublicPlayerState,
 } from "./player";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
-const MAX_QUEUED_INPUTS = 20;
+const BASE_MOVEMENT_WINDOW_MS = 100;
+const MOVEMENT_TOLERANCE = 1;
+const INVALID_PACKET = "invalid";
+const STALE_PACKET = "stale";
+const ACCEPTED_PACKET = "accepted";
+
+type QueuePositionResult = typeof ACCEPTED_PACKET | typeof STALE_PACKET | typeof INVALID_PACKET;
 
 /**
- * Manages the set of players in a room — their in-memory state, pending input
- * queues, ack counters, and dirty tracking for SQLite persistence.
+ * Manages the set of players in a room — their in-memory state, latest pending
+ * client position packet, ack counters, and dirty tracking for SQLite persistence.
  */
 export class PlayerCollection implements EntityCollection {
   readonly key = "players";
 
   private players = new Map<string, Player>();
-  private inputQueues = new Map<string, PlayerInput[]>();
+  private pendingPackets = new Map<string, PlayerPositionPacket>();
   private acks = new Map<string, number>();
   private dirty = new Set<string>();
   private inventoryUi = new Map<string, InventoryUiState>();
+  private lastAcceptedAt = new Map<string, number>();
 
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
@@ -81,6 +89,7 @@ export class PlayerCollection implements EntityCollection {
           }),
         ),
       );
+      this.lastAcceptedAt.set(playerId, Date.now());
       this.dirty.add(playerId);
     }
     this.inventoryUi.set(playerId, createInventoryUiState());
@@ -88,7 +97,8 @@ export class PlayerCollection implements EntityCollection {
 
   /** Clears the departing player's input queue; their state remains for persistence. */
   leave(playerId: string): void {
-    this.inputQueues.delete(playerId);
+    this.pendingPackets.delete(playerId);
+    this.lastAcceptedAt.delete(playerId);
     const player = this.players.get(playerId);
     const ui = this.inventoryUi.get(playerId);
     if (player && ui && this.returnCraftingItems(player, ui)) {
@@ -98,24 +108,30 @@ export class PlayerCollection implements EntityCollection {
   }
 
   /**
-   * Appends inputs to a player's queue, capped at `MAX_QUEUED_INPUTS` to
-   * bound memory usage and prevent lag exploitation.
+   * Accepts the newest client position packet and ignores anything older than
+   * the last applied sequence for this player.
    */
-  queueInputs(playerId: string, inputs: PlayerInput[]): void {
-    const queue = this.inputQueues.get(playerId);
-    const remaining = MAX_QUEUED_INPUTS - (queue?.length ?? 0);
-    if (remaining <= 0) return;
-    const toAdd = inputs.slice(0, remaining);
-    if (queue) {
-      queue.push(...toAdd);
-    } else {
-      this.inputQueues.set(playerId, [...toAdd]);
+  queuePosition(playerId: string, packet: PlayerPositionPacket): QueuePositionResult {
+    if (!this.isValidPacket(packet)) return INVALID_PACKET;
+
+    const lastAck = this.acks.get(playerId) ?? 0;
+    const pending = this.pendingPackets.get(playerId);
+    const newestKnown = Math.max(lastAck, pending?.sequence ?? 0);
+    if (packet.sequence <= newestKnown) return STALE_PACKET;
+
+    const player = this.players.get(playerId);
+    if (!player) return INVALID_PACKET;
+    if (!this.isPlausibleMovement(player.state, packet, this.lastAcceptedAt.get(playerId) ?? Date.now())) {
+      return INVALID_PACKET;
     }
+
+    this.pendingPackets.set(playerId, packet);
+    return ACCEPTED_PACKET;
   }
 
   /**
-   * Teleports a player to the given coordinates. Clears pending inputs
-   * and bumps the ack counter so the client trims its prediction history.
+   * Teleports a player to the given coordinates. Clears the latest pending
+   * packet so stale client state does not overwrite the teleport.
    */
   teleportTo(playerId: string, x: number, y: number, z: number): boolean {
     const player = this.players.get(playerId);
@@ -125,32 +141,31 @@ export class PlayerCollection implements EntityCollection {
     player.state.y = y;
     player.state.z = z;
 
-    const queue = this.inputQueues.get(playerId);
-    if (queue) {
-      this.acks.set(playerId, (this.acks.get(playerId) ?? 0) + queue.length);
-      queue.length = 0;
-    }
+    this.pendingPackets.delete(playerId);
+    this.lastAcceptedAt.set(playerId, Date.now());
 
     this.dirty.add(playerId);
     return true;
   }
 
   /**
-   * Drains all input queues, steps each player, increments ack counters, and
-   * marks changed players as dirty. Returns `true` if any player moved.
+   * Applies the latest pending client position packet for each player. Because
+   * packets are sequenced, delayed packets cannot move the server backward.
    */
   tick(): boolean {
     let changed = false;
-    for (const [id, queue] of this.inputQueues) {
-      if (queue.length === 0) continue;
+    for (const [id, packet] of this.pendingPackets) {
       const player = this.players.get(id);
       if (!player) continue;
       const prev = toPublicPlayerState(player.state);
-      for (const input of queue) {
-        player.step(input);
-      }
-      this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
-      queue.length = 0;
+      player.state.x = packet.x;
+      player.state.y = packet.y;
+      player.state.z = packet.z;
+      player.state.yaw = packet.yaw;
+      player.state.pitch = packet.pitch;
+      this.acks.set(id, packet.sequence);
+      this.lastAcceptedAt.set(id, Date.now());
+      this.pendingPackets.delete(id);
       if (playerMoved(prev, player.state)) {
         this.dirty.add(id);
         changed = true;
@@ -324,6 +339,30 @@ export class PlayerCollection implements EntityCollection {
 
     this.refreshCraftingResult(ui);
     return changed;
+  }
+
+  private isValidPacket(packet: PlayerPositionPacket): boolean {
+    return (
+      Number.isInteger(packet.sequence) &&
+      packet.sequence > 0 &&
+      Number.isFinite(packet.x) &&
+      Number.isFinite(packet.y) &&
+      Number.isFinite(packet.z) &&
+      Number.isFinite(packet.yaw) &&
+      Number.isFinite(packet.pitch) &&
+      Math.abs(packet.x) <= MAX_COORDINATE &&
+      Math.abs(packet.y) <= MAX_COORDINATE &&
+      Math.abs(packet.z) <= MAX_COORDINATE
+    );
+  }
+
+  private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
+    const elapsedMs = Math.max(0, Date.now() - lastAcceptedAt);
+    const maxDistance = PLAYER_SPEED * ((elapsedMs + BASE_MOVEMENT_WINDOW_MS) / 1000) + MOVEMENT_TOLERANCE;
+    const dx = packet.x - prev.x;
+    const dy = packet.y - prev.y;
+    const dz = packet.z - prev.z;
+    return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
   }
 }
 

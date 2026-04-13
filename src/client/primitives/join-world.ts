@@ -14,8 +14,8 @@ import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
  * consumed by `createGame`. Must be called inside a Solid reactive scope.
  */
 export function joinWorld(roomId: string) {
-  const { credentials, join } = useSession();
-  const { playerId } = credentials;
+  const { join, credentials } = useSession();
+  const playerId = credentials.playerId;
   const [player, setPlayer] = createSignal<Player>();
   const replicated = createMemo(() => {
     const p = player();
@@ -42,11 +42,11 @@ export function joinWorld(roomId: string) {
       if (snap.inventoryUi) {
         setInventoryUi(reconcile(snap.inventoryUi));
       }
-
       replicated()?.acknowledge(snap.acks[playerId] ?? 0);
+      const currentPlayer = player();
 
       if (snap.self) {
-        if (!player()) {
+        if (!currentPlayer) {
           setPlayer(new Player(snap.self));
         } else {
           replicated()?.initialize(snap.self);
