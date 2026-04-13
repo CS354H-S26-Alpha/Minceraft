@@ -2,11 +2,11 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import { ChunkMaster } from "@/game/chunk-master";
 import type { Player, PlayerInput } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
+import { ChunkManager } from "./chunks";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput } from "./input";
 import { Renderer } from "./render/renderer";
@@ -99,7 +99,7 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED);
+  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED);
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -171,8 +171,7 @@ export function createGame(args: CreateGameArgs): GameState {
     }
     camera.setPosition(player.position);
 
-    // update chunks around player
-    chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
+    chunks.update(player.position.x, player.position.z);
 
     // --- Remote entities ---
     const snap = room().snapshot;
@@ -189,9 +188,9 @@ export function createGame(args: CreateGameArgs): GameState {
     renderer.render({
       viewMatrix: camera.viewMatrix(),
       projMatrix: camera.projMatrix(),
-      cubePositions: chunkMaster.getNearCubePositionsFlattened(),
-      cubeColors: chunkMaster.getNearCubeColorsFlattened(),
-      numCubes: chunkMaster.getNearCubeSize(),
+      cubePositions: chunks.positions,
+      cubeColors: chunks.colors,
+      numCubes: chunks.count,
       lightPosition: LIGHT_POSITION,
       backgroundColor: BACKGROUND_COLOR,
       entities,

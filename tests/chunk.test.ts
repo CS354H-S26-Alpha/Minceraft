@@ -3,9 +3,10 @@ import { CubeType } from "../src/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, Chunk } from "../src/game/chunk";
 
 describe("Chunk", () => {
-  it("generates a positive number of cubes", () => {
-    const chunk = new Chunk(0, 0, 8, 123);
-    expect(chunk.numCubes()).toBeGreaterThan(0);
+  it("generates at least one visible cube per column", () => {
+    const size = 8;
+    const chunk = new Chunk(0, 0, size, 123);
+    expect(chunk.numCubes()).toBeGreaterThanOrEqual(size * size);
   });
 
   it("returns a Float32Array of positions with length 4 * numCubes", () => {
