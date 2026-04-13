@@ -160,4 +160,21 @@ export class Chunk {
   public numCubes(): number {
     return this.cubes;
   }
+
+  public getSurfaceY(lx: number, lz: number): number {
+    const idx = this.size * lz + lx;
+    return this.heightMap[idx] ?? 0;
+  }
+
+  public isColumnClear(lx: number, lz: number, yLow: number, yHigh: number): boolean {
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
+    const lo = Math.max(0, Math.floor(yLow));
+    const hi = Math.min(CHUNK_HEIGHT - 1, Math.floor(yHigh));
+    for (let y = lo; y <= hi; y++) {
+      if (this.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] !== CubeType.Air) {
+        return false;
+      }
+    }
+    return true;
+  }
 }

@@ -3,6 +3,7 @@ import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
+import { ChunkMaster } from "@/game/chunk-master";
 import { Player, type PlayerInput } from "@/game/player";
 import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
@@ -29,10 +30,12 @@ export function joinWorld(roomId: string) {
     players: {},
     acks: {},
     tickTimeMs: 0,
+    seed: 0,
   });
 
   const [snapCount, setSnapCount] = createSignal(0);
   let session: RoomSessionApi | undefined;
+  let chunkMaster: ChunkMaster | undefined;
 
   // The snapshot callback fires from capnweb (outside Solid's reactive scope).
   // batch coalesces the store + signal writes into a single reactive flush.
@@ -42,7 +45,13 @@ export function joinWorld(roomId: string) {
       setSnapshot(reconcile(snap));
 
       if (snap.self && !player()) {
-        setPlayer(new Player(snap.self));
+        chunkMaster = new ChunkMaster(snap.self.x, snap.self.z, snap.seed);
+        setPlayer(new Player(snap.self, chunkMaster));
+      }
+
+      const currentPlayer = player();
+      if (chunkMaster && currentPlayer) {
+        chunkMaster.updateChunksAroundPos(currentPlayer.state.x, currentPlayer.state.z);
       }
 
       replicated()?.acknowledge(snap.acks[playerId] ?? 0);

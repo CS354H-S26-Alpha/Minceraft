@@ -2,11 +2,14 @@ import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import type * as schema from "../server/schema";
 import * as playerSchema from "../server/schema";
+import type { ChunkMaster } from "./chunk-master";
 import type { EntityCollection } from "./entity-collection";
 import { Player, type PlayerInput, type PlayerState } from "./player";
 
-const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
+const SPAWN_POSITION = { x: 0, y: 10000, z: 20, yaw: 0, pitch: 0 };
 const MAX_QUEUED_INPUTS = 20;
+const PLAYER_RADIUS = 0.4;
+const PLAYER_HEIGHT = 2.0;
 
 /**
  * Manages the set of players in a room — their in-memory state, pending input
@@ -14,18 +17,22 @@ const MAX_QUEUED_INPUTS = 20;
  */
 export class PlayerCollection implements EntityCollection {
   readonly key = "players";
+  private chunkMaster: ChunkMaster;
 
   private players = new Map<string, Player>();
   private inputQueues = new Map<string, PlayerInput[]>();
   private acks = new Map<string, number>();
   private dirty = new Set<string>();
 
+  constructor(chunkMaster: ChunkMaster) {
+    this.chunkMaster = chunkMaster;
+  }
+
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
     for (const row of db.select().from(playerSchema.players).all()) {
-      this.players.set(
-        row.id,
-        new Player({
+      const player = new Player(
+        {
           id: row.id,
           name: row.name,
           x: row.x,
@@ -33,15 +40,25 @@ export class PlayerCollection implements EntityCollection {
           z: row.z,
           yaw: row.yaw,
           pitch: row.pitch,
-        }),
+        },
+        this.chunkMaster,
       );
+
+      // Clamp persisted Y above terrain in case I had some bugs before and I walked trough wall
+      this.chunkMaster.updateChunksAroundPos(row.x, row.z);
+      const minY = this.chunkMaster.getMinYForCylinder(row.x, row.z, PLAYER_RADIUS);
+      if (player.state.y - PLAYER_HEIGHT < minY) {
+        player.state.y = minY + PLAYER_HEIGHT;
+      }
+
+      this.players.set(row.id, player);
     }
   }
 
   /** Adds a new player at the spawn position if they aren't already tracked. */
   join(playerId: string, name: string): void {
     if (!this.players.has(playerId)) {
-      this.players.set(playerId, new Player({ id: playerId, name, ...SPAWN_POSITION }));
+      this.players.set(playerId, new Player({ id: playerId, name, ...SPAWN_POSITION }, this.chunkMaster));
       this.dirty.add(playerId);
     }
   }
@@ -77,10 +94,12 @@ export class PlayerCollection implements EntityCollection {
       if (queue.length === 0) continue;
       const player = this.players.get(id);
       if (!player) continue;
+      this.chunkMaster.updateChunksAroundPos(player.state.x, player.state.z);
       const prev = { ...player.state };
       for (const input of queue) {
         player.step(input);
       }
+      // console.log(`ticking player ${id} at y=${player.state.y}, queue=${queue.length}`);
       this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
       queue.length = 0;
       if (Object.keys(prev).some((k) => prev[k as keyof typeof prev] !== player.state[k as keyof typeof prev])) {

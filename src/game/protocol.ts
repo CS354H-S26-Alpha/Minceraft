@@ -21,6 +21,8 @@ export interface RoomSnapshot {
   tickTimeMs: number;
   /** The client's own authoritative state, included when requested. */
   self?: PlayerState;
+  // Seed for deterministic chunkmaster
+  seed: number;
 }
 
 /** Per-session API surface available to a player once they've joined a room. */

@@ -5,6 +5,7 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
+import { ChunkMaster } from "./chunk-master";
 import type { EntityCollection } from "./entity-collection";
 import type { PlayerInput } from "./player";
 import { PlayerCollection } from "./player-collection";
@@ -23,6 +24,22 @@ const PERSIST_EVERY_N_TICKS = 50;
 const MAX_NAME_LENGTH = 32;
 const NAME_PATTERN = /^[\w\s-]+$/;
 const MIN_INPUT_INTERVAL_MS = 25;
+const ROOM_SEED_SALT = "minecraft-room-seed-v1";
+
+function deriveRoomSeed(roomId: string): number {
+  // same room id means same seed
+  let h = 2166136261;
+  for (let i = 0; i < roomId.length; i++) {
+    h ^= roomId.charCodeAt(i);
+    h = (h * 16777619) >>> 0;
+  }
+  for (let i = 0; i < ROOM_SEED_SALT.length; i++) {
+    h ^= ROOM_SEED_SALT.charCodeAt(i);
+    h = (h * 16777619) >>> 0;
+  }
+  return h;
+}
+
 type SnapshotListener = ((snap: RoomSnapshot) => unknown) & {
   dup?(): SnapshotListener;
   onRpcBroken?(callback: () => void): void;
@@ -55,8 +72,11 @@ function notify(cb: SnapshotListener, snap: RoomSnapshot): Promise<boolean> {
  */
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
-  private playerCollection = new PlayerCollection();
-  private collections: EntityCollection[] = [this.playerCollection];
+  private seed: number = 0;
+  // private playerCollection = new PlayerCollection();
+  // private collections: EntityCollection[] = [this.playerCollection];
+  private playerCollection!: PlayerCollection;
+  private collections: EntityCollection[] = [];
   private listeners = new Map<string, SnapshotListener>();
   private lastInputTime = new Map<string, number>();
   private needsBroadcast = false;
@@ -81,6 +101,11 @@ export class GameRoom extends DurableObject<Env> {
     if (this.initialized) return;
     this.initialized = true;
     migrate(this.db, migrations);
+
+    const chunkMaster = new ChunkMaster(0, 0, this.seed);
+    this.playerCollection = new PlayerCollection(chunkMaster);
+    this.collections = [this.playerCollection];
+
     for (const col of this.collections) {
       col.hydrate(this.db);
     }
@@ -90,7 +115,10 @@ export class GameRoom extends DurableObject<Env> {
    * Registers a new player and queues a broadcast for the next tick.
    * The joining player's own state is included in their first snapshot.
    */
-  join(playerId: string, name: string, onSnapshot: SnapshotListener) {
+  join(playerId: string, name: string, roomId: string, onSnapshot: SnapshotListener) {
+    if (this.seed === 0) {
+      this.seed = deriveRoomSeed(roomId);
+    }
     this.ensureInitialized();
     this.playerCollection.join(playerId, name);
     this.removeListener(playerId);
@@ -208,6 +236,7 @@ export class GameRoom extends DurableObject<Env> {
       players: this.playerCollection.snapshot(onlinePlayerIds),
       acks: this.playerCollection.getAcks(onlinePlayerIds),
       tickTimeMs: this.lastTickTimeMs,
+      seed: this.seed,
     };
   }
 
@@ -311,7 +340,7 @@ export class AuthSession extends RpcTarget implements AuthenticatedApi {
   async join(roomId: string, onSnapshot: SnapshotListener) {
     const id = this.#env.GameRoom.idFromName(roomId);
     const stub = this.#env.GameRoom.get(id);
-    await stub.join(this.#playerId, this.#name, onSnapshot);
+    await stub.join(this.#playerId, roomId, this.#name, onSnapshot);
     return new RoomSession(stub, this.#playerId);
   }
 }

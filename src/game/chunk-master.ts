@@ -98,4 +98,65 @@ export class ChunkMaster {
   public getNearCubeSize(): number {
     return this.nearChunks.reduce((acc, chunk) => acc + chunk.numCubes(), 0);
   }
+
+  public getMinYForCylinder(wx: number, wz: number, radius: number): number {
+    const minCX = Math.floor(wx - radius);
+    const maxCX = Math.floor(wx + radius);
+    const minCZ = Math.floor(wz - radius);
+    const maxCZ = Math.floor(wz + radius);
+
+    let maxSurface = -Infinity;
+
+    for (let gx = minCX; gx <= maxCX; gx++) {
+      for (let gz = minCZ; gz <= maxCZ; gz++) {
+        const nearX = Math.max(gx, Math.min(wx, gx + 1));
+        const nearZ = Math.max(gz, Math.min(wz, gz + 1));
+        const distSq = (wx - nearX) ** 2 + (wz - nearZ) ** 2;
+        if (distSq >= radius * radius) continue; 
+
+        const [originX, originZ] = chunkOrigin(gx, gz);
+        const chunk = this.chunkMap.get(chunkKey(originX, originZ));
+        if (!chunk) continue;
+
+        const lx = gx - (originX - CHUNK_SIZE / 2);
+        const lz = gz - (originZ - CHUNK_SIZE / 2);
+        if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
+
+        const surfaceY = chunk.getSurfaceY(lx, lz);
+        maxSurface = Math.max(maxSurface, surfaceY + 1);
+      }
+    }
+
+    return maxSurface === -Infinity ? 0 : maxSurface;
+  }
+
+  public isCylinderClear(wx: number, wz: number, feetY: number, playerHeight: number, radius: number): boolean {
+    const minCX = Math.floor(wx - radius);
+    const maxCX = Math.floor(wx + radius);
+    const minCZ = Math.floor(wz - radius);
+    const maxCZ = Math.floor(wz + radius);
+
+    for (let gx = minCX; gx <= maxCX; gx++) {
+      for (let gz = minCZ; gz <= maxCZ; gz++) {
+        const nearX = Math.max(gx, Math.min(wx, gx + 1));
+        const nearZ = Math.max(gz, Math.min(wz, gz + 1));
+        const distSq = (wx - nearX) ** 2 + (wz - nearZ) ** 2;
+        if (distSq >= radius * radius) continue;
+
+        const [originX, originZ] = chunkOrigin(gx, gz);
+        const chunk = this.chunkMap.get(chunkKey(originX, originZ));
+        // Unloaded chunk = treat as solid = not clear
+        if (!chunk) return false;
+
+        const lx = gx - (originX - CHUNK_SIZE / 2);
+        const lz = gz - (originZ - CHUNK_SIZE / 2);
+        if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
+
+        if (!chunk.isColumnClear(lx, lz, feetY, feetY + playerHeight)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 }

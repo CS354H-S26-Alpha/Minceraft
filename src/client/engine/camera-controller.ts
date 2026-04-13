@@ -65,15 +65,38 @@ export class CameraController {
     }
   }
 
-  /** Convert movement flags into a world-space walk vector using camera basis. */
+  // I want the WASD to control only X and Z, and for Space and Gravity only to control Y
   walkDir(keys: Readonly<WalkKeys>): Vec3 {
-    const out = new Vec3();
-    if (keys.w) out.add(this.camera.forward().negate());
-    if (keys.a) out.add(this.camera.right().negate());
-    if (keys.s) out.add(this.camera.forward());
-    if (keys.d) out.add(this.camera.right());
-    if (keys.space) out.add(new Vec3([0, 1, 0]));
-    if (keys.shift) out.add(new Vec3([0, -1, 0]));
+    const out = new Vec3([0, 0, 0]);
+
+    const fwd = this.camera.forward().negate();
+    const right = this.camera.right();
+
+    fwd.y = 0;
+    right.y = 0;
+
+    const fwdLen = Math.sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
+    if (fwdLen > 0) {
+      fwd.x /= fwdLen;
+      fwd.z /= fwdLen;
+    }
+
+    const rightLen = Math.sqrt(right.x * right.x + right.z * right.z);
+    if (rightLen > 0) {
+      right.x /= rightLen;
+      right.z /= rightLen;
+    }
+
+    // Horizontal movement
+    if (keys.w) out.add(fwd);
+    if (keys.a) out.add(new Vec3([-right.x, 0, -right.z]));
+    if (keys.s) out.add(new Vec3([-fwd.x, 0, -fwd.z]));
+    if (keys.d) out.add(right);
+
+    // Vertical Movement
+    if (keys.space) out.y += 1;
+    if (keys.shift) out.y -= 1;
+
     return out;
   }
 
