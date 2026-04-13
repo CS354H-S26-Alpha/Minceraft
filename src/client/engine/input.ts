@@ -1,6 +1,7 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createShortcut } from "@solid-primitives/keyboard";
 import { type Accessor, createEffect, createSignal } from "solid-js";
+import { HOTBAR_SLOT_COUNT, type Player } from "@/game/player";
 import { createHeldCodes } from "../primitives";
 
 export interface WalkKeys {
@@ -14,6 +15,15 @@ export interface WalkKeys {
 
 export interface InputOptions {
   onReset?: () => void;
+  gameplayShortcuts?: GameplayShortcutsOptions;
+}
+
+export interface GameplayShortcutsOptions {
+  inventoryOpen: Accessor<boolean>;
+  player: Accessor<Player | undefined>;
+  onToggleInventory: () => void;
+  onCloseInventory: () => void;
+  onSelectHotbarSlot: (slotIndex: number) => void;
 }
 
 export interface InputHandle {
@@ -34,6 +44,7 @@ export interface InputHandle {
  */
 export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opts: InputOptions = {}): InputHandle {
   if (opts.onReset) createShortcut(["R"], opts.onReset);
+  const gameplayShortcuts = opts.gameplayShortcuts;
 
   let pendingMouseDx = 0;
   let pendingMouseDy = 0;
@@ -93,6 +104,40 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   createEventListener(document, "contextmenu", (e) => {
     if (document.pointerLockElement === canvas()) e.preventDefault();
   });
+  if (gameplayShortcuts) {
+    createEventListener(window, "keydown", (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const key = event.key.toLowerCase();
+
+      if (key === "e") {
+        event.preventDefault();
+        gameplayShortcuts.onToggleInventory();
+        return;
+      }
+
+      if (key === "escape" && gameplayShortcuts.inventoryOpen()) {
+        event.preventDefault();
+        gameplayShortcuts.onCloseInventory();
+        return;
+      }
+
+      const hotbarSlot = Number.parseInt(event.key, 10);
+      if (Number.isNaN(hotbarSlot) || hotbarSlot < 1 || hotbarSlot > HOTBAR_SLOT_COUNT) return;
+      gameplayShortcuts.onSelectHotbarSlot(hotbarSlot - 1);
+    });
+
+    createEventListener(window, "wheel", (event: WheelEvent) => {
+      const player = gameplayShortcuts.player();
+      if (!player) return;
+
+      const direction = Math.sign(event.deltaY);
+      if (direction === 0) return;
+
+      event.preventDefault();
+      const nextSlot = mod(player.state.selectedHotbarSlot + direction, HOTBAR_SLOT_COUNT);
+      gameplayShortcuts.onSelectHotbarSlot(nextSlot);
+    });
+  }
 
   return {
     walkKeys() {
@@ -112,7 +157,9 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
  * Requests pointer lock with `unadjustedMovement: true` for raw mouse input.
  * Falls back to standard pointer lock if the option is unsupported.
  */
-async function requestPointerLock(canvas: HTMLCanvasElement): Promise<void> {
+export async function requestPointerLock(canvas: HTMLCanvasElement | undefined): Promise<void> {
+  if (!canvas) return;
+
   const maybePointerLock = canvas.requestPointerLock as (options?: {
     unadjustedMovement?: boolean;
   }) => Promise<void> | void;
@@ -122,4 +169,8 @@ async function requestPointerLock(canvas: HTMLCanvasElement): Promise<void> {
   } catch {
     canvas.requestPointerLock();
   }
+}
+
+function mod(value: number, base: number) {
+  return ((value % base) + base) % base;
 }

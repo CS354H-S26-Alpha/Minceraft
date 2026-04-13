@@ -1,5 +1,5 @@
-import { createEventListener } from "@solid-primitives/event-listener";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMousePosition, getPositionToScreen } from "@solid-primitives/mouse";
+import { createMemo, For, Show } from "solid-js";
 import { CRAFTING_GRID_SLOT_COUNT, type InventoryClickTarget, type InventoryUiState } from "@/game/crafting";
 import {
   HOTBAR_SLOT_COUNT,
@@ -23,28 +23,21 @@ const HOTBAR_SLOT_INDICES = Array.from({ length: HOTBAR_SLOT_COUNT }, (_, index)
 const CRAFTING_SLOT_INDICES = Array.from({ length: CRAFTING_GRID_SLOT_COUNT }, (_, index) => index);
 
 export function InventoryPanel(props: InventoryPanelProps) {
-  const [pointer, setPointer] = createSignal(defaultPointerPosition());
+  const mouse = createMousePosition(typeof window === "undefined" ? undefined : window, {
+    touch: false,
+    initialValue: defaultPointerPosition(),
+  });
+  const pointer = createMemo(() => getPositionToScreen(mouse.x, mouse.y));
 
-  const inventory = createMemo(() => {
+  const inventory = () => {
     props.playerVersion();
     return props.player()?.state.inventory ?? [];
-  });
-
-  const selectedHotbarSlot = createMemo(() => {
-    props.playerVersion();
-    return props.player()?.state.selectedHotbarSlot ?? 0;
-  });
-
-  const handlePointerMove = (event: MouseEvent) => {
-    if (!props.open) return;
-    setPointer({
-      x: event.clientX,
-      y: event.clientY,
-    });
   };
 
-  createEventListener(window, "mousemove", handlePointerMove);
-  createEventListener(window, "mousedown", handlePointerMove);
+  const selectedHotbarSlot = () => {
+    props.playerVersion();
+    return props.player()?.state.selectedHotbarSlot ?? 0;
+  };
 
   return (
     <>
@@ -162,7 +155,7 @@ function defaultPointerPosition() {
   }
 
   return {
-    x: Math.round(window.innerWidth / 2),
-    y: Math.round(window.innerHeight / 2),
+    x: window.scrollX + Math.round(window.innerWidth / 2),
+    y: window.scrollY + Math.round(window.innerHeight / 2),
   };
 }
