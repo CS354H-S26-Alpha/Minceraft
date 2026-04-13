@@ -123,6 +123,14 @@ export class GameRoom extends DurableObject<Env> {
     this.needsBroadcast = true;
   }
 
+  /** Teleports a player to the given coordinates. */
+  teleportTo(playerId: string, x: number, y: number, z: number) {
+    if (this.playerCollection.teleportTo(playerId, x, y, z)) {
+      this.pendingSelfState.add(playerId);
+      this.needsBroadcast = true;
+    }
+  }
+
   /** Removes the player from the room; survivors see the change next tick. */
   leave(playerId: string) {
     this.removeListener(playerId);
@@ -268,6 +276,11 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState() {
     return this.#room.requestState(this.#playerId);
+  }
+
+  /** Teleports this player to the given coordinates. */
+  teleportTo(x: number, y: number, z: number) {
+    return this.#room.teleportTo(this.#playerId, x, y, z);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */

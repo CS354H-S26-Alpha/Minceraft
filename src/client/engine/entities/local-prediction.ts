@@ -24,6 +24,12 @@ export class LocalPrediction<S extends object, I> {
     this.inputHistory.push(input);
   }
 
+  /** Clears prediction history and snaps the entity to the given state. */
+  teleport(authoritative: Partial<S>) {
+    this.inputHistory = [];
+    Object.assign(this.entity.state, authoritative);
+  }
+
   /** Trims acknowledged inputs from the history. */
   acknowledge(acked: number) {
     const newlyAcked = acked - this.lastAcked;

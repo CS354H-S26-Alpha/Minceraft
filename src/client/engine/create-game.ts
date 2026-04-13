@@ -1,8 +1,9 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
+import { makeTimer } from "@solid-primitives/timer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
 import { ChunkMaster } from "@/game/chunk-master";
-import type { Player } from "@/game/player";
+import type { Player, PlayerInput } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -60,6 +61,7 @@ const FRAME_HISTORY_SIZE = 120;
 const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and send to client
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
+const INPUT_SEND_INTERVAL_MS = 50;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
@@ -112,6 +114,20 @@ export function createGame(args: CreateGameArgs): GameState {
   let tickDelta = 0;
 
   const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+
+  // TODO: refactor to be general packet handling rather than only inputs
+  let unsent: PlayerInput[] = [];
+  makeTimer(
+    () => {
+      const s = room().session();
+      if (unsent.length === 0 || !s) return;
+      s.sendInputs(unsent);
+      unsent = [];
+    },
+    INPUT_SEND_INTERVAL_MS,
+    setInterval,
+  );
+
   let needsResize = true;
   createResizeObserver(args.glCanvas, () => {
     needsResize = true;
@@ -149,14 +165,9 @@ export function createGame(args: CreateGameArgs): GameState {
     if (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch) {
       lastYaw = yaw;
       lastPitch = pitch;
-      room().input({
-        dx: walk.x,
-        dy: walk.y,
-        dz: walk.z,
-        dtSeconds: inputDt,
-        yaw,
-        pitch,
-      });
+      const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
+      room().replicated()?.predict(next);
+      unsent.push(next);
     }
     camera.setPosition(player.position);
 

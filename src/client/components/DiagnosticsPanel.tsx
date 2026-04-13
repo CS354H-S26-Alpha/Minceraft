@@ -1,3 +1,5 @@
+import type { PlayerState } from "@/game/player";
+
 const FRAME_GRAPH_WIDTH = 240;
 const FRAME_GRAPH_HEIGHT = 80;
 const FRAME_GRAPH_MAX_MS = 16.67;
@@ -5,9 +7,14 @@ const FRAME_GRAPH_MAX_MS = 16.67;
 const TICK_GRAPH_HEIGHT = 60;
 const TICK_GRAPH_MAX_MS = 50;
 
+interface OnlinePlayer {
+  id: string;
+  name: string;
+}
+
+// TODO: reorganize these props
 interface DiagnosticsPanelProps {
-  // TODO: reorganize these props
-  playerName: string;
+  playerState: PlayerState;
   fps: number;
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
@@ -15,7 +22,8 @@ interface DiagnosticsPanelProps {
   mspt: number;
   msptHistory: readonly number[];
   snapsPerSec: number;
-  onlinePlayers: readonly string[];
+  onlinePlayers: readonly OnlinePlayer[];
+  onTeleportTo: (playerId: string) => void;
   pointerLocked: boolean;
 }
 
@@ -109,11 +117,16 @@ function Graph(props: {
 }
 
 export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
+  const player = () => props.playerState; // shorter access
+
   return (
     <div class="absolute top-2 right-2 z-20 w-80 rounded bg-black/60 p-3 font-mono text-sm text-white">
       <div class="flex items-center justify-between gap-3">
-        <div class="text-gray-400">{props.playerName}</div>
+        <div class="text-gray-400">{player().name}</div>
         <div class="text-gray-400">{props.pointerLocked ? "(locked)" : null}</div>
+      </div>
+      <div class="text-gray-400">
+        XYZ: {player().x.toFixed(2)} / {player().y.toFixed(2)} / {player().z.toFixed(2)}
       </div>
       <div>
         {props.fps} fps ({props.computeTimeMs.toFixed(2)}ms)
@@ -144,8 +157,16 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
       <div class="border-t border-white/20 pt-2">
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
         <ul class="mt-1">
-          {props.onlinePlayers.map((name) => (
-            <li>{name}</li>
+          {props.onlinePlayers.map((p) => (
+            <li>
+              <button
+                type="button"
+                class="text-left text-white hover:text-blue-400 hover:underline"
+                onClick={() => props.onTeleportTo(p.id)}
+              >
+                {p.name}
+              </button>
+            </li>
           ))}
         </ul>
       </div>
