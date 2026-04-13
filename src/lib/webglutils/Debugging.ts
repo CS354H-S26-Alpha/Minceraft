@@ -83,14 +83,9 @@ export class Debugger {
     var argStr = "";
     var numArgs = args.length;
     for (var ii = 0; ii < numArgs; ++ii) {
-      argStr +=
-        (ii === 0 ? "" : ", ") +
-        Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
+      argStr += (ii === 0 ? "" : ", ") + Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
     }
-    Debugger.logError(
-      `WebGL error ${Debugger.glEnumToString(error)} in ${functionName}(${argStr})`,
-      16,
-    );
+    Debugger.logError(`WebGL error ${Debugger.glEnumToString(error)} in ${functionName}(${argStr})`, 16);
   }
 
   /**
@@ -104,9 +99,7 @@ export class Debugger {
     var argStr = "";
     var numArgs = args.length;
     for (var ii = 0; ii < numArgs; ++ii) {
-      argStr +=
-        (ii === 0 ? "" : ", ") +
-        Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
+      argStr += (ii === 0 ? "" : ", ") + Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
     }
     throw new Error(`WebGL error ${Debugger.glEnumToString(error)} in ${functionName}(${argStr})`);
   }
@@ -120,9 +113,7 @@ export class Debugger {
     var argStr = "";
     var numArgs = args.length;
     for (var ii = 0; ii < numArgs; ++ii) {
-      argStr +=
-        (ii === 0 ? "" : ", ") +
-        Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
+      argStr += (ii === 0 ? "" : ", ") + Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
     }
     Debugger.log(`${functionName}(${argStr})`, 16);
   }
@@ -137,11 +128,7 @@ export class Debugger {
     for (var ii = 0; ii < args.length; ++ii) {
       if (args[ii] === undefined) {
         Debugger.logError(
-          "undefined passed to gl." +
-            functionName +
-            "(" +
-            Debugger.glFunctionArgsToString(functionName, args) +
-            ")",
+          "undefined passed to gl." + functionName + "(" + Debugger.glFunctionArgsToString(functionName, args) + ")",
         );
       }
     }
@@ -158,11 +145,7 @@ export class Debugger {
     for (var ii = 0; ii < args.length; ++ii) {
       if (args[ii] === undefined) {
         throw new Error(
-          "undefined passed to gl." +
-            functionName +
-            "(" +
-            Debugger.glFunctionArgsToString(functionName, args) +
-            ")",
+          "undefined passed to gl." + functionName + "(" + Debugger.glFunctionArgsToString(functionName, args) + ")",
         );
       }
     }
@@ -197,10 +180,7 @@ export class Debugger {
    * @param glFunctionName
    * @param glErrorCallback
    */
-  public static generateGLErrorCallback(
-    glFunctionName: string,
-    glErrorCallback: GLErrorCallback,
-  ): GLErrorCallback {
+  public static generateGLErrorCallback(glFunctionName: string, glErrorCallback: GLErrorCallback): GLErrorCallback {
     return (error: number, functionName: string, args: IArguments) => {
       if (functionName === glFunctionName) {
         glErrorCallback(error, functionName, args);
@@ -224,9 +204,7 @@ export class Debugger {
    * Generates a new GLErrorCallback function that will call the given list of callback functions
    * @param glErrorCallbacks
    */
-  public static generateGLErrorCallbackFromList(
-    glErrorCallbacks: GLErrorCallback[],
-  ): GLErrorCallback {
+  public static generateGLErrorCallbackFromList(glErrorCallbacks: GLErrorCallback[]): GLErrorCallback {
     return (error: number, functionName: string, args: IArguments) => {
       for (const callback of glErrorCallbacks) {
         callback(error, functionName, args);
@@ -559,10 +537,7 @@ export class Debugger {
       var funcInfo = _funcInfo[numArgs];
       if (funcInfo !== undefined) {
         if (funcInfo[argumentIndex]) {
-          if (
-            typeof funcInfo[argumentIndex] === "object" &&
-            funcInfo[argumentIndex].enumBitwiseOr !== undefined
-          ) {
+          if (typeof funcInfo[argumentIndex] === "object" && funcInfo[argumentIndex].enumBitwiseOr !== undefined) {
             var enums = funcInfo[argumentIndex].enumBitwiseOr;
             var orResult = 0;
             var orEnums = [];
@@ -607,9 +582,7 @@ export class Debugger {
     var argStr = "";
     var numArgs = args.length;
     for (var ii = 0; ii < numArgs; ++ii) {
-      argStr +=
-        (ii === 0 ? "" : ", ") +
-        Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
+      argStr += (ii === 0 ? "" : ", ") + Debugger.glFunctionArgToString(functionName, numArgs, ii, args[ii]);
     }
     return argStr;
   }
