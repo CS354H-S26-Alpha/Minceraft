@@ -62,7 +62,8 @@ export class Chunk {
         const globalX = topleftx + j;
         const globalZ = toplefty + i;
 
-        const { biome, height } = sampleColumn(this.seed, globalX, globalZ);
+        const { biome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
+        const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
 
@@ -79,7 +80,6 @@ export class Chunk {
     }
   }
 
-  // next to air, it should be rendered
   private touchesAir(lx: number, ly: number, lz: number): boolean {
     return (
       this.getBlock(lx + 1, ly, lz) === CubeType.Air ||
@@ -107,6 +107,8 @@ export class Chunk {
 
         for (let y = 0; y <= surfaceY; y++) {
           const blockType = this.getBlock(j, y, i);
+
+          // if it is air or next to air, it should be rendered
           if (blockType === CubeType.Air || !this.touchesAir(j, y, i)) continue;
 
           positions[4 * count + 0] = topleftx + j;

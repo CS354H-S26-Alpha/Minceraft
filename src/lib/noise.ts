@@ -12,6 +12,12 @@ export function smoothstep(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
+// smooth step from 0 to 1 between A and B
+export function smoothstepAB(t: number, A: number, B: number): number {
+  const x = Math.max(0, Math.min(1, (t - A) / (B - A)));
+  return smoothstep(x);
+}
+
 /** Bilinear interpolation with smoothstep on both axes */
 export function bilerp(
   v00: number, v10: number,
@@ -47,3 +53,8 @@ export function terrainHeight(seed: number, x: number, z: number): number {
           + valueNoise(seed, x, z, 1 / 4)  * 12.5;
   return Math.floor((h / 87.5) * 100);
 }
+
+export function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+

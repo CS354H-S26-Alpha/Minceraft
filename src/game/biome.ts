@@ -1,6 +1,8 @@
 import { CubeType } from "@/client/engine/render/cube-types";
-import { terrainHeight, valueNoise } from "@/lib/noise";
+import { lerp, smoothstepAB, terrainHeight, valueNoise } from "@/lib/noise";
 
+// A biome noise value in [0,1] maps to one of these regions:
+//   [0, 0.40) → Forest   [0.40, 0.70) → Desert   [0.70, 1] → Mountain
 export enum Biome {
   Forest,
   Desert,
@@ -8,32 +10,59 @@ export enum Biome {
 }
 
 export interface BiomeInfo {
-  surface: CubeType; // top visible block
-  subsurface: CubeType; // 1-3 blocks below the surface
+  surface: CubeType; // top block
+  subsurface: CubeType; // blocks just below the surface
+  heightBase: number; // average Y
+  heightAmp: number; // variation around base
 }
 
 export const BIOME_INFOS: Record<Biome, BiomeInfo> = {
-  [Biome.Forest]: { surface: CubeType.ForestGrass, subsurface: CubeType.Dirt },
-  [Biome.Desert]: { surface: CubeType.Sand, subsurface: CubeType.Sand },
-  [Biome.Mountain]: { surface: CubeType.Stone, subsurface: CubeType.Stone },
+  [Biome.Forest]: { surface: CubeType.ForestGrass, subsurface: CubeType.Dirt, heightBase: 60, heightAmp: 10 },
+  [Biome.Desert]: { surface: CubeType.Sand, subsurface: CubeType.Sand, heightBase: 56, heightAmp: 8 },
+  [Biome.Mountain]: { surface: CubeType.Stone, subsurface: CubeType.Stone, heightBase: 74, heightAmp: 24 },
 };
 
-// noise to Biome
+const FOREST_TO_DESERT = 0.4;
+const DESERT_TO_MOUNTAIN = 0.7;
+const BLEND = 0.08; // crossfade width at each boundary
+
+// Maps a noise value to a Biome.
 export function computeBiome(biomeNoise: number): Biome {
-  if (biomeNoise < 0.4) return Biome.Forest;
-  if (biomeNoise < 0.7) return Biome.Desert;
+  if (biomeNoise < FOREST_TO_DESERT) return Biome.Forest;
+  if (biomeNoise < DESERT_TO_MOUNTAIN) return Biome.Desert;
   return Biome.Mountain;
 }
 
-/** Surface block for a column, with altitude overrides that apply to any biome. */
+// Returns height params blended smoothly near biome boundaries to avoid seams.
+// Within BLEND of a threshold, lerps between the two neighboring biomes' params.
+function blendedHeightParams(biomeNoise: number): { base: number; amp: number } {
+  const f = BIOME_INFOS[Biome.Forest];
+  const d = BIOME_INFOS[Biome.Desert];
+  const m = BIOME_INFOS[Biome.Mountain];
+
+  if (biomeNoise < FOREST_TO_DESERT + BLEND) {
+    const t = smoothstepAB(biomeNoise, FOREST_TO_DESERT - BLEND, FOREST_TO_DESERT + BLEND);
+    return { base: lerp(f.heightBase, d.heightBase, t), amp: lerp(f.heightAmp, d.heightAmp, t) };
+  }
+  if (biomeNoise < DESERT_TO_MOUNTAIN + BLEND) {
+    const t = smoothstepAB(biomeNoise, DESERT_TO_MOUNTAIN - BLEND, DESERT_TO_MOUNTAIN + BLEND);
+    return { base: lerp(d.heightBase, m.heightBase, t), amp: lerp(d.heightAmp, m.heightAmp, t) };
+  }
+  return { base: m.heightBase, amp: m.heightAmp };
+}
+
+// Returns the top block type. Snow overrides any biome above Y=80.
 export function surfaceBlock(biome: Biome, height: number): CubeType {
   if (height > 80) return CubeType.Snow;
   return BIOME_INFOS[biome].surface;
 }
 
+// Single entry point for chunk generation: returns biome + final height for (gx, gz).
 export function sampleColumn(seed: number, gx: number, gz: number): { biome: Biome; height: number } {
-  const biomeNoise = valueNoise(seed + 7, gx, gz, 1 / 300); // low frequency noise for biome distribution
+  const biomeNoise = valueNoise(seed + 7, gx, gz, 1 / 300);
   const biome = computeBiome(biomeNoise);
-  const height = terrainHeight(seed, gx, gz);
+  const raw = terrainHeight(seed, gx, gz);
+  const { base, amp } = blendedHeightParams(biomeNoise);
+  const height = Math.round(base + (raw / 100 - 0.5) * 2 * amp);
   return { biome, height };
 }
