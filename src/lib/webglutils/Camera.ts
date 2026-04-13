@@ -36,27 +36,13 @@ export class RayCamera {
     Vec3.cross(yDir, zDir, xDir);
     yDir.normalize();
 
-    this.rotationMatrix = Mat3.fromValues(
-      xDir.x,
-      xDir.y,
-      xDir.z,
-      yDir.x,
-      yDir.y,
-      yDir.z,
-      zDir.x,
-      zDir.y,
-      zDir.z,
-    );
+    this.rotationMatrix = Mat3.fromValues(xDir.x, xDir.y, xDir.z, yDir.x, yDir.y, yDir.z, zDir.x, zDir.y, zDir.z);
 
     this.u = new Vec3();
     this.v = new Vec3();
     this.look = new Vec3();
 
-    Vec3.transformMat3(
-      this.u,
-      new Vec3([this.normalizedHeight * this.aspect, 0, 0]),
-      this.rotationMatrix,
-    );
+    Vec3.transformMat3(this.u, new Vec3([this.normalizedHeight * this.aspect, 0, 0]), this.rotationMatrix);
     Vec3.transformMat3(this.v, new Vec3([0, this.normalizedHeight, 0]), this.rotationMatrix);
     Vec3.transformMat3(this.look, new Vec3([0, 0, -1]), this.rotationMatrix);
   }
@@ -98,15 +84,7 @@ export class Camera {
    * @param zNear  - distance to the near plane
    * @param zFar   - distance to the far plane
    */
-  constructor(
-    pos: Vec3,
-    target: Vec3,
-    upDir: Vec3,
-    fov: number,
-    aspect: number,
-    zNear: number,
-    zFar: number,
-  ) {
+  constructor(pos: Vec3, target: Vec3, upDir: Vec3, fov: number, aspect: number, zNear: number, zFar: number) {
     // TODO: error checking parameters
     console.assert(target != null);
     this._eye = Vec3.clone(pos);

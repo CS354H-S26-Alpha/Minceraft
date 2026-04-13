@@ -30,6 +30,8 @@ export class Renderer {
   private readonly entityPasses: Map<string, EntityPass>;
 
   private currentView!: RenderView;
+  private lastCubePositions: Float32Array | null = null;
+  private lastCubeColors: Float32Array | null = null;
 
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
@@ -67,8 +69,14 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
-    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
-    this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
+    if (view.cubePositions !== this.lastCubePositions) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
+      this.lastCubePositions = view.cubePositions;
+    }
+    if (view.cubeColors !== this.lastCubeColors) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
+      this.lastCubeColors = view.cubeColors;
+    }
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
 
     for (const entity of view.entities) {

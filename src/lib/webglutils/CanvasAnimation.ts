@@ -9,11 +9,7 @@ export class WebGLUtilities {
    * @param source the shader source code as a string.
    * @return a WebGL shader
    */
-  public static createShader(
-    ctx: WebGLRenderingContext,
-    shaderType: number,
-    source: string,
-  ): WebGLShader {
+  public static createShader(ctx: WebGLRenderingContext, shaderType: number, source: string): WebGLShader {
     /* TODO: error checking */
     const shader: WebGLShader = ctx.createShader(shaderType) as WebGLShader;
     ctx.shaderSource(shader, source);
@@ -32,11 +28,7 @@ export class WebGLUtilities {
    * @param fsSource the fragment shader source as a string
    * @return a WebGLProgram
    */
-  public static createProgram(
-    ctx: WebGLRenderingContext,
-    vsSource: string,
-    fsSource: string,
-  ): WebGLProgram {
+  public static createProgram(ctx: WebGLRenderingContext, vsSource: string, fsSource: string): WebGLProgram {
     /* TODO: error checking */
 
     const shaderProgram: WebGLProgram = ctx.createProgram() as WebGLProgram;
@@ -44,11 +36,7 @@ export class WebGLUtilities {
     const vertexShader: WebGLShader = WebGLUtilities.createShader(ctx, ctx.VERTEX_SHADER, vsSource);
     ctx.attachShader(shaderProgram, vertexShader);
 
-    const fragmentShader: WebGLShader = WebGLUtilities.createShader(
-      ctx,
-      ctx.FRAGMENT_SHADER,
-      fsSource,
-    );
+    const fragmentShader: WebGLShader = WebGLUtilities.createShader(ctx, ctx.FRAGMENT_SHADER, fsSource);
     ctx.attachShader(shaderProgram, fragmentShader);
 
     ctx.linkProgram(shaderProgram);

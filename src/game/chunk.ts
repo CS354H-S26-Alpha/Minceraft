@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
 
@@ -87,19 +88,23 @@ export class Chunk {
     }
   }
 
-  // basic rendering for blocks touching air
   // worldGet: optional cross-chunk block lookup for accurate edge culling.
   // Without it, chunk-boundary faces are always treated as exposed (safe but over-renders).
   public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
     const topleftx = this.x - this.size / 2;
-    const toplefty = this.y - this.size / 2;
+    const topleftz = this.y - this.size / 2;
+    const S = this.size;
+    const hm = this.heightMap;
+    const blocks = this.blocks;
+    const STRIDE_Y = S * S;
 
+    // Cross-chunk aware air check for edge culling
     const isAir = (nlx: number, nly: number, nlz: number): boolean => {
-      if (nlx >= 0 && nlx < this.size && nlz >= 0 && nlz < this.size) {
+      if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
         return this.getBlock(nlx, nly, nlz) === CubeType.Air;
       }
       if (worldGet) {
-        return worldGet(topleftx + nlx, nly, toplefty + nlz) === CubeType.Air;
+        return worldGet(topleftx + nlx, nly, topleftz + nlz) === CubeType.Air;
       }
       return true; // no neighbor data — treat edge as exposed
     };
@@ -112,39 +117,91 @@ export class Chunk {
       isAir(lx, ly, lz + 1) ||
       isAir(lx, ly, lz - 1);
 
-    const maxCubes = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
-    const positions = new Float32Array(4 * maxCubes);
-    const colors = new Float32Array(3 * maxCubes);
+    // Pre-compute min neighbor surface height for interior columns.
+    // Blocks at y in (0, surfaceY) with y <= minNeighborHeight are fully buried.
+    const minNH = new Uint8Array(STRIDE_Y);
+    for (let i = 1; i < S - 1; i++) {
+      for (let j = 1; j < S - 1; j++) {
+        const idx = i * S + j;
+        minNH[idx] = Math.min(hm[idx - 1]!, hm[idx + 1]!, hm[idx - S]!, hm[idx + S]!);
+      }
+    }
+
+    // Upper-bound count: exact for interior columns, conservative for edges
+    let total = 0;
+    for (let i = 0; i < S; i++) {
+      for (let j = 0; j < S; j++) {
+        const idx = i * S + j;
+        const surfY = hm[idx]!;
+        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
+          total += surfY + 1;
+        } else {
+          const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
+          total += 1 + (surfY - start + 1);
+        }
+      }
+    }
+
+    const positions = new Float32Array(4 * total);
+    const colors = new Float32Array(3 * total);
     let count = 0;
 
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        const surfaceY = this.heightMap[this.size * i + j] as number;
+    for (let i = 0; i < S; i++) {
+      for (let j = 0; j < S; j++) {
+        const idx = i * S + j;
+        const surfY = hm[idx]!;
+        const wx = topleftx + j;
+        const wz = topleftz + i;
 
-        for (let y = 0; y <= surfaceY; y++) {
-          const blockType = this.getBlock(j, y, i);
-
-          // if it is air or next to air, it should be rendered
-          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-
-          positions[4 * count + 0] = topleftx + j;
-          positions[4 * count + 1] = y;
-          positions[4 * count + 2] = toplefty + i;
+        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
+          // Edge column: use touchesAir with cross-chunk awareness
+          for (let y = 0; y <= surfY; y++) {
+            const blockType = this.getBlock(j, y, i);
+            if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
+            const c = CUBE_TYPE_INFO[blockType].baseColor;
+            positions[4 * count] = wx;
+            positions[4 * count + 1] = y;
+            positions[4 * count + 2] = wz;
+            positions[4 * count + 3] = 0;
+            colors[3 * count] = c[0];
+            colors[3 * count + 1] = c[1];
+            colors[3 * count + 2] = c[2];
+            count++;
+          }
+        } else {
+          // Interior column: heightMap-based culling
+          const bt0 = blocks[idx]! as CubeType;
+          const c0 = CUBE_TYPE_INFO[bt0].baseColor;
+          positions[4 * count] = wx;
+          positions[4 * count + 1] = 0;
+          positions[4 * count + 2] = wz;
           positions[4 * count + 3] = 0;
-
-          const color = CUBE_TYPE_INFO[blockType].baseColor;
-          colors[3 * count + 0] = color[0];
-          colors[3 * count + 1] = color[1];
-          colors[3 * count + 2] = color[2];
-
+          colors[3 * count] = c0[0];
+          colors[3 * count + 1] = c0[1];
+          colors[3 * count + 2] = c0[2];
           count++;
+
+          const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
+          for (let y = start; y <= surfY; y++) {
+            const bt = blocks[y * STRIDE_Y + idx]! as CubeType;
+            const c = CUBE_TYPE_INFO[bt].baseColor;
+            positions[4 * count] = wx;
+            positions[4 * count + 1] = y;
+            positions[4 * count + 2] = wz;
+            positions[4 * count + 3] = 0;
+            colors[3 * count] = c[0];
+            colors[3 * count + 1] = c[1];
+            colors[3 * count + 2] = c[2];
+            count++;
+          }
         }
       }
     }
 
     this.cubes = count;
-    this.cubePositionsF32 = positions.subarray(0, 4 * count) as Float32Array;
-    this.cubeColorsF32 = colors.subarray(0, 3 * count) as Float32Array;
+    // Edge culling may reduce count below total; subarray trims to exact size
+    this.cubePositionsF32 = positions.subarray(0, 4 * count);
+    this.cubeColorsF32 = colors.subarray(0, 3 * count);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */

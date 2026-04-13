@@ -1,11 +1,17 @@
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "./chunk";
 
+const CHUNK_RENDER_DISTANCE = 4; // TODO: move into settings
+
 export class ChunkMaster {
-  private chunkMap = new Map<string, Chunk>(); // pulls chunk by unique cordinate key
-  private nearChunks: Chunk[] = [];
-  private nearKeySignature = ""; // stringified set of current 3x3 keys — change detector
+  private chunkMap = new Map<string, Chunk>();
   private seed: number;
+  private lastOriginX = NaN;
+  private lastOriginZ = NaN;
+
+  private cachedPositions = new Float32Array(0);
+  private cachedColors = new Float32Array(0);
+  private cachedCubeCount = 0;
 
   constructor(spawnX: number, spawnZ: number, seed: number) {
     this.seed = seed;
@@ -21,17 +27,20 @@ export class ChunkMaster {
     return chunk.getBlockWorld(wx, wy, wz);
   };
 
-  public updateChunksAroundPos(wx: number, wz: number): Chunk[] {
+  public updateChunksAroundPos(wx: number, wz: number): void {
     const [originX, originZ] = chunkOrigin(wx, wz);
+    if (originX === this.lastOriginX && originZ === this.lastOriginZ) return;
+    this.lastOriginX = originX;
+    this.lastOriginZ = originZ;
+
     const chunks: Chunk[] = [];
-    const keys: string[] = [];
     let anyNew = false;
 
-    for (let cx = -1; cx <= 1; cx++) {
-      for (let cz = -1; cz <= 1; cz++) {
-        const [chunkX, chunkZ] = [originX + cx * CHUNK_SIZE, originZ + cz * CHUNK_SIZE];
+    for (let cx = -CHUNK_RENDER_DISTANCE; cx <= CHUNK_RENDER_DISTANCE; cx++) {
+      for (let cz = -CHUNK_RENDER_DISTANCE; cz <= CHUNK_RENDER_DISTANCE; cz++) {
+        const chunkX = originX + cx * CHUNK_SIZE;
+        const chunkZ = originZ + cz * CHUNK_SIZE;
         const key = chunkKey(chunkX, chunkZ);
-        keys.push(key);
         let chunk = this.chunkMap.get(key);
         if (!chunk) {
           chunk = new Chunk(chunkX, chunkZ, CHUNK_SIZE, this.seed);
@@ -42,28 +51,52 @@ export class ChunkMaster {
       }
     }
 
-    // Re-render all 9 chunks with cross-chunk neighbor awareness whenever the
-    // grid shifts (i.e. a new chunk entered the 3x3). This corrects the edge
-    // faces that were conservatively marked as exposed before neighbors existed.
-    const signature = keys.join("|");
-    if (anyNew || signature !== this.nearKeySignature) {
+    // Re-render chunks with cross-chunk neighbor awareness when new chunks
+    // enter the grid, correcting edge faces that were conservatively exposed.
+    if (anyNew) {
       for (const chunk of chunks) chunk.renderChunk(this.worldGetBlock);
-      this.nearKeySignature = signature;
     }
 
-    this.nearChunks = chunks;
-    return chunks;
+    this.rebuildCache(chunks);
+  }
+
+  private rebuildCache(chunks: Chunk[]): void {
+    let totalPos = 0;
+    let totalCol = 0;
+    let totalCubes = 0;
+    for (const chunk of chunks) {
+      totalPos += chunk.cubePositions().length;
+      totalCol += chunk.cubeColors().length;
+      totalCubes += chunk.numCubes();
+    }
+
+    const positions = new Float32Array(totalPos);
+    const colors = new Float32Array(totalCol);
+    let posOff = 0;
+    let colOff = 0;
+    for (const chunk of chunks) {
+      const pos = chunk.cubePositions();
+      positions.set(pos, posOff);
+      posOff += pos.length;
+      const col = chunk.cubeColors();
+      colors.set(col, colOff);
+      colOff += col.length;
+    }
+
+    this.cachedPositions = positions;
+    this.cachedColors = colors;
+    this.cachedCubeCount = totalCubes;
   }
 
   public getNearCubePositionsFlattened(): Float32Array {
-    return new Float32Array(this.nearChunks.flatMap((chunk) => Array.from(chunk.cubePositions())));
+    return this.cachedPositions;
   }
 
   public getNearCubeColorsFlattened(): Float32Array {
-    return new Float32Array(this.nearChunks.flatMap((chunk) => Array.from(chunk.cubeColors())));
+    return this.cachedColors;
   }
 
   public getNearCubeSize(): number {
-    return this.nearChunks.reduce((acc, chunk) => acc + chunk.numCubes(), 0);
+    return this.cachedCubeCount;
   }
 }

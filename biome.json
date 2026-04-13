@@ -25,11 +25,8 @@
   },
   "overrides": [
     {
-      "includes": ["src/lib/**"],
+      "includes": ["src/lib/webglutils/**"],
       "linter": {
-        "enabled": false
-      },
-      "formatter": {
         "enabled": false
       }
     }

@@ -31,12 +31,7 @@ export class RenderPass {
   private extInstanced: ANGLE_instanced_arrays | null;
   private instancedAttributes: Set<string>;
 
-  constructor(
-    extVAO: OES_vertex_array_object,
-    context: WebGLRenderingContext,
-    vShader: string,
-    fShader: string,
-  ) {
+  constructor(extVAO: OES_vertex_array_object, context: WebGLRenderingContext, vShader: string, fShader: string) {
     this.extVAO = extVAO;
     this.ctx = context;
     this.extInstanced = context.getExtension("ANGLE_instanced_arrays");
@@ -86,14 +81,7 @@ export class RenderPass {
         attrBuffer.bufferId = gl.createBuffer() as WebGLBuffer;
         gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
         gl.bufferData(gl.ARRAY_BUFFER, attrBuffer.data, gl.STATIC_DRAW);
-        gl.vertexAttribPointer(
-          attrLoc,
-          attr.size,
-          attr.type,
-          attr.normalized,
-          attr.stride,
-          attr.offset,
-        );
+        gl.vertexAttribPointer(attrLoc, attr.size, attr.type, attr.normalized, attr.stride, attr.offset);
         gl.enableVertexAttribArray(attrLoc);
         if (this.instancedAttributes.has(attr.name) && this.extInstanced) {
           this.extInstanced.vertexAttribDivisorANGLE(attrLoc, 1);
@@ -118,17 +106,7 @@ export class RenderPass {
           this.texture = createTextureResult;
         }
         gl.bindTexture(gl.TEXTURE_2D, this.texture);
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.RGBA,
-          1,
-          1,
-          0,
-          gl.RGBA,
-          gl.UNSIGNED_BYTE,
-          new Uint8Array([0, 0, 255, 255]),
-        ); // Temporary color
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255])); // Temporary color
         const img = new Image();
         img.onload = (_ev: Event) => {
           console.log(`Loaded texturemap: ${this.textureMap}`);
@@ -229,10 +207,7 @@ export class RenderPass {
     this.drawOffset = drawOffset;
   }
 
-  public addUniform(
-    name: string,
-    bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void,
-  ) {
+  public addUniform(name: string, bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void) {
     this.uniforms.set(name, new Uniform(0, bindFunction));
   }
 
@@ -267,9 +242,7 @@ export class RenderPass {
       }
     }
 
-    this.attributes.push(
-      new Attribute(attribName, size, type, normalized, stride, offset, bufferName),
-    );
+    this.attributes.push(new Attribute(attribName, size, type, normalized, stride, offset, bufferName));
   }
 
   public addTextureMap(texture: string, vShader?: string, fShader?: string) {
