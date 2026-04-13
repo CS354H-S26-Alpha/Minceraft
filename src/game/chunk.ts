@@ -114,7 +114,7 @@ export class Chunk {
           positions[4 * count + 0] = topleftx + j;
           positions[4 * count + 1] = y;
           positions[4 * count + 2] = toplefty + i;
-          positions[4 * count + 3] = 0;
+          positions[4 * count + 3] = blockType;
 
           const color = CUBE_TYPE_INFO[blockType].baseColor;
           colors[3 * count + 0] = color[0];

@@ -14,11 +14,13 @@ varying vec4 normal;
 varying vec4 wsPos;
 varying vec2 uv;
 varying vec3 color;
+varying float cubeType;
 
 void main() {
-  gl_Position = uProj * uView * (aVertPos + aOffset);
-  wsPos = aVertPos + aOffset;
+  gl_Position = uProj * uView * (aVertPos + vec4(aOffset.xyz, 1.0));
+  wsPos = vec4(aOffset.xyz, 1.0) + aVertPos;
   normal = normalize(aNorm);
   uv = aUV;
   color = aColor;
+  cubeType = aOffset.w;
 }
