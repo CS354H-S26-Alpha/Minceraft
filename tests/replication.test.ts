@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LocalPrediction } from "../src/client/engine/local-prediction";
-import { PLAYER_SPEED, Player } from "../src/game/player";
+import { LocalPrediction } from "../src/client/engine/entities/local-prediction";
+import { createPlayerState, PLAYER_SPEED, Player } from "../src/game/player";
 
 const S = (
   overrides: Partial<{
@@ -12,7 +12,17 @@ const S = (
     yaw: number;
     pitch: number;
   }> = {},
-) => ({ id: "p1", name: "test", x: 0, y: 100, z: 0, yaw: 0, pitch: 0, ...overrides });
+) =>
+  createPlayerState({
+    id: "p1",
+    name: "test",
+    x: 0,
+    y: 100,
+    z: 0,
+    yaw: 0,
+    pitch: 0,
+    ...overrides,
+  });
 
 const I = (dx: number, dy: number, dz: number) => ({
   dx,

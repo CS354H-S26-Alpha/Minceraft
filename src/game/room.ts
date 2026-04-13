@@ -5,6 +5,7 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
+import type { InventoryClickTarget } from "./crafting";
 import type { EntityCollection } from "./entity-collection";
 import type { PlayerInput } from "./player";
 import { PlayerCollection } from "./player-collection";
@@ -119,6 +120,31 @@ export class GameRoom extends DurableObject<Env> {
 
   /** Queues the player's own state for the next tick's snapshot. */
   requestState(playerId: string) {
+    this.ensureInitialized();
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Applies an inventory or crafting click for the player. */
+  clickInventory(playerId: string, target: InventoryClickTarget) {
+    this.ensureInitialized();
+    if (!this.playerCollection.interactInventory(playerId, target)) return;
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Returns crafting-grid items and the cursor back into the player's inventory. */
+  closeInventory(playerId: string) {
+    this.ensureInitialized();
+    if (!this.playerCollection.closeInventory(playerId)) return;
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Updates the active hotbar slot. */
+  selectHotbarSlot(playerId: string, slotIndex: number) {
+    this.ensureInitialized();
+    if (!this.playerCollection.setSelectedHotbarSlot(playerId, slotIndex)) return;
     this.pendingSelfState.add(playerId);
     this.needsBroadcast = true;
   }
@@ -192,11 +218,13 @@ export class GameRoom extends DurableObject<Env> {
    * as `self` when the player has a pending state request.
    */
   private personalizeSnapshot(snap: RoomSnapshot, playerId: string): RoomSnapshot {
-    const { [playerId]: self, ...players } = snap.players;
+    const { [playerId]: _self, ...players } = snap.players;
+    const includeSelf = this.pendingSelfState.has(playerId);
     return {
       ...snap,
       players,
-      self: this.pendingSelfState.has(playerId) ? self : undefined,
+      self: includeSelf ? this.playerCollection.selfState(playerId) : undefined,
+      inventoryUi: includeSelf ? this.playerCollection.getInventoryUi(playerId) : undefined,
     };
   }
 
@@ -268,6 +296,21 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState() {
     return this.#room.requestState(this.#playerId);
+  }
+
+  /** Applies an inventory or crafting interaction. */
+  clickInventory(target: InventoryClickTarget) {
+    return this.#room.clickInventory(this.#playerId, target);
+  }
+
+  /** Returns crafting-grid items and the cursor to the player's inventory. */
+  closeInventory() {
+    return this.#room.closeInventory(this.#playerId);
+  }
+
+  /** Changes the selected hotbar slot. */
+  selectHotbarSlot(slotIndex: number) {
+    return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */

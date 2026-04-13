@@ -3,7 +3,8 @@ import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
-import { Player, type PlayerInput } from "@/game/player";
+import { createInventoryUiState, type InventoryClickTarget } from "@/game/crafting";
+import { cloneInventory, Player, type PlayerInput, type PlayerState } from "@/game/player";
 import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
 const INPUT_SEND_INTERVAL_MS = 50;
@@ -19,6 +20,7 @@ export function joinWorld(roomId: string) {
   const { credentials, join } = useSession();
   const { playerId } = credentials;
   const [player, setPlayer] = createSignal<Player>();
+  const [selfStateVersion, setSelfStateVersion] = createSignal(0);
   const replicated = createMemo(() => {
     const p = player();
     return p ? new LocalPrediction(p) : undefined;
@@ -30,6 +32,7 @@ export function joinWorld(roomId: string) {
     acks: {},
     tickTimeMs: 0,
   });
+  const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
 
   const [snapCount, setSnapCount] = createSignal(0);
   let session: RoomSessionApi | undefined;
@@ -40,9 +43,18 @@ export function joinWorld(roomId: string) {
     batch(() => {
       setSnapCount((c) => c + 1);
       setSnapshot(reconcile(snap));
+      if (snap.inventoryUi) {
+        setInventoryUi(reconcile(snap.inventoryUi));
+      }
 
-      if (snap.self && !player()) {
-        setPlayer(new Player(snap.self));
+      if (snap.self) {
+        const current = player();
+        if (current) {
+          syncPrivatePlayerState(current, snap.self);
+        } else {
+          setPlayer(new Player(snap.self));
+        }
+        setSelfStateVersion((version) => version + 1);
       }
 
       replicated()?.acknowledge(snap.acks[playerId] ?? 0);
@@ -69,9 +81,46 @@ export function joinWorld(roomId: string) {
     unsent.push(next);
   }
 
+  function clickInventory(target: InventoryClickTarget) {
+    session?.clickInventory(target);
+  }
+
+  function closeInventory() {
+    session?.closeInventory();
+  }
+
+  function requestState() {
+    session?.requestState();
+  }
+
+  function selectHotbarSlot(slotIndex: number) {
+    if (player()?.setSelectedHotbarSlot(slotIndex)) {
+      setSelfStateVersion((version) => version + 1);
+    }
+    session?.selectHotbarSlot(slotIndex);
+  }
+
   onCleanup(() => {
+    session?.closeInventory();
     session?.leave();
   });
 
-  return { player, snapshot, snapCount, input } as const;
+  return {
+    player,
+    snapshot,
+    snapCount,
+    selfStateVersion,
+    inventoryUi,
+    input,
+    clickInventory,
+    closeInventory,
+    requestState,
+    selectHotbarSlot,
+  } as const;
+}
+
+function syncPrivatePlayerState(player: Player, self: PlayerState) {
+  player.state.name = self.name;
+  player.state.inventory = cloneInventory(self.inventory);
+  player.state.selectedHotbarSlot = self.selectedHotbarSlot;
 }
