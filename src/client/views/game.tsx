@@ -1,5 +1,6 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createSignal, onCleanup, Show } from "solid-js";
+import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { createGame } from "../engine";
@@ -28,6 +29,7 @@ export default function GameView() {
     if (!inventoryOpen()) return;
     setInventoryOpen(false);
     room.closeInventory();
+    void requestPointerLock(glCanvas());
   }
 
   function toggleInventory() {
@@ -57,6 +59,18 @@ export default function GameView() {
     const hotbarSlot = Number.parseInt(event.key, 10);
     if (Number.isNaN(hotbarSlot) || hotbarSlot < 1 || hotbarSlot > 9) return;
     room.selectHotbarSlot(hotbarSlot - 1);
+  });
+
+  createEventListener(window, "wheel", (event: WheelEvent) => {
+    const player = room.player();
+    if (!player) return;
+
+    const direction = Math.sign(event.deltaY);
+    if (direction === 0) return;
+
+    event.preventDefault();
+    const nextSlot = mod(player.state.selectedHotbarSlot + direction, HOTBAR_SLOT_COUNT);
+    room.selectHotbarSlot(nextSlot);
   });
 
   onCleanup(() => {
@@ -102,4 +116,22 @@ export default function GameView() {
       </Show>
     </div>
   );
+}
+
+function mod(value: number, base: number) {
+  return ((value % base) + base) % base;
+}
+
+async function requestPointerLock(canvas: HTMLCanvasElement | undefined): Promise<void> {
+  if (!canvas) return;
+
+  const maybePointerLock = canvas.requestPointerLock as (options?: {
+    unadjustedMovement?: boolean;
+  }) => Promise<void> | void;
+
+  try {
+    await maybePointerLock({ unadjustedMovement: true });
+  } catch {
+    canvas.requestPointerLock();
+  }
 }
