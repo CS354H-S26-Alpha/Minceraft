@@ -13,9 +13,9 @@ interface PlayerHudProps {
 const HOTBAR_SLOT_INDICES = Array.from({ length: HOTBAR_SLOT_COUNT }, (_, index) => index);
 const HEART_SLOT_INDICES = Array.from({ length: PLAYER_MAX_HEALTH / 2 }, (_, index) => index);
 
-const fullHeartIcon = new URL("../../assets/icons/full_heart.png", import.meta.url).href;
-const halfHeartIcon = new URL("../../assets/icons/half_heart.png", import.meta.url).href;
-const emptyHeartIcon = new URL("../../assets/icons/empty_heart.png", import.meta.url).href;
+import fullHeartIcon from "@/assets/icons/full_heart.png";
+import halfHeartIcon from "@/assets/icons/half_heart.png";
+import emptyHeartIcon from "@/assets/icons/empty_heart.png";
 
 export function PlayerHud(props: PlayerHudProps) {
   const inventory = createMemo(() => {

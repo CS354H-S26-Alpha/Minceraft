@@ -1,10 +1,8 @@
-import { createEventListener } from "@solid-primitives/event-listener";
 import { createSignal, onCleanup } from "solid-js";
-import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { PlayerHud } from "../components/PlayerHud";
-import { createGame } from "../engine";
+import { createGame, requestPointerLock } from "../engine";
 import { joinWorld } from "../primitives/join-world";
 
 export default function GameView() {
@@ -17,12 +15,18 @@ export default function GameView() {
     glCanvas,
     room,
     inputEnabled: () => !inventoryOpen(),
+    gameplayShortcuts: {
+      inventoryOpen,
+      player: room.player,
+      onToggleInventory: toggleInventory,
+      onCloseInventory: closeInventory,
+      onSelectHotbarSlot: room.selectHotbarSlot,
+    },
   });
 
   function openInventory() {
     if (inventoryOpen()) return;
     setInventoryOpen(true);
-    room.requestState();
     void document.exitPointerLock?.();
   }
 
@@ -40,39 +44,6 @@ export default function GameView() {
       openInventory();
     }
   }
-
-  createEventListener(window, "keydown", (event: KeyboardEvent) => {
-    if (event.repeat) return;
-    const key = event.key.toLowerCase();
-
-    if (key === "e") {
-      event.preventDefault();
-      toggleInventory();
-      return;
-    }
-
-    if (key === "escape" && inventoryOpen()) {
-      event.preventDefault();
-      closeInventory();
-      return;
-    }
-
-    const hotbarSlot = Number.parseInt(event.key, 10);
-    if (Number.isNaN(hotbarSlot) || hotbarSlot < 1 || hotbarSlot > 9) return;
-    room.selectHotbarSlot(hotbarSlot - 1);
-  });
-
-  createEventListener(window, "wheel", (event: WheelEvent) => {
-    const player = room.player();
-    if (!player) return;
-
-    const direction = Math.sign(event.deltaY);
-    if (direction === 0) return;
-
-    event.preventDefault();
-    const nextSlot = mod(player.state.selectedHotbarSlot + direction, HOTBAR_SLOT_COUNT);
-    room.selectHotbarSlot(nextSlot);
-  });
 
   onCleanup(() => {
     if (inventoryOpen()) {
@@ -110,22 +81,4 @@ export default function GameView() {
       />
     </div>
   );
-}
-
-function mod(value: number, base: number) {
-  return ((value % base) + base) % base;
-}
-
-async function requestPointerLock(canvas: HTMLCanvasElement | undefined): Promise<void> {
-  if (!canvas) return;
-
-  const maybePointerLock = canvas.requestPointerLock as (options?: {
-    unadjustedMovement?: boolean;
-  }) => Promise<void> | void;
-
-  try {
-    await maybePointerLock({ unadjustedMovement: true });
-  } catch {
-    canvas.requestPointerLock();
-  }
 }

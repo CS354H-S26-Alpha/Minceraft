@@ -7,7 +7,7 @@ import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
-import { createInput } from "./input";
+import { createInput, type GameplayShortcutsOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 
@@ -18,6 +18,7 @@ export interface CreateGameArgs {
   room: ReturnType<typeof joinWorld>;
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
+  gameplayShortcuts?: GameplayShortcutsOptions;
 }
 
 /** Client-side rendering metrics exposed to the diagnostics panel. */
@@ -114,7 +115,10 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastTick = 0;
   let tickDelta = 0;
 
-  const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+  const input = createInput(args.glCanvas, {
+    onReset: () => ctx?.camera.reset(),
+    gameplayShortcuts: args.gameplayShortcuts,
+  });
   let needsResize = true;
   createResizeObserver(args.glCanvas, () => {
     needsResize = true;
