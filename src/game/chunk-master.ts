@@ -1,4 +1,5 @@
 import { CubeType } from "@/client/engine/render/cube-types";
+import { type PlacedObject, PlacedObjectType } from "@/game/object-placement";
 import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "./chunk";
 
 const CHUNK_RENDER_DISTANCE = 4; // TODO: move into settings
@@ -12,6 +13,14 @@ export class ChunkMaster {
   private cachedPositions = new Float32Array(0);
   private cachedColors = new Float32Array(0);
   private cachedCubeCount = 0;
+  private cachedPlacedObjects: readonly PlacedObject[] = [];
+  private cachedPlacedObjectCounts: Record<PlacedObjectType, number> = {
+    [PlacedObjectType.Grass]: 0,
+    [PlacedObjectType.Shrub]: 0,
+    [PlacedObjectType.Rock]: 0,
+    [PlacedObjectType.Tree]: 0,
+    [PlacedObjectType.EnemySpawn]: 0,
+  };
 
   constructor(spawnX: number, spawnZ: number, seed: number) {
     this.seed = seed;
@@ -64,10 +73,22 @@ export class ChunkMaster {
     let totalPos = 0;
     let totalCol = 0;
     let totalCubes = 0;
+    const placedObjects: PlacedObject[] = [];
+    const placedObjectCounts: Record<PlacedObjectType, number> = {
+      [PlacedObjectType.Grass]: 0,
+      [PlacedObjectType.Shrub]: 0,
+      [PlacedObjectType.Rock]: 0,
+      [PlacedObjectType.Tree]: 0,
+      [PlacedObjectType.EnemySpawn]: 0,
+    };
     for (const chunk of chunks) {
       totalPos += chunk.cubePositions().length;
       totalCol += chunk.cubeColors().length;
       totalCubes += chunk.numCubes();
+      for (const object of chunk.placedObjects()) {
+        placedObjects.push(object);
+        placedObjectCounts[object.type]++;
+      }
     }
 
     const positions = new Float32Array(totalPos);
@@ -86,6 +107,8 @@ export class ChunkMaster {
     this.cachedPositions = positions;
     this.cachedColors = colors;
     this.cachedCubeCount = totalCubes;
+    this.cachedPlacedObjects = placedObjects;
+    this.cachedPlacedObjectCounts = placedObjectCounts;
   }
 
   public getNearCubePositionsFlattened(): Float32Array {
@@ -98,5 +121,17 @@ export class ChunkMaster {
 
   public getNearCubeSize(): number {
     return this.cachedCubeCount;
+  }
+
+  public getNearPlacedObjects(): readonly PlacedObject[] {
+    return this.cachedPlacedObjects;
+  }
+
+  public getNearPlacedObjectCount(): number {
+    return this.cachedPlacedObjects.length;
+  }
+
+  public getNearPlacedObjectCounts(): Readonly<Record<PlacedObjectType, number>> {
+    return this.cachedPlacedObjectCounts;
   }
 }
