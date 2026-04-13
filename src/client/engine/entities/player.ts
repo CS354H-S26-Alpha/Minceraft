@@ -1,10 +1,10 @@
 import type { PlayerState } from "@/game/player";
+import { lerp, lerpAngle } from "@/utils/interpolations";
 import { Quad } from "../render/quad";
 import playerFSText from "../render/shaders/player.frag";
 import playerVSText from "../render/shaders/player.vert";
 import type { EntityPassDef, EntityPipelineConfig, GpuBuffers } from "./pipeline";
 import { ensureBuffer } from "./pipeline";
-import { lerp, lerpAngle } from "./store";
 
 const quad = new Quad();
 

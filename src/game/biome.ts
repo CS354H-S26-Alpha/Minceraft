@@ -1,5 +1,6 @@
 import { CubeType } from "@/client/engine/render/cube-types";
-import { lerp, smoothstepAB, terrainHeight, valueNoise } from "@/lib/noise";
+import { lerp, smoothstepAB } from "@/utils/interpolations";
+import { terrainHeight, valueNoise } from "@/utils/noise";
 
 // A biome noise value in [0,1] maps to one of these regions:
 //   [0, 0.40) → Forest   [0.40, 0.70) → Desert   [0.70, 1] → Mountain
