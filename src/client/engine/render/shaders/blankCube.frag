@@ -5,9 +5,10 @@ uniform vec4 uLightPos;
 varying vec4 normal;
 varying vec4 wsPos;
 varying vec2 uv;
+varying vec3 color;
 
 void main() {
-  vec3 kd = vec3(1.0, 1.0, 1.0);
+  vec3 kd = color;
   vec3 ka = vec3(0.1, 0.1, 0.1);
 
   /* Compute light fall off */

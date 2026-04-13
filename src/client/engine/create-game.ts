@@ -1,7 +1,7 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import { Chunk } from "@/game/chunk";
+import { ChunkMaster } from "@/game/chunk-master";
 import type { Player } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -100,7 +100,7 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  const chunk = new Chunk(0.0, 0.0, 64, TEMP_START_SEED);
+  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED);
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -169,6 +169,9 @@ export function createGame(args: CreateGameArgs): GameState {
     }
     camera.setPosition(player.position);
 
+    // update chunks around player
+    chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
+
     // --- Remote entities ---
     const snap = room().snapshot;
     if (snap.tick !== lastTick) {
@@ -184,8 +187,9 @@ export function createGame(args: CreateGameArgs): GameState {
     renderer.render({
       viewMatrix: camera.viewMatrix(),
       projMatrix: camera.projMatrix(),
-      cubePositions: chunk.cubePositions(),
-      numCubes: chunk.numCubes(),
+      cubePositions: chunkMaster.getNearCubePositionsFlattened(),
+      cubeColors: chunkMaster.getNearCubeColorsFlattened(),
+      numCubes: chunkMaster.getNearCubeSize(),
       lightPosition: LIGHT_POSITION,
       backgroundColor: BACKGROUND_COLOR,
       entities,

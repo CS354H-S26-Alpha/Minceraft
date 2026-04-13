@@ -1,120 +1,143 @@
-/**
- * A square patch of terrain. Generates cube positions procedurally using
- * multi-octave value noise and exposes them as a flat `Float32Array` for the GPU.
- */
+import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
+import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
+
+export const CHUNK_SIZE = 64;
+export const CHUNK_HEIGHT = 128;
+
+export function chunkKey(originX: number, originZ: number): string {
+  return `${originX},${originZ}`;
+}
+
+export function chunkOrigin(wx: number, wz: number): [number, number] {
+  return [
+    Math.floor((wx + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE,
+    Math.floor((wz + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE,
+  ];
+}
+
 export class Chunk {
-  private cubes: number; // Number of cubes that should be *drawn* each frame
-  private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
+  // types where we store the actual block data
+  public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
+  public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
+
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
   private seed: number; // Seed for terrain generation
 
-  constructor(centerX: number, centerY: number, size: number, seed?: number) {
+  // types to update for Rendering
+  private cubes: number = 0;
+  private cubePositionsF32: Float32Array = new Float32Array(0);
+  private cubeColorsF32: Float32Array = new Float32Array(0);
+
+  constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
     this.y = centerY;
     this.size = size;
-    this.cubes = size * size;
-    this.seed = seed !== undefined ? seed : Math.floor(Math.random() * 1000000);
-    console.log("Chunk seed:", this.seed);
+    this.seed = seed;
+
+    this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
+    this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+
     this.generateCubes();
+    this.renderChunk(); // render on creation, might not be necessary
   }
 
-  // Hash function: maps integer coordinates (x, z) to a pseudorandom value in [0, 1]
-  private hash2D(x: number, z: number): number {
-    let hash = this.seed;
-    hash = (hash ^ (x * 374761393)) & 0x7fffffff;
-    hash = (hash ^ (z * 668265263)) & 0x7fffffff;
-    hash = (hash * 1274126177) & 0x7fffffff;
-    return hash / 0x7fffffff; // Normalize to [0, 1]
+  public getBlock(lx: number, ly: number, lz: number): CubeType {
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_HEIGHT) return CubeType.Air;
+    return this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] as CubeType;
   }
 
-  // Smooth interpolation function (smoothstep)
-  private smoothstep(t: number): number {
-    return t * t * (3 - 2 * t);
+  private setBlock(lx: number, ly: number, lz: number, type: CubeType): void {
+    this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = type;
   }
 
-  // Bilinear interpolation with smoothstep
-  private bilerp(v00: number, v10: number, v01: number, v11: number, tx: number, tz: number): number {
-    const sx = this.smoothstep(tx);
-    const sz = this.smoothstep(tz);
-    const v0 = v00 * (1 - sx) + v10 * sx;
-    const v1 = v01 * (1 - sx) + v11 * sx;
-    return v0 * (1 - sz) + v1 * sz;
-  }
-
-  // Value noise [0, 1] at a given frequency
-  private valueNoise(x: number, z: number, frequency: number): number {
-    // Scale coordinates by frequency
-    const sx = x * frequency;
-    const sz = z * frequency;
-
-    // Get integer lattice coordinates
-    const x0 = Math.floor(sx);
-    const z0 = Math.floor(sz);
-    const x1 = x0 + 1;
-    const z1 = z0 + 1;
-
-    // Get fractional part for interpolation
-    const tx = sx - x0;
-    const tz = sz - z0;
-
-    // Get random values at lattice points
-    const v00 = this.hash2D(x0, z0);
-    const v10 = this.hash2D(x1, z0);
-    const v01 = this.hash2D(x0, z1);
-    const v11 = this.hash2D(x1, z1);
-
-    // Bilinear interpolation
-    return this.bilerp(v00, v10, v01, v11, tx, tz);
-  }
-
-  // Multi-octave terrain: 3 octaves with different grid sizes, upsampled & combined
-  private terrainHeight(x: number, z: number): number {
-    // Octave 1: 4x4 grid upsampled (large mountains/valleys)
-    const octave1 = this.valueNoise(x, z, 1.0 / 16.0);
-
-    // Octave 2: 8x8 grid upsampled (medium hills)
-    const octave2 = this.valueNoise(x, z, 1.0 / 8.0);
-
-    // Octave 3: 16x16 grid upsampled (local detail)
-    const octave3 = this.valueNoise(x, z, 1.0 / 4.0);
-
-    // Combine with decreasing weights (50 + 25 + 12.5 = 87.5 max)
-    const height = octave1 * 50 + octave2 * 25 + octave3 * 12.5;
-
-    // Scale to [0, 100]
-    return Math.floor((height / 87.5) * 100);
-  }
-
-  private generateCubes() {
+  // calculate block types for every position in the chunk
+  private generateCubes(): void {
     const topleftx = this.x - this.size / 2;
     const toplefty = this.y - this.size / 2;
 
-    this.cubes = this.size * this.size;
-    this.cubePositionsF32 = new Float32Array(4 * this.cubes);
-
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        // Use global coordinates for seamless chunks
         const globalX = topleftx + j;
         const globalZ = toplefty + i;
 
-        // Get height using 3 octaves [0, 100]
-        const height = this.terrainHeight(globalX, globalZ);
+        const { biome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
+        const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
-        const idx = this.size * i + j;
-        this.cubePositionsF32[4 * idx + 0] = globalX;
-        this.cubePositionsF32[4 * idx + 1] = height;
-        this.cubePositionsF32[4 * idx + 2] = globalZ;
-        this.cubePositionsF32[4 * idx + 3] = 0;
+        this.heightMap[this.size * i + j] = height;
+
+        // TODO replace by perlin noise for block variation and features
+        this.setBlock(j, 0, i, CubeType.Bedrock);
+        for (let y = 1; y < height - 3; y++) {
+          this.setBlock(j, y, i, CubeType.Stone);
+        }
+        for (let y = Math.max(1, height - 3); y < height; y++) {
+          this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface);
+        }
+        this.setBlock(j, height, i, surfaceBlock(biome, height));
       }
     }
+  }
+
+  private touchesAir(lx: number, ly: number, lz: number): boolean {
+    return (
+      this.getBlock(lx + 1, ly, lz) === CubeType.Air ||
+      this.getBlock(lx - 1, ly, lz) === CubeType.Air ||
+      this.getBlock(lx, ly + 1, lz) === CubeType.Air ||
+      this.getBlock(lx, ly - 1, lz) === CubeType.Air ||
+      this.getBlock(lx, ly, lz + 1) === CubeType.Air ||
+      this.getBlock(lx, ly, lz - 1) === CubeType.Air
+    );
+  }
+
+  // basic rendering for blocks touching air
+  public renderChunk(): void {
+    const topleftx = this.x - this.size / 2;
+    const toplefty = this.y - this.size / 2;
+
+    const maxCubes = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
+    const positions = new Float32Array(4 * maxCubes);
+    const colors = new Float32Array(3 * maxCubes);
+    let count = 0;
+
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const surfaceY = this.heightMap[this.size * i + j] as number;
+
+        for (let y = 0; y <= surfaceY; y++) {
+          const blockType = this.getBlock(j, y, i);
+
+          // if it is air or next to air, it should be rendered
+          if (blockType === CubeType.Air || !this.touchesAir(j, y, i)) continue;
+
+          positions[4 * count + 0] = topleftx + j;
+          positions[4 * count + 1] = y;
+          positions[4 * count + 2] = toplefty + i;
+          positions[4 * count + 3] = 0;
+
+          const color = CUBE_TYPE_INFO[blockType].baseColor;
+          colors[3 * count + 0] = color[0];
+          colors[3 * count + 1] = color[1];
+          colors[3 * count + 2] = color[2];
+
+          count++;
+        }
+      }
+    }
+
+    this.cubes = count;
+    this.cubePositionsF32 = positions.subarray(0, 4 * count) as Float32Array;
+    this.cubeColorsF32 = colors.subarray(0, 3 * count) as Float32Array;
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
+  }
+
+  public cubeColors(): Float32Array {
+    return this.cubeColorsF32;
   }
 
   /** Returns the number of cubes to render this frame. */

@@ -1,16 +1,6 @@
 /** Server tick interval — used as the default interpolation period. */
 const SERVER_TICK_MS = 50;
 
-export function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-export function lerpAngle(a: number, b: number, t: number): number {
-  let delta = b - a;
-  delta -= Math.round(delta / (2 * Math.PI)) * (2 * Math.PI);
-  return a + delta * t;
-}
-
 interface TrackedEntity<S> {
   prev: S;
   curr: S;
