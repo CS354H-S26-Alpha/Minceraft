@@ -3,6 +3,7 @@ import { createSignal, onCleanup } from "solid-js";
 import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
+import { PlayerHud } from "../components/PlayerHud";
 import { createGame } from "../engine";
 import { joinWorld } from "../primitives/join-world";
 
@@ -82,14 +83,18 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
+      <PlayerHud
+        hidden={inventoryOpen()}
+        onSelectHotbarSlot={room.selectHotbarSlot}
+        player={room.player}
+        playerVersion={room.selfStateVersion}
+      />
       <InventoryPanel
         player={room.player}
         playerVersion={room.selfStateVersion}
         inventoryUi={room.inventoryUi}
         open={inventoryOpen()}
-        onClose={closeInventory}
         onClickSlot={room.clickInventory}
-        onSelectHotbarSlot={room.selectHotbarSlot}
       />
       <DiagnosticsPanel
         playerName={room.player()?.state.name ?? ""}
