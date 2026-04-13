@@ -60,8 +60,6 @@ export class Chunk {
     this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = type;
   }
 
-  private static readonly WATER_LEVEL = 50;
-
   // Ore definitions: [cubeType, seedOffset, frequency, threshold, minY, maxY]
   private static readonly ORES: [CubeType, number, number, number, number, number][] = [
     [CubeType.CoalOre, 300, 1 / 8, 0.55, 5, 80],
@@ -97,19 +95,23 @@ export class Chunk {
       }
     }
 
-    // --- Pass 2: Cave carving (two-noise product for natural shapes) ---
+    // --- Pass 2: Spaghetti cave carving (tunnel-like, follows noise zero-crossings) ---
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
         const surfaceY = this.heightMap[this.size * i + j] as number;
 
-        for (let y = 1; y < surfaceY - 1; y++) {
+        for (let y = 1; y <= surfaceY; y++) {
           if (this.getBlock(j, y, i) === CubeType.Air) continue;
 
-          const cave1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 16);
-          const cave2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 16);
-          if (cave1 * cave2 > 0.02) {
+          // Fade threshold near surface: full width deep underground, tight near surface
+          const depthBelow = surfaceY - y;
+          const threshold = depthBelow < 2 ? 0.04 : 0.12;
+
+          const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 32);
+          const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 32);
+          if (Math.abs(n1) < threshold && Math.abs(n2) < threshold) {
             this.setBlock(j, y, i, CubeType.Air);
           }
         }
@@ -131,21 +133,6 @@ export class Chunk {
               this.setBlock(j, y, i, oreType);
               break;
             }
-          }
-        }
-      }
-    }
-
-    // --- Pass 4: Water and lava lakes ---
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        for (let y = 1; y <= Chunk.WATER_LEVEL; y++) {
-          if (this.getBlock(j, y, i) !== CubeType.Air) continue;
-
-          if (y <= 10) {
-            this.setBlock(j, y, i, CubeType.Lava);
-          } else {
-            this.setBlock(j, y, i, CubeType.Water);
           }
         }
       }
