@@ -56,11 +56,43 @@ export class ChunkMaster {
   }
 
   public getNearCubePositionsFlattened(): Float32Array {
-    return new Float32Array(this.nearChunks.flatMap((chunk) => Array.from(chunk.cubePositions())));
+    const chunks = this.nearChunks;
+
+    let totalLen = 0;
+    for (const chunk of chunks) {
+      totalLen += chunk.cubePositions().length;
+    }
+
+    const result = new Float32Array(totalLen);
+
+    let offset = 0;
+    for (const chunk of chunks) {
+      const pos = chunk.cubePositions();
+      result.set(pos, offset);
+      offset += pos.length;
+    }
+
+    return result;
   }
 
   public getNearCubeColorsFlattened(): Float32Array {
-    return new Float32Array(this.nearChunks.flatMap((chunk) => Array.from(chunk.cubeColors())));
+    const chunks = this.nearChunks;
+
+    let totalLen = 0;
+    for (const chunk of chunks) {
+      totalLen += chunk.cubeColors().length;
+    }
+
+    const result = new Float32Array(totalLen);
+
+    let offset = 0;
+    for (const chunk of chunks) {
+      const col = chunk.cubeColors();
+      result.set(col, offset);
+      offset += col.length;
+    }
+
+    return result;
   }
 
   public getNearCubeSize(): number {
