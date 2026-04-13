@@ -1,5 +1,7 @@
 import { CubeType } from "@/client/engine/render/cube-types";
 import { Biome } from "@/game/biome";
+import { lerp } from "@/utils/interpolations";
+import { hash2D, valueNoise } from "@/utils/noise";
 
 /**
  * Terrain-owned placement metadata for non-cube world objects.
@@ -70,6 +72,14 @@ export interface ObjectPlacementRule {
   tags: readonly string[];
 }
 
+export interface GeneratePlacedObjectsArgs {
+  seed: number;
+  chunkOriginX: number;
+  chunkOriginZ: number;
+  chunkSize: number;
+  sampleAt(localX: number, localZ: number): ObjectPlacementSample;
+}
+
 export const PLACED_OBJECT_TYPES = [
   PlacedObjectType.Grass,
   PlacedObjectType.Shrub,
@@ -77,6 +87,22 @@ export const PLACED_OBJECT_TYPES = [
   PlacedObjectType.Tree,
   PlacedObjectType.EnemySpawn,
 ] as const;
+
+const OBJECT_PLACEMENT_GENERATION_ORDER = [
+  PlacedObjectType.Tree,
+  PlacedObjectType.Rock,
+  PlacedObjectType.Shrub,
+  PlacedObjectType.Grass,
+  PlacedObjectType.EnemySpawn,
+] as const;
+
+const OBJECT_PLACEMENT_SEED_OFFSETS = {
+  [PlacedObjectType.Grass]: 1_001,
+  [PlacedObjectType.Shrub]: 2_003,
+  [PlacedObjectType.Rock]: 3_007,
+  [PlacedObjectType.Tree]: 4_009,
+  [PlacedObjectType.EnemySpawn]: 5_011,
+} satisfies Record<PlacedObjectType, number>;
 
 export const OBJECT_PLACEMENT_RULES = {
   [PlacedObjectType.Grass]: {
@@ -173,4 +199,89 @@ export function supportsObjectPlacement(rule: ObjectPlacementRule, sample: Objec
   if (rule.requiresDrySurface && sample.isSubmerged) return false;
   if (sample.distanceToChunkEdge < rule.edgePadding) return false;
   return computeLocalRelief(sample) <= rule.maxLocalRelief;
+}
+
+function placementNoise(rule: ObjectPlacementRule, seed: number, x: number, z: number): number {
+  return valueNoise(seed + OBJECT_PLACEMENT_SEED_OFFSETS[rule.type], x, z, rule.noiseFrequency);
+}
+
+function placementJitter(seed: number, type: PlacedObjectType, x: number, z: number): { dx: number; dz: number } {
+  const seedBase = seed + OBJECT_PLACEMENT_SEED_OFFSETS[type];
+  return {
+    dx: lerp(-0.3, 0.3, hash2D(seedBase + 17, x, z)),
+    dz: lerp(-0.3, 0.3, hash2D(seedBase + 31, x, z)),
+  };
+}
+
+function placementRotation(seed: number, type: PlacedObjectType, x: number, z: number): number {
+  return hash2D(seed + OBJECT_PLACEMENT_SEED_OFFSETS[type] + 53, x, z) * 2 * Math.PI;
+}
+
+function placementScale(seed: number, type: PlacedObjectType, x: number, z: number): number {
+  const raw = hash2D(seed + OBJECT_PLACEMENT_SEED_OFFSETS[type] + 79, x, z);
+  switch (type) {
+    case PlacedObjectType.Tree:
+      return lerp(0.95, 1.25, raw);
+    case PlacedObjectType.Rock:
+      return lerp(0.8, 1.2, raw);
+    case PlacedObjectType.EnemySpawn:
+      return 1;
+    default:
+      return lerp(0.85, 1.1, raw);
+  }
+}
+
+function violatesSpacing(rule: ObjectPlacementRule, objects: readonly PlacedObject[], x: number, z: number): boolean {
+  const minSpacingSq = rule.minSpacing * rule.minSpacing;
+  return objects.some((object) => {
+    if (object.type !== rule.type) return false;
+    const dx = object.x - x;
+    const dz = object.z - z;
+    return dx * dx + dz * dz < minSpacingSq;
+  });
+}
+
+export function generatePlacedObjectsForChunk(args: GeneratePlacedObjectsArgs): PlacedObject[] {
+  const objects: PlacedObject[] = [];
+  const occupiedColumns = new Set<string>();
+
+  for (const type of OBJECT_PLACEMENT_GENERATION_ORDER) {
+    const rule = OBJECT_PLACEMENT_RULES[type];
+
+    for (let localZ = 0; localZ < args.chunkSize; localZ++) {
+      for (let localX = 0; localX < args.chunkSize; localX++) {
+        const sample = args.sampleAt(localX, localZ);
+        if (!supportsObjectPlacement(rule, sample)) continue;
+
+        const worldX = args.chunkOriginX + localX;
+        const worldZ = args.chunkOriginZ + localZ;
+        if (placementNoise(rule, args.seed, worldX, worldZ) < rule.spawnThreshold) continue;
+
+        const columnKey = `${localX},${localZ}`;
+        if (occupiedColumns.has(columnKey)) continue;
+
+        const jitter = placementJitter(args.seed, type, worldX, worldZ);
+        const placedX = worldX + 0.5 + jitter.dx;
+        const placedZ = worldZ + 0.5 + jitter.dz;
+        if (violatesSpacing(rule, objects, placedX, placedZ)) continue;
+
+        objects.push({
+          type,
+          category: rule.category,
+          x: placedX,
+          y: sample.surfaceY + 1,
+          z: placedZ,
+          rotationY: placementRotation(args.seed, type, worldX, worldZ),
+          scale: placementScale(args.seed, type, worldX, worldZ),
+          biome: sample.biome,
+          chunkOriginX: args.chunkOriginX,
+          chunkOriginZ: args.chunkOriginZ,
+          tags: rule.tags,
+        });
+        occupiedColumns.add(columnKey);
+      }
+    }
+  }
+
+  return objects;
 }

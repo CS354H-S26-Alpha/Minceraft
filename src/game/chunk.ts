@@ -1,6 +1,7 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
+import { generatePlacedObjectsForChunk, type PlacedObject } from "@/game/object-placement";
 
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
@@ -20,11 +21,13 @@ export class Chunk {
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
   public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
+  public biomeMap: Uint8Array; // biome per (i,j) column x z // z*S + x
 
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
   private seed: number; // Seed for terrain generation
+  private placedObjectsData: PlacedObject[] = [];
 
   // types to update for Rendering
   private cubes: number = 0;
@@ -39,6 +42,7 @@ export class Chunk {
 
     this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+    this.biomeMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
     this.renderChunk(); // render on creation, might not be necessary
@@ -74,6 +78,7 @@ export class Chunk {
         const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
+        this.biomeMap[this.size * i + j] = biome;
 
         // TODO replace by perlin noise for block variation and features
         this.setBlock(j, 0, i, CubeType.Bedrock);
@@ -86,6 +91,34 @@ export class Chunk {
         this.setBlock(j, height, i, surfaceBlock(biome, height));
       }
     }
+
+    this.placedObjectsData = generatePlacedObjectsForChunk({
+      seed: this.seed,
+      chunkOriginX: topleftx,
+      chunkOriginZ: toplefty,
+      chunkSize: this.size,
+      sampleAt: (localX, localZ) => {
+        const idx = localZ * this.size + localX;
+        const surfaceY = this.heightMap[idx] as number;
+        const center = surfaceY;
+        const north = localZ > 0 ? (this.heightMap[(localZ - 1) * this.size + localX] as number) : center;
+        const south = localZ + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX] as number) : center;
+        const east = localX + 1 < this.size ? (this.heightMap[localZ * this.size + localX + 1] as number) : center;
+        const west = localX > 0 ? (this.heightMap[localZ * this.size + localX - 1] as number) : center;
+
+        return {
+          biome: this.biomeMap[idx] as number,
+          surfaceY,
+          surfaceBlock: this.getBlock(localX, surfaceY, localZ),
+          northY: north,
+          southY: south,
+          eastY: east,
+          westY: west,
+          isSubmerged: false,
+          distanceToChunkEdge: Math.min(localX, localZ, this.size - 1 - localX, this.size - 1 - localZ),
+        };
+      },
+    });
   }
 
   // worldGet: optional cross-chunk block lookup for accurate edge culling.
@@ -211,6 +244,10 @@ export class Chunk {
 
   public cubeColors(): Float32Array {
     return this.cubeColorsF32;
+  }
+
+  public placedObjects(): readonly PlacedObject[] {
+    return this.placedObjectsData;
   }
 
   /** Returns the number of cubes to render this frame. */
