@@ -109,8 +109,8 @@ export class Chunk {
           const depthBelow = surfaceY - y;
           const threshold = depthBelow < 2 ? 0.04 : 0.12;
 
-          const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 32);
-          const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 32);
+          const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 64);
+          const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 64);
           if (Math.abs(n1) < threshold && Math.abs(n2) < threshold) {
             this.setBlock(j, y, i, CubeType.Air);
           }
