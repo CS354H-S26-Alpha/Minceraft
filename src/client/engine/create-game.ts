@@ -1,7 +1,7 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import { Chunk } from "@/game/chunk";
+import { ChunkMaster } from "@/game/chunk-master";
 import type { Player } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -10,7 +10,6 @@ import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelin
 import { createInput } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
-import { ChunkMaster } from "@/game/chunk-master";
 
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */

@@ -149,14 +149,15 @@ export class Renderer {
       undefined,
       new Float32Array(0),
     );
-    pass.addInstancedAttribute("aColor",
+    pass.addInstancedAttribute(
+      "aColor",
       3,
       this.ctx.FLOAT,
       false,
       3 * Float32Array.BYTES_PER_ELEMENT,
       0,
       undefined,
-      new Float32Array(0)
+      new Float32Array(0),
     );
 
     this.addSharedUniforms(pass);

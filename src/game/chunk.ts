@@ -8,10 +8,10 @@ export function chunkKey(originX: number, originZ: number): string {
 }
 
 export function chunkOrigin(wx: number, wz: number): [number, number] {
-    return [
-        Math.floor((wx + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE ,
-        Math.floor((wz + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE ,
-    ];
+  return [
+    Math.floor((wx + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE,
+    Math.floor((wz + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE,
+  ];
 }
 
 /**
@@ -58,8 +58,8 @@ export class Chunk {
         this.cubePositionsF32[4 * idx + 1] = height;
         this.cubePositionsF32[4 * idx + 2] = globalZ;
         this.cubePositionsF32[4 * idx + 3] = 0;
-        
-          // edge cubes are black for debugging chunk boundaries
+
+        // edge cubes are black for debugging chunk boundaries
         let type: CubeType = height < 50 ? CubeType.White : CubeType.Grass;
         if (i === 0 || j === 0 || i === this.size - 1 || j === this.size - 1) {
           type = CubeType.Black;
@@ -76,9 +76,9 @@ export class Chunk {
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
   }
-  
+
   public cubeColors(): Float32Array {
-      return this.cubeColorsF32;
+    return this.cubeColorsF32;
   }
 
   /** Returns the number of cubes to render this frame. */
