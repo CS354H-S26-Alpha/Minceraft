@@ -48,6 +48,13 @@ export class Chunk {
     return this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] as CubeType;
   }
 
+  /** Look up a block by world-space coordinates. Returns Air if outside this chunk. */
+  public getBlockWorld(wx: number, wy: number, wz: number): CubeType {
+    const lx = wx - (this.x - this.size / 2);
+    const lz = wz - (this.y - this.size / 2);
+    return this.getBlock(lx, wy, lz);
+  }
+
   private setBlock(lx: number, ly: number, lz: number, type: CubeType): void {
     this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = type;
   }
@@ -80,21 +87,30 @@ export class Chunk {
     }
   }
 
-  private touchesAir(lx: number, ly: number, lz: number): boolean {
-    return (
-      this.getBlock(lx + 1, ly, lz) === CubeType.Air ||
-      this.getBlock(lx - 1, ly, lz) === CubeType.Air ||
-      this.getBlock(lx, ly + 1, lz) === CubeType.Air ||
-      this.getBlock(lx, ly - 1, lz) === CubeType.Air ||
-      this.getBlock(lx, ly, lz + 1) === CubeType.Air ||
-      this.getBlock(lx, ly, lz - 1) === CubeType.Air
-    );
-  }
-
   // basic rendering for blocks touching air
-  public renderChunk(): void {
+  // worldGet: optional cross-chunk block lookup for accurate edge culling.
+  // Without it, chunk-boundary faces are always treated as exposed (safe but over-renders).
+  public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
     const topleftx = this.x - this.size / 2;
     const toplefty = this.y - this.size / 2;
+
+    const isAir = (nlx: number, nly: number, nlz: number): boolean => {
+      if (nlx >= 0 && nlx < this.size && nlz >= 0 && nlz < this.size) {
+        return this.getBlock(nlx, nly, nlz) === CubeType.Air;
+      }
+      if (worldGet) {
+        return worldGet(topleftx + nlx, nly, toplefty + nlz) === CubeType.Air;
+      }
+      return true; // no neighbor data — treat edge as exposed
+    };
+
+    const touchesAir = (lx: number, ly: number, lz: number): boolean =>
+      isAir(lx + 1, ly, lz) ||
+      isAir(lx - 1, ly, lz) ||
+      isAir(lx, ly + 1, lz) ||
+      isAir(lx, ly - 1, lz) ||
+      isAir(lx, ly, lz + 1) ||
+      isAir(lx, ly, lz - 1);
 
     const maxCubes = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
     const positions = new Float32Array(4 * maxCubes);
@@ -109,7 +125,7 @@ export class Chunk {
           const blockType = this.getBlock(j, y, i);
 
           // if it is air or next to air, it should be rendered
-          if (blockType === CubeType.Air || !this.touchesAir(j, y, i)) continue;
+          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
 
           positions[4 * count + 0] = topleftx + j;
           positions[4 * count + 1] = y;
