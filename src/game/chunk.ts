@@ -102,16 +102,15 @@ export class Chunk {
         const gz = topleftz + i;
         const surfaceY = this.heightMap[this.size * i + j] as number;
 
-        for (let y = 1; y <= surfaceY; y++) {
+        for (let y = 1; y <= surfaceY - 2; y++) {
           if (this.getBlock(j, y, i) === CubeType.Air) continue;
 
-          // Fade threshold near surface: full width deep underground, tight near surface
-          const depthBelow = surfaceY - y;
-          const threshold = depthBelow < 2 ? 0.04 : 0.12;
+          const threshold = 0.12;
 
           const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 64);
+          if (Math.abs(n1) >= threshold) continue;
           const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 64);
-          if (Math.abs(n1) < threshold && Math.abs(n2) < threshold) {
+          if (Math.abs(n2) < threshold) {
             this.setBlock(j, y, i, CubeType.Air);
           }
         }
