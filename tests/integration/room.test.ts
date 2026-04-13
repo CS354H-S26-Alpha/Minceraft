@@ -59,6 +59,8 @@ describe("GameRoom Durable Object", () => {
     expect(snap?.self?.x).toBeCloseTo(0);
     expect(snap?.self?.y).toBeCloseTo(70);
     expect(snap?.self?.z).toBeCloseTo(20);
+    expect(snap?.self?.inventory).toHaveLength(36);
+    expect(snap?.inventoryUi?.craftingGrid).toHaveLength(4);
   });
 
   it("applies buffered input on the next tick and broadcasts to listeners", async () => {
@@ -191,6 +193,55 @@ describe("GameRoom Durable Object", () => {
       await room.runTick();
       expect(received.length).toBe(beforeCount);
     });
+  });
+
+  it("keeps inventories private to each player's personalized snapshot", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceSnaps: RoomSnapshot[] = [];
+    const bobSnaps: RoomSnapshot[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (snap) => aliceSnaps.push(snap));
+      room.join("bob", "Bob", (snap) => bobSnaps.push(snap));
+      await room.runTick();
+    });
+
+    const aliceLatest = aliceSnaps[aliceSnaps.length - 1];
+    const bobLatest = bobSnaps[bobSnaps.length - 1];
+
+    expect(aliceLatest?.self?.inventory).toHaveLength(36);
+    expect("inventory" in (bobLatest?.players.alice ?? {})).toBe(false);
+    expect("inventory" in (aliceLatest?.players.bob ?? {})).toBe(false);
+  });
+
+  it("crafts through the personal 2x2 grid and returns temporary items on close", async () => {
+    const stub = makeRoomStub(roomName);
+    const received: RoomSnapshot[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (snap) => received.push(snap));
+      await room.runTick();
+
+      room.clickInventory("alice", { container: "inventory", index: 27 });
+      room.clickInventory("alice", { container: "crafting", index: 0 });
+      await room.runTick();
+
+      room.clickInventory("alice", { container: "result" });
+      await room.runTick();
+
+      room.closeInventory("alice");
+      await room.runTick();
+    });
+
+    const craftingSnap = received.findLast((snap) => snap.inventoryUi?.result?.itemId === "wood_plank");
+    const latest = received[received.length - 1];
+
+    expect(craftingSnap?.inventoryUi?.result).toEqual({ itemId: "wood_plank", quantity: 4 });
+    expect(latest?.inventoryUi?.craftingGrid.every((slot) => slot === null)).toBe(true);
+    expect(latest?.inventoryUi?.cursor).toBeNull();
+    expect(latest?.self?.inventory[0]).toEqual({ itemId: "wood", quantity: 19 });
+    expect(latest?.self?.inventory[27]).toBeNull();
+    expect(latest?.self?.inventory[28]).toEqual({ itemId: "wood_plank", quantity: 20 });
   });
 });
 
