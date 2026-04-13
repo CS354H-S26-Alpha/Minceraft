@@ -1,11 +1,6 @@
 import { createMemo, For, Show } from "solid-js";
 import { ITEM_DEFINITIONS_BY_ID } from "@/game/items";
-import {
-  HOTBAR_SLOT_COUNT,
-  HOTBAR_START_INDEX,
-  PLAYER_MAX_HEALTH,
-  type Player,
-} from "@/game/player";
+import { HOTBAR_SLOT_COUNT, HOTBAR_START_INDEX, PLAYER_MAX_HEALTH, type Player } from "@/game/player";
 import { InventorySlotButton } from "./InventorySlot";
 
 interface PlayerHudProps {
