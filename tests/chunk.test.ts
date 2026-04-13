@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { Chunk } from "../src/game/chunk";
+import { Chunk, CHUNK_HEIGHT } from "../src/game/chunk";
+import { CubeType } from "../src/client/engine/render/cube-types";
 
 describe("Chunk", () => {
-  it("generates the correct number of cubes", () => {
-    const chunk = new Chunk(0, 0, 8);
-    expect(chunk.numCubes()).toBe(64);
+  it("generates a positive number of cubes", () => {
+    const chunk = new Chunk(0, 0, 8, 123);
+    expect(chunk.numCubes()).toBeGreaterThan(0);
   });
 
   it("returns a Float32Array of positions with length 4 * numCubes", () => {
     const size = 4;
-    const chunk = new Chunk(0, 0, size);
+    const chunk = new Chunk(0, 0, size, 123);
     const positions = chunk.cubePositions();
     expect(positions).toBeInstanceOf(Float32Array);
-    expect(positions.length).toBe(4 * size * size);
+    expect(positions.length).toBe(4 * chunk.numCubes());
   });
 
   it("produces deterministic output from seeded RNG", () => {
@@ -64,5 +65,38 @@ describe("Chunk", () => {
     expect(minHeight).toBeGreaterThanOrEqual(0);
     expect(maxHeight).toBeLessThanOrEqual(100);
     expect(maxHeight - minHeight).toBeGreaterThan(20);
+  });
+
+  it("preserves bedrock at Y=0", () => {
+    const size = 16;
+    const chunk = new Chunk(0, 0, size, 42);
+    for (let z = 0; z < size; z++) {
+      for (let x = 0; x < size; x++) {
+        expect(chunk.getBlock(x, 0, z)).toBe(CubeType.Bedrock);
+      }
+    }
+  });
+
+  it("does not carve caves through the surface", () => {
+    const size = 16;
+    const chunk = new Chunk(0, 0, size, 42);
+    for (let z = 0; z < size; z++) {
+      for (let x = 0; x < size; x++) {
+        const surfaceY = chunk.heightMap[z * size + x] as number;
+        expect(chunk.getBlock(x, surfaceY, z)).not.toBe(CubeType.Air);
+      }
+    }
+  });
+
+  it("places diamond ore only at Y <= 16", () => {
+    const size = 32;
+    const chunk = new Chunk(0, 0, size, 777);
+    for (let z = 0; z < size; z++) {
+      for (let x = 0; x < size; x++) {
+        for (let y = 17; y < CHUNK_HEIGHT; y++) {
+          expect(chunk.getBlock(x, y, z)).not.toBe(CubeType.DiamondOre);
+        }
+      }
+    }
   });
 });

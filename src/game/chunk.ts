@@ -1,5 +1,6 @@
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
+import { perlin3D } from "@/utils/noise";
 
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
@@ -59,22 +60,32 @@ export class Chunk {
     this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = type;
   }
 
+  private static readonly WATER_LEVEL = 50;
+
+  // Ore definitions: [cubeType, seedOffset, frequency, threshold, minY, maxY]
+  private static readonly ORES: [CubeType, number, number, number, number, number][] = [
+    [CubeType.CoalOre, 300, 1 / 8, 0.55, 5, 80],
+    [CubeType.IronOre, 400, 1 / 10, 0.6, 5, 60],
+    [CubeType.GoldOre, 500, 1 / 12, 0.65, 5, 32],
+    [CubeType.DiamondOre, 600, 1 / 14, 0.7, 1, 16],
+  ];
+
   // calculate block types for every position in the chunk
   private generateCubes(): void {
     const topleftx = this.x - this.size / 2;
-    const toplefty = this.y - this.size / 2;
+    const topleftz = this.y - this.size / 2;
 
+    // --- Pass 1: Base terrain fill ---
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const globalX = topleftx + j;
-        const globalZ = toplefty + i;
+        const globalZ = topleftz + i;
 
         const { biome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
         const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
 
-        // TODO replace by perlin noise for block variation and features
         this.setBlock(j, 0, i, CubeType.Bedrock);
         for (let y = 1; y < height - 3; y++) {
           this.setBlock(j, y, i, CubeType.Stone);
@@ -83,6 +94,60 @@ export class Chunk {
           this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface);
         }
         this.setBlock(j, height, i, surfaceBlock(biome, height));
+      }
+    }
+
+    // --- Pass 2: Cave carving (two-noise product for natural shapes) ---
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const gx = topleftx + j;
+        const gz = topleftz + i;
+        const surfaceY = this.heightMap[this.size * i + j] as number;
+
+        for (let y = 1; y < surfaceY - 1; y++) {
+          if (this.getBlock(j, y, i) === CubeType.Air) continue;
+
+          const cave1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 16);
+          const cave2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 16);
+          if (cave1 * cave2 > 0.02) {
+            this.setBlock(j, y, i, CubeType.Air);
+          }
+        }
+      }
+    }
+
+    // --- Pass 3: Ore placement (only in Stone blocks within depth ranges) ---
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const gx = topleftx + j;
+        const gz = topleftz + i;
+
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+          if (this.getBlock(j, y, i) !== CubeType.Stone) continue;
+
+          for (const [oreType, seedOff, freq, threshold, minY, maxY] of Chunk.ORES) {
+            if (y < minY || y > maxY) continue;
+            if (perlin3D(this.seed + seedOff, gx, y, gz, freq) > threshold) {
+              this.setBlock(j, y, i, oreType);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // --- Pass 4: Water and lava lakes ---
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        for (let y = 1; y <= Chunk.WATER_LEVEL; y++) {
+          if (this.getBlock(j, y, i) !== CubeType.Air) continue;
+
+          if (y <= 10) {
+            this.setBlock(j, y, i, CubeType.Lava);
+          } else {
+            this.setBlock(j, y, i, CubeType.Water);
+          }
+        }
       }
     }
   }
