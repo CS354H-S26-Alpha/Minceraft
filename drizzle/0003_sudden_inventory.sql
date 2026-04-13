@@ -1,0 +1,2 @@
+ALTER TABLE `players` ADD `inventory` text DEFAULT '[{"itemId":"wood","quantity":12},{"itemId":"dirt","quantity":64},null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,{"itemId":"wood","quantity":8},{"itemId":"wood_plank","quantity":16},{"itemId":"stick","quantity":6},{"itemId":"dirt","quantity":32},null,null,null,null,null]' NOT NULL;--> statement-breakpoint
+ALTER TABLE `players` ADD `selected_hotbar_slot` integer DEFAULT 0 NOT NULL;

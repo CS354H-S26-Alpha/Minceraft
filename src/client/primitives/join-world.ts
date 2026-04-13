@@ -2,7 +2,8 @@ import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
-import { Player } from "@/game/player";
+import { createInventoryUiState, type InventoryClickTarget } from "@/game/crafting";
+import { Player, type PlayerInput } from "@/game/player";
 import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
 /**
@@ -16,6 +17,7 @@ export function joinWorld(roomId: string) {
   const { credentials, join } = useSession();
   const { playerId } = credentials;
   const [player, setPlayer] = createSignal<Player>();
+  const [selfStateVersion, setSelfStateVersion] = createSignal(0);
   const replicated = createMemo(() => {
     const p = player();
     return p ? new LocalPrediction(p) : undefined;
@@ -27,6 +29,7 @@ export function joinWorld(roomId: string) {
     acks: {},
     tickTimeMs: 0,
   });
+  const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
@@ -37,6 +40,9 @@ export function joinWorld(roomId: string) {
     batch(() => {
       setSnapCount((c) => c + 1);
       setSnapshot(reconcile(snap));
+      if (snap.inventoryUi) {
+        setInventoryUi(reconcile(snap.inventoryUi));
+      }
 
       if (snap.self) {
         if (!player()) {
@@ -44,15 +50,48 @@ export function joinWorld(roomId: string) {
         } else {
           replicated()?.initialize(snap.self);
         }
+        setSelfStateVersion((version) => version + 1);
       }
 
       replicated()?.acknowledge(snap.acks[playerId] ?? 0);
     });
   }).then((s) => setSession(() => s));
 
+  function clickInventory(target: InventoryClickTarget) {
+    session()?.clickInventory(target);
+  }
+
+  function closeInventory() {
+    session()?.closeInventory();
+  }
+
+  function requestState() {
+    session()?.requestState();
+  }
+
+  function selectHotbarSlot(slotIndex: number) {
+    if (player()?.setSelectedHotbarSlot(slotIndex)) {
+      setSelfStateVersion((version) => version + 1);
+    }
+    session()?.selectHotbarSlot(slotIndex);
+  }
+
   onCleanup(() => {
+    session()?.closeInventory();
     session()?.leave();
   });
 
-  return { player, snapshot, snapCount, session, replicated } as const;
+  return {
+    player,
+    snapshot,
+    snapCount,
+    session,
+    replicated,
+    selfStateVersion,
+    inventoryUi,
+    clickInventory,
+    closeInventory,
+    requestState,
+    selectHotbarSlot,
+  } as const;
 }
