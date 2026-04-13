@@ -56,6 +56,7 @@ export class PlayerCollection implements EntityCollection {
             z: row.z,
             yaw: row.yaw,
             pitch: row.pitch,
+            health: row.health,
             inventory: parsePersistedInventory(row.inventory),
             selectedHotbarSlot: row.selectedHotbarSlot,
           }),
@@ -264,6 +265,7 @@ export class PlayerCollection implements EntityCollection {
             z: player.state.z,
             yaw: player.state.yaw,
             pitch: player.state.pitch,
+            health: player.state.health,
             inventory: JSON.stringify(player.state.inventory),
             selectedHotbarSlot: player.state.selectedHotbarSlot,
           })
@@ -276,6 +278,7 @@ export class PlayerCollection implements EntityCollection {
               z: player.state.z,
               yaw: player.state.yaw,
               pitch: player.state.pitch,
+              health: player.state.health,
               inventory: JSON.stringify(player.state.inventory),
               selectedHotbarSlot: player.state.selectedHotbarSlot,
             },

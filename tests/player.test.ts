@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyInventory, createPlayerState, PLAYER_SPEED, Player } from "../src/game/player";
+import { createEmptyInventory, createPlayerState, PLAYER_MAX_HEALTH, PLAYER_SPEED, Player } from "../src/game/player";
 
 const P = (
   overrides: Partial<{
@@ -38,6 +38,7 @@ describe("Player", () => {
   it("initializes with given position", () => {
     const player = P({ x: 10, y: 20, z: 30 });
     expect(player.id).toBe("p1");
+    expect(player.state.health).toBe(PLAYER_MAX_HEALTH);
     expect(player.state.x).toBeCloseTo(10);
     expect(player.state.y).toBeCloseTo(20);
     expect(player.state.z).toBeCloseTo(30);

@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
+import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, RoomSnapshot } from "../../src/game/protocol.ts";
 import type { GameRoom } from "../../src/game/room.ts";
 
@@ -59,6 +60,7 @@ describe("GameRoom Durable Object", () => {
     expect(snap?.self?.x).toBeCloseTo(0);
     expect(snap?.self?.y).toBeCloseTo(70);
     expect(snap?.self?.z).toBeCloseTo(20);
+    expect(snap?.self?.health).toBe(PLAYER_MAX_HEALTH);
     expect(snap?.self?.inventory).toHaveLength(36);
     expect(snap?.inventoryUi?.craftingGrid).toHaveLength(4);
   });
@@ -210,8 +212,11 @@ describe("GameRoom Durable Object", () => {
     const bobLatest = bobSnaps[bobSnaps.length - 1];
 
     expect(aliceLatest?.self?.inventory).toHaveLength(36);
+    expect(aliceLatest?.self?.health).toBe(PLAYER_MAX_HEALTH);
     expect("inventory" in (bobLatest?.players.alice ?? {})).toBe(false);
     expect("inventory" in (aliceLatest?.players.bob ?? {})).toBe(false);
+    expect("health" in (bobLatest?.players.alice ?? {})).toBe(false);
+    expect("health" in (aliceLatest?.players.bob ?? {})).toBe(false);
   });
 
   it("crafts through the personal 2x2 grid and returns temporary items on close", async () => {
