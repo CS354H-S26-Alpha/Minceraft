@@ -33,6 +33,7 @@ export interface PlacedObject {
   biome: Biome;
   chunkOriginX: number;
   chunkOriginZ: number;
+  renderTypeIndex: number;
   tags: readonly string[];
 }
 
@@ -87,6 +88,10 @@ export const PLACED_OBJECT_TYPES = [
   PlacedObjectType.Tree,
   PlacedObjectType.EnemySpawn,
 ] as const;
+
+export function placedObjectTypeIndex(type: PlacedObjectType): number {
+  return PLACED_OBJECT_TYPES.indexOf(type);
+}
 
 const OBJECT_PLACEMENT_GENERATION_ORDER = [
   PlacedObjectType.Tree,
@@ -276,6 +281,7 @@ export function generatePlacedObjectsForChunk(args: GeneratePlacedObjectsArgs): 
           biome: sample.biome,
           chunkOriginX: args.chunkOriginX,
           chunkOriginZ: args.chunkOriginZ,
+          renderTypeIndex: placedObjectTypeIndex(type),
           tags: rule.tags,
         });
         occupiedColumns.add(columnKey);

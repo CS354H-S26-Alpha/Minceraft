@@ -1,3 +1,5 @@
+import type { PlacedObjectType } from "@/game/object-placement";
+
 const FRAME_GRAPH_WIDTH = 240;
 const FRAME_GRAPH_HEIGHT = 80;
 const FRAME_GRAPH_MAX_MS = 16.67;
@@ -11,6 +13,8 @@ interface DiagnosticsPanelProps {
   fps: number;
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
+  placedObjectCount: number;
+  placedObjectCounts: readonly { type: PlacedObjectType; count: number }[];
   tps: number;
   mspt: number;
   msptHistory: readonly number[];
@@ -140,6 +144,21 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           stroke="rgb(52 211 153)"
           title="Server tick time graph"
         />
+      </div>
+      <div class="border-t border-white/20 pt-2">
+        <div class="text-gray-400">placed objects ({props.placedObjectCount})</div>
+        <ul class="mt-1">
+          {props.placedObjectCounts.map((entry) => (
+            <li>
+              {entry.type}: {entry.count}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div class="border-t border-white/20 pt-2">
+        <div class="text-gray-400">controls</div>
+        <div class="mt-1 text-xs text-white/80">click canvas to lock pointer</div>
+        <div class="text-xs text-white/80">WASD move · mouse look · R reset view</div>
       </div>
       <div class="border-t border-white/20 pt-2">
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>

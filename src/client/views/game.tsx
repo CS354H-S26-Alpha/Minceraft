@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { createGame } from "../engine";
 import { joinWorld } from "../primitives/join-world";
@@ -21,6 +22,11 @@ export default function GameView() {
         fps={game.diagnostics.client.fps}
         computeTimeMs={game.diagnostics.client.computeTimeMs}
         computeTimeHistory={game.diagnostics.client.computeTimeHistory}
+        placedObjectCount={game.diagnostics.client.placedObjectCount}
+        placedObjectCounts={PLACED_OBJECT_TYPES.map((type) => ({
+          type,
+          count: game.diagnostics.client.placedObjectCounts[type],
+        }))}
         tps={game.diagnostics.server.tps}
         mspt={game.diagnostics.server.mspt}
         msptHistory={game.diagnostics.server.msptHistory}

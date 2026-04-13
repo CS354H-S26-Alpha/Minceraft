@@ -2,11 +2,20 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
 import { ChunkMaster } from "@/game/chunk-master";
+import type { PlacedObjectType } from "@/game/object-placement";
 import type { Player } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
-import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
+import {
+  createEntityPipeline,
+  type EntityDrawData,
+  type GpuBuffers,
+  packPlacedObjects,
+  placedObjectPassDef,
+  playerPassDef,
+  playerPipelineConfig,
+} from "./entities";
 import { createInput } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
@@ -26,6 +35,8 @@ export interface ClientDiagnostics {
   computeTimeMs: number;
   /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
+  placedObjectCount: number;
+  placedObjectCounts: Record<PlacedObjectType, number>;
   pointerLocked: boolean;
 }
 
@@ -62,7 +73,7 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 const MAX_INPUT_DT_MS = 100;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef]);
+  const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -77,6 +88,7 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
  */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
+  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED);
 
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
@@ -86,6 +98,8 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
+        placedObjectCount: chunkMaster.getNearPlacedObjectCount(),
+        placedObjectCounts: chunkMaster.getNearPlacedObjectCounts(),
         pointerLocked: false,
       },
       server: {
@@ -97,19 +111,20 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED);
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const placedObjectBuffers: GpuBuffers = {};
   let frame = 0;
   let lastYaw = 0;
   let lastPitch = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
+  let lastPlacedObjects: readonly unknown[] | undefined;
 
   const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
   let needsResize = true;
@@ -162,6 +177,11 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // update chunks around player
     chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
+    const placedObjects = chunkMaster.getNearPlacedObjects();
+    if (placedObjects !== lastPlacedObjects) {
+      packPlacedObjects(placedObjects, placedObjectBuffers);
+      lastPlacedObjects = placedObjects;
+    }
 
     // --- Remote entities ---
     const snap = room().snapshot;
@@ -174,7 +194,14 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
-    const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    const entities: EntityDrawData[] = [
+      { key: "players", buffers, count },
+      {
+        key: "placed-objects",
+        buffers: placedObjectBuffers,
+        count: chunkMaster.getNearPlacedObjectCount(),
+      },
+    ];
     renderer.render({
       viewMatrix: camera.viewMatrix(),
       projMatrix: camera.projMatrix(),
@@ -203,6 +230,8 @@ export function createGame(args: CreateGameArgs): GameState {
       frameCount: frame,
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
+      placedObjectCount: chunkMaster.getNearPlacedObjectCount(),
+      placedObjectCounts: chunkMaster.getNearPlacedObjectCounts(),
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {

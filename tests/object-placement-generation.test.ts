@@ -6,6 +6,7 @@ import {
   generatePlacedObjectsForChunk,
   OBJECT_PLACEMENT_RULES,
   type ObjectPlacementSample,
+  placedObjectTypeIndex,
   supportsObjectPlacement,
 } from "../src/game/object-placement";
 
@@ -76,6 +77,7 @@ describe("per-chunk object placement generation", () => {
       expect(object.y).toBe(surfaceY + 1);
       expect(object.chunkOriginX).toBe(-32);
       expect(object.chunkOriginZ).toBe(-32);
+      expect(object.renderTypeIndex).toBe(placedObjectTypeIndex(object.type));
     }
   });
 
