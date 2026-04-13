@@ -5,10 +5,10 @@ export interface ItemDefinition {
   maxStack: number;
 }
 
-const woodIcon = new URL("../assets/icons/wood.png", import.meta.url).href;
-const woodPlankIcon = new URL("../assets/icons/wood_plank.png", import.meta.url).href;
-const stickIcon = new URL("../assets/icons/stick.png", import.meta.url).href;
-const dirtIcon = new URL("../assets/icons/dirt.png", import.meta.url).href;
+import dirtIcon from "@/assets/icons/dirt.png";
+import stickIcon from "@/assets/icons/stick.png";
+import woodIcon from "@/assets/icons/wood.png";
+import woodPlankIcon from "@/assets/icons/wood_plank.png";
 
 const itemDefinitions = [
   {
