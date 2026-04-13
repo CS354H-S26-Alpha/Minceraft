@@ -1,7 +1,7 @@
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
-import { BIOME_INFOS, surfaceBlock, sampleColumn } from "@/game/biome";
+import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
 
-export const CHUNK_SIZE   = 64;
+export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
 
 export function chunkKey(originX: number, originZ: number): string {
@@ -17,8 +17,8 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
 
 export class Chunk {
   // types where we store the actual block data
-  public blocks:    Uint8Array;  // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x 
-  public heightMap: Uint8Array;  // surface height per (i,j) column x z // z*S + x
+  public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
+  public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
 
   private x: number; // Center of the chunk
   private y: number;
@@ -26,9 +26,9 @@ export class Chunk {
   private seed: number; // Seed for terrain generation
 
   // types to update for Rendering
-  private cubes:            number       = 0;
+  private cubes: number = 0;
   private cubePositionsF32: Float32Array = new Float32Array(0);
-  private cubeColorsF32:    Float32Array = new Float32Array(0);
+  private cubeColorsF32: Float32Array = new Float32Array(0);
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -36,7 +36,7 @@ export class Chunk {
     this.size = size;
     this.seed = seed;
 
-    this.blocks    = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
+    this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
@@ -44,8 +44,7 @@ export class Chunk {
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
-    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_HEIGHT)
-      return CubeType.Air;
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_HEIGHT) return CubeType.Air;
     return this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] as CubeType;
   }
 
@@ -63,7 +62,7 @@ export class Chunk {
         const globalX = topleftx + j;
         const globalZ = toplefty + i;
 
-        const { biome, height  } = sampleColumn(this.seed, globalX, globalZ);
+        const { biome, height } = sampleColumn(this.seed, globalX, globalZ);
 
         this.heightMap[this.size * i + j] = height;
 
@@ -83,12 +82,12 @@ export class Chunk {
   // next to air, it should be rendered
   private touchesAir(lx: number, ly: number, lz: number): boolean {
     return (
-      this.getBlock(lx + 1, ly,     lz    ) === CubeType.Air ||
-      this.getBlock(lx - 1, ly,     lz    ) === CubeType.Air ||
-      this.getBlock(lx,     ly + 1, lz    ) === CubeType.Air ||
-      this.getBlock(lx,     ly - 1, lz    ) === CubeType.Air ||
-      this.getBlock(lx,     ly,     lz + 1) === CubeType.Air ||
-      this.getBlock(lx,     ly,     lz - 1) === CubeType.Air
+      this.getBlock(lx + 1, ly, lz) === CubeType.Air ||
+      this.getBlock(lx - 1, ly, lz) === CubeType.Air ||
+      this.getBlock(lx, ly + 1, lz) === CubeType.Air ||
+      this.getBlock(lx, ly - 1, lz) === CubeType.Air ||
+      this.getBlock(lx, ly, lz + 1) === CubeType.Air ||
+      this.getBlock(lx, ly, lz - 1) === CubeType.Air
     );
   }
 
@@ -97,10 +96,10 @@ export class Chunk {
     const topleftx = this.x - this.size / 2;
     const toplefty = this.y - this.size / 2;
 
-    const maxCubes      = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
-    const positions     = new Float32Array(4 * maxCubes);
-    const colors        = new Float32Array(3 * maxCubes);
-    let   count         = 0;
+    const maxCubes = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
+    const positions = new Float32Array(4 * maxCubes);
+    const colors = new Float32Array(3 * maxCubes);
+    let count = 0;
 
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
@@ -108,7 +107,7 @@ export class Chunk {
 
         for (let y = 0; y <= surfaceY; y++) {
           const blockType = this.getBlock(j, y, i);
-          if (blockType === CubeType.Air || !this.touchesAir(j, y, i))  continue;
+          if (blockType === CubeType.Air || !this.touchesAir(j, y, i)) continue;
 
           positions[4 * count + 0] = topleftx + j;
           positions[4 * count + 1] = y;
@@ -125,11 +124,10 @@ export class Chunk {
       }
     }
 
-    this.cubes            = count;
+    this.cubes = count;
     this.cubePositionsF32 = positions.subarray(0, 4 * count) as Float32Array;
-    this.cubeColorsF32    = colors.subarray(0, 3 * count) as Float32Array;
+    this.cubeColorsF32 = colors.subarray(0, 3 * count) as Float32Array;
   }
-
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
   public cubePositions(): Float32Array {
