@@ -1,6 +1,6 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import type { InventoryClickTarget, InventoryUiState } from "@/game/crafting";
+import { CRAFTING_GRID_SLOT_COUNT, type InventoryClickTarget, type InventoryUiState } from "@/game/crafting";
 import {
   HOTBAR_SLOT_COUNT,
   HOTBAR_START_INDEX,
@@ -20,7 +20,7 @@ interface InventoryPanelProps {
 
 const MAIN_SLOT_INDICES = Array.from({ length: MAIN_INVENTORY_SLOT_COUNT }, (_, index) => index);
 const HOTBAR_SLOT_INDICES = Array.from({ length: HOTBAR_SLOT_COUNT }, (_, index) => index);
-const CRAFTING_SLOT_INDICES = Array.from({ length: 4 }, (_, index) => index);
+const CRAFTING_SLOT_INDICES = Array.from({ length: CRAFTING_GRID_SLOT_COUNT }, (_, index) => index);
 
 export function InventoryPanel(props: InventoryPanelProps) {
   const [pointer, setPointer] = createSignal(defaultPointerPosition());

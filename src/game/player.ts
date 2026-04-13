@@ -111,7 +111,7 @@ export function toPublicPlayerState(state: PlayerState): PlayerPublicState {
 
 export function addItemToInventory(inventory: InventorySlot[], stack: ItemStack): ItemStack | null {
   const item = ITEM_DEFINITIONS_BY_ID[stack.itemId];
-  let remaining = Math.min(Math.trunc(stack.quantity), item.maxStack);
+  let remaining = Math.trunc(stack.quantity);
   if (remaining <= 0) return null;
 
   for (let index = 0; index < inventory.length; index++) {
@@ -210,10 +210,11 @@ function normalizeInventorySlot(slot: InventorySlot | undefined): InventorySlot 
   if (!isItemId(slot.itemId)) return null;
   if (!Number.isFinite(slot.quantity)) return null;
   const maxStack = ITEM_DEFINITIONS_BY_ID[slot.itemId].maxStack;
-  const quantity = Math.max(1, Math.min(maxStack, Math.trunc(slot.quantity)));
+  const quantity = Math.trunc(slot.quantity);
+  if (quantity <= 0) return null;
   return {
     itemId: slot.itemId,
-    quantity,
+    quantity: Math.min(maxStack, quantity),
   };
 }
 

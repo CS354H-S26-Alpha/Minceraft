@@ -1,14 +1,14 @@
+import dirtIcon from "@/assets/icons/dirt.png";
+import stickIcon from "@/assets/icons/stick.png";
+import woodIcon from "@/assets/icons/wood.png";
+import woodPlankIcon from "@/assets/icons/wood_plank.png";
+
 export interface ItemDefinition {
   id: string;
   name: string;
   icon: string;
   maxStack: number;
 }
-
-import dirtIcon from "@/assets/icons/dirt.png";
-import stickIcon from "@/assets/icons/stick.png";
-import woodIcon from "@/assets/icons/wood.png";
-import woodPlankIcon from "@/assets/icons/wood_plank.png";
 
 const itemDefinitions = [
   {

@@ -15,6 +15,7 @@ import { ITEM_DEFINITIONS_BY_ID } from "./items";
 import {
   clonePlayerState,
   createPlayerState,
+  createStarterInventory,
   HOTBAR_SLOT_COUNT,
   INVENTORY_SLOT_COUNT,
   type InventorySlot,
@@ -30,7 +31,7 @@ const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const MAX_QUEUED_INPUTS = 20;
 
 /**
- * Manages the set of players in a room â€” their in-memory state, pending input
+ * Manages the set of players in a room — their in-memory state, pending input
  * queues, ack counters, and dirty tracking for SQLite persistence.
  */
 export class PlayerCollection implements EntityCollection {
@@ -397,14 +398,6 @@ function parsePersistedInventory(serialized: string): InventorySlot[] {
   try {
     return normalizeInventory(JSON.parse(serialized) as InventorySlot[] | null);
   } catch {
-    return createPlayerState({
-      id: "inventory",
-      name: "inventory",
-      x: 0,
-      y: 0,
-      z: 0,
-      yaw: 0,
-      pitch: 0,
-    }).inventory;
+    return createStarterInventory();
   }
 }
