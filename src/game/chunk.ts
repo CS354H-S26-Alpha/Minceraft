@@ -1,5 +1,5 @@
-import { CUBE_TYPE_INFO, CubeType } from "~/client/engine/render/cube-types";
-import { terrainHeight } from "~/lib/noise";
+import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
+import { terrainHeight } from "@/lib/noise";
 
 export const CHUNK_SIZE = 64;
 
@@ -14,6 +14,10 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
     ];
 }
 
+/**
+ * A square patch of terrain. Generates cube positions procedurally using
+ * multi-octave value noise and exposes them as a flat `Float32Array` for the GPU.
+ */
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
@@ -68,6 +72,7 @@ export class Chunk {
     }
   }
 
+  /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
   }
@@ -76,6 +81,7 @@ export class Chunk {
       return this.cubeColorsF32;
   }
 
+  /** Returns the number of cubes to render this frame. */
   public numCubes(): number {
     return this.cubes;
   }

@@ -8,13 +8,13 @@ varying vec2 uv;
 varying vec3 color;
 
 void main() {
-    vec3 kd = color;
-    vec3 ka = vec3(0.1, 0.1, 0.1);
+  vec3 kd = color;
+  vec3 ka = vec3(0.1, 0.1, 0.1);
 
-    /* Compute light fall off */
-    vec4 lightDirection = uLightPos - wsPos;
-    float dot_nl = dot(normalize(lightDirection), normalize(normal));
-    dot_nl = clamp(dot_nl, 0.0, 1.0);
+  /* Compute light fall off */
+  vec4 lightDirection = uLightPos - wsPos;
+  float dot_nl = dot(normalize(lightDirection), normalize(normal));
+  dot_nl = clamp(dot_nl, 0.0, 1.0);
 
-    gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0), 1.0);
 }

@@ -16,9 +16,9 @@ varying vec2 uv;
 varying vec3 color;
 
 void main() {
-    gl_Position = uProj * uView * (aVertPos + aOffset);
-    wsPos = aVertPos + aOffset;
-    normal = normalize(aNorm);
-    color = aColor;
-    uv = aUV;
+  gl_Position = uProj * uView * (aVertPos + aOffset);
+  wsPos = aVertPos + aOffset;
+  normal = normalize(aNorm);
+  uv = aUV;
+  color = aColor;
 }

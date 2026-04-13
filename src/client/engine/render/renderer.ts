@@ -1,6 +1,7 @@
 import type { Mat4, Vec4 } from "gl-matrix";
-import { WebGLUtilities } from "~/lib/webglutils/CanvasAnimation";
-import { RenderPass } from "~/lib/webglutils/RenderPass";
+import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
+import { RenderPass } from "@/lib/webglutils/RenderPass";
+import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
 import { Cube } from "./cube";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
@@ -13,25 +14,43 @@ export interface RenderView {
   numCubes: number;
   lightPosition: Vec4;
   backgroundColor: Vec4;
+  entities: EntityDrawData[];
+}
+
+interface EntityPass {
+  pass: RenderPass;
+  cullFace: boolean;
+  instancedAttributes: { name: string; size: number }[];
 }
 
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: WebGLRenderingContext;
-  private readonly cubeGeometry: Cube;
   private readonly blankCubeRenderPass: RenderPass;
+  private readonly entityPasses: Map<string, EntityPass>;
 
   private currentView!: RenderView;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
     this.ctx = WebGLUtilities.requestWebGLContext(canvas);
     WebGLUtilities.requestIntIndicesExt(this.ctx);
     const extVAO = WebGLUtilities.requestVAOExt(this.ctx);
 
-    this.cubeGeometry = new Cube();
+    const cubeGeometry = new Cube();
     this.blankCubeRenderPass = new RenderPass(extVAO, this.ctx, blankCubeVSText, blankCubeFSText);
-    this.initBlankCubePass();
+    this.initBlankCubePass(cubeGeometry);
+
+    this.entityPasses = new Map();
+    for (const def of entityDefs) {
+      const pass = new RenderPass(extVAO, this.ctx, def.vertexShader, def.fragmentShader);
+      this.initEntityPass(pass, def);
+      this.entityPasses.set(def.key, {
+        pass,
+        cullFace: def.cullFace ?? true,
+        instancedAttributes: def.instancedAttributes,
+      });
+    }
   }
 
   render(view: RenderView): void {
@@ -51,12 +70,52 @@ export class Renderer {
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
+
+    for (const entity of view.entities) {
+      if (entity.count === 0) continue;
+      const ep = this.entityPasses.get(entity.key);
+      if (!ep) continue;
+
+      if (!ep.cullFace) gl.disable(gl.CULL_FACE);
+      for (const { name, size } of ep.instancedAttributes) {
+        const buf = entity.buffers[name];
+        if (buf) ep.pass.updateAttributeBuffer(name, buf.subarray(0, entity.count * size));
+      }
+      ep.pass.drawInstanced(entity.count);
+      if (!ep.cullFace) gl.enable(gl.CULL_FACE);
+    }
   }
 
-  private initBlankCubePass(): void {
+  private initEntityPass(pass: RenderPass, def: EntityPassDef): void {
+    const gl = this.ctx;
+    const geo = def.geometry;
+
+    pass.setIndexBufferData(geo.indices);
+    pass.addAttribute("aVertPos", 4, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, geo.positions);
+    pass.addAttribute("aNorm", 4, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, geo.normals);
+    pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, geo.uvs);
+
+    for (const attr of def.instancedAttributes) {
+      pass.addInstancedAttribute(
+        attr.name,
+        attr.size,
+        gl.FLOAT,
+        false,
+        attr.size * Float32Array.BYTES_PER_ELEMENT,
+        0,
+        undefined,
+        new Float32Array(0),
+      );
+    }
+
+    this.addSharedUniforms(pass);
+    pass.setDrawData(gl.TRIANGLES, geo.indices.length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private initBlankCubePass(cube: Cube): void {
     const gl = this.ctx;
     const pass = this.blankCubeRenderPass;
-    const cube = this.cubeGeometry;
 
     pass.setIndexBufferData(cube.indicesFlat());
     pass.addAttribute(
@@ -79,16 +138,7 @@ export class Renderer {
       undefined,
       cube.normalsFlat(),
     );
-    pass.addAttribute(
-      "aUV",
-      2,
-      gl.FLOAT,
-      false,
-      2 * Float32Array.BYTES_PER_ELEMENT,
-      0,
-      undefined,
-      cube.uvFlat(),
-    );
+    pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, cube.uvFlat());
     pass.addInstancedAttribute(
       "aOffset",
       4,
@@ -109,6 +159,12 @@ export class Renderer {
       new Float32Array(0)
     );
 
+    this.addSharedUniforms(pass);
+    pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private addSharedUniforms(pass: RenderPass): void {
     pass.addUniform("uLightPos", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform4fv(loc, this.currentView.lightPosition);
     });
@@ -118,8 +174,5 @@ export class Renderer {
     pass.addUniform("uView", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
     });
-
-    pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
-    pass.setup();
   }
 }

@@ -1,107 +1,125 @@
+import { createEventListener } from "@solid-primitives/event-listener";
+import { createShortcut } from "@solid-primitives/keyboard";
+import { type Accessor, createEffect, createSignal } from "solid-js";
+import { createHeldCodes } from "../primitives";
+
 export interface WalkKeys {
   w: boolean;
   a: boolean;
   s: boolean;
   d: boolean;
+  space: boolean;
+  shift: boolean;
 }
 
-export interface InputControllerOptions {
+export interface InputOptions {
   onReset?: () => void;
-  onJump?: () => void;
 }
 
-export class InputController {
-  private readonly abortController = new AbortController();
-  private readonly keys: WalkKeys = { w: false, a: false, s: false, d: false };
+export interface InputHandle {
+  walkKeys(): Readonly<WalkKeys>;
+  consumeMouseDelta(): { dx: number; dy: number };
+  pointerLocked: Accessor<boolean>;
+}
 
-  private dragging = false;
-  private prevX = 0;
-  private prevY = 0;
-  private pendingMouseDx = 0;
-  private pendingMouseDy = 0;
+/**
+ * SolidJS input primitive. Accepts a canvas signal — pointer lock and keyboard
+ * state activate when the canvas resolves.
+ *
+ * Prefers `pointerrawupdate` events (lower latency) when available, falling
+ * back to `mousemove`. Keyboard listeners are reactively attached/detached
+ * with pointer lock to prevent ghost key state after losing focus.
+ *
+ * Must be called inside a Solid reactive scope; cleans up via `onCleanup`.
+ */
+export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opts: InputOptions = {}): InputHandle {
+  if (opts.onReset) createShortcut(["R"], opts.onReset);
 
-  constructor(canvas: HTMLCanvasElement, opts: InputControllerOptions = {}) {
-    const { signal } = this.abortController;
+  let pendingMouseDx = 0;
+  let pendingMouseDy = 0;
+  let pendingRawDx = 0;
+  let pendingRawDy = 0;
+  let hasRawMouseDelta = false;
 
-    window.addEventListener("keydown", (e) => this.handleKeyDown(e, opts), { signal });
-    window.addEventListener("keyup", (e) => this.handleKeyUp(e), { signal });
-    canvas.addEventListener(
-      "mousedown",
-      (e) => {
-        this.dragging = true;
-        this.prevX = e.screenX;
-        this.prevY = e.screenY;
-      },
-      { signal },
-    );
-    canvas.addEventListener(
-      "mousemove",
-      (e) => {
-        if (!this.dragging) return;
-        this.pendingMouseDx += e.screenX - this.prevX;
-        this.pendingMouseDy += e.screenY - this.prevY;
-        this.prevX = e.screenX;
-        this.prevY = e.screenY;
-      },
-      { signal },
-    );
-    canvas.addEventListener("mouseup", () => (this.dragging = false), { signal });
-    canvas.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
+  const [pointerLocked, setPointerLocked] = createSignal(false);
+  const { isHeld } = createHeldCodes(pointerLocked);
+
+  const w = isHeld("KeyW");
+  const a = isHeld("KeyA");
+  const s = isHeld("KeyS");
+  const d = isHeld("KeyD");
+  const space = isHeld("Space");
+  const shift = isHeld("ShiftLeft", "ShiftRight");
+
+  const clearMouseDelta = () => {
+    pendingMouseDx = 0;
+    pendingMouseDy = 0;
+    pendingRawDx = 0;
+    pendingRawDy = 0;
+    hasRawMouseDelta = false;
+  };
+
+  // Click → request pointer lock (attaches when canvas resolves).
+  createEffect(() => {
+    const el = canvas();
+    if (!el) return;
+    createEventListener(el, "click", () => {
+      if (document.pointerLockElement === el) return;
+      void requestPointerLock(el);
+    });
+  });
+
+  // Pointer lock state → signal.
+  createEventListener(document, "pointerlockchange", () => {
+    clearMouseDelta();
+    setPointerLocked(document.pointerLockElement === canvas());
+  });
+
+  // Mouse movement — accumulates deltas while pointer is locked.
+  createEventListener(document, "mousemove", (e) => {
+    if (document.pointerLockElement !== canvas()) return;
+    pendingMouseDx += e.movementX;
+    pendingMouseDy += e.movementY;
+  });
+  if ("onpointerrawupdate" in document) {
+    createEventListener(document, "pointerrawupdate", (event) => {
+      if (document.pointerLockElement !== canvas()) return;
+      const e = event as PointerEvent;
+      pendingRawDx += e.movementX;
+      pendingRawDy += e.movementY;
+      hasRawMouseDelta = true;
+    });
   }
+  createEventListener(document, "contextmenu", (e) => {
+    if (document.pointerLockElement === canvas()) e.preventDefault();
+  });
 
-  walkKeys(): Readonly<WalkKeys> {
-    return this.keys;
-  }
+  return {
+    walkKeys() {
+      return { w: w(), a: a(), s: s(), d: d(), space: space(), shift: shift() };
+    },
+    consumeMouseDelta() {
+      const dx = hasRawMouseDelta ? pendingRawDx : pendingMouseDx;
+      const dy = hasRawMouseDelta ? pendingRawDy : pendingMouseDy;
+      clearMouseDelta();
+      return { dx, dy };
+    },
+    pointerLocked,
+  };
+}
 
-  consumeMouseDelta(): { dx: number; dy: number } {
-    const dx = this.pendingMouseDx;
-    const dy = this.pendingMouseDy;
-    this.pendingMouseDx = 0;
-    this.pendingMouseDy = 0;
-    return { dx, dy };
-  }
+/**
+ * Requests pointer lock with `unadjustedMovement: true` for raw mouse input.
+ * Falls back to standard pointer lock if the option is unsupported.
+ */
+async function requestPointerLock(canvas: HTMLCanvasElement): Promise<void> {
+  const maybePointerLock = canvas.requestPointerLock as (options?: {
+    unadjustedMovement?: boolean;
+  }) => Promise<void> | void;
 
-  destroy(): void {
-    this.abortController.abort();
-  }
-
-  private handleKeyDown(e: KeyboardEvent, opts: InputControllerOptions): void {
-    switch (e.code) {
-      case "KeyW":
-        this.keys.w = true;
-        break;
-      case "KeyA":
-        this.keys.a = true;
-        break;
-      case "KeyS":
-        this.keys.s = true;
-        break;
-      case "KeyD":
-        this.keys.d = true;
-        break;
-      case "KeyR":
-        opts.onReset?.();
-        break;
-      case "Space":
-        opts.onJump?.();
-        break;
-    }
-  }
-
-  private handleKeyUp(e: KeyboardEvent): void {
-    switch (e.code) {
-      case "KeyW":
-        this.keys.w = false;
-        break;
-      case "KeyA":
-        this.keys.a = false;
-        break;
-      case "KeyS":
-        this.keys.s = false;
-        break;
-      case "KeyD":
-        this.keys.d = false;
-        break;
-    }
+  try {
+    await maybePointerLock({ unadjustedMovement: true });
+  } catch {
+    canvas.requestPointerLock();
   }
 }

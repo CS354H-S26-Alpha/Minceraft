@@ -1,148 +1,254 @@
-import { Actor } from "@cloudflare/actors";
+import { DurableObject } from "cloudflare:workers";
+import { Alarms } from "@cloudflare/actors/alarms";
 import { RpcTarget } from "capnweb";
-import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
-import { Player, type PlayerInput, type PlayerState } from "./player";
-import type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
+import type { EntityCollection } from "./entity-collection";
+import type { PlayerInput } from "./player";
+import { PlayerCollection } from "./player-collection";
+import type { AuthenticatedApi, GameApi, PlayerCredentials, RoomSessionApi, RoomSnapshot } from "./protocol";
 
-export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
+export type {
+  AuthenticatedApi,
+  GameApi,
+  PlayerCredentials,
+  RoomSessionApi,
+  RoomSnapshot,
+} from "./protocol";
 
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
-const SPAWN_POSITION = { x: 0, y: 100, z: 0 };
+const MAX_NAME_LENGTH = 32;
+const NAME_PATTERN = /^[\w\s-]+$/;
+const MIN_INPUT_INTERVAL_MS = 25;
+type SnapshotListener = ((snap: RoomSnapshot) => unknown) & {
+  dup?(): SnapshotListener;
+  onRpcBroken?(callback: () => void): void;
+  [Symbol.dispose]?(): void;
+};
 
-type SnapshotListener = (snap: RoomSnapshot) => unknown;
-
-function notify(cb: SnapshotListener, snap: RoomSnapshot) {
+/**
+ * Calls a snapshot listener, catching synchronous throws and rejected promises.
+ * Returns `false` if the call failed, signalling a broken connection.
+ */
+function notify(cb: SnapshotListener, snap: RoomSnapshot): Promise<boolean> {
   try {
     const result = cb(snap);
     if (result && typeof (result as Promise<unknown>).then === "function") {
-      (result as Promise<unknown>).catch(() => {});
+      return (result as Promise<unknown>).then(
+        () => true,
+        () => false,
+      );
     }
+    return Promise.resolve(true);
   } catch {
-    // capnweb surfaces broken stubs via onRpcBroken elsewhere
+    return Promise.resolve(false);
   }
 }
 
-export class GameRoom extends Actor<Env> {
-  private players = new Map<string, Player>();
-  private inputQueues = new Map<string, PlayerInput[]>();
-  private acks = new Map<string, number>();
+/**
+ * Durable Object for a single game room. Holds authoritative game state, runs
+ * the tick loop, broadcasts snapshots to connected clients, and periodically
+ * flushes state to Drizzle SQLite.
+ */
+export class GameRoom extends DurableObject<Env> {
+  alarms: Alarms<this>;
+  private playerCollection = new PlayerCollection();
+  private collections: EntityCollection[] = [this.playerCollection];
   private listeners = new Map<string, SnapshotListener>();
-  private dirty = new Set<string>();
-  private tick = 0;
-  private db!: DrizzleSqliteDODatabase<typeof schema>;
+  private lastInputTime = new Map<string, number>();
+  private needsBroadcast = false;
+  private pendingSelfState = new Set<string>();
+  private gameTick = 0;
+  private lastTickTimeMs = 0;
+  private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private db: DrizzleSqliteDODatabase<typeof schema>;
+  private initialized = false;
 
-  override async onInit() {
-    this.db = drizzle(this.ctx.storage, { schema });
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.db = drizzle(ctx.storage, { schema });
+    this.alarms = new Alarms(ctx, this);
+  }
+
+  /**
+   * Lazy one-time setup: runs DB migrations and hydrates all collections from
+   * SQLite. Called before any operation that needs entity state.
+   */
+  private ensureInitialized() {
+    if (this.initialized) return;
+    this.initialized = true;
     migrate(this.db, migrations);
-
-    for (const row of this.db.select().from(schema.players).all()) {
-      this.players.set(row.id, new Player({ id: row.id, x: row.x, y: row.y, z: row.z }));
+    for (const col of this.collections) {
+      col.hydrate(this.db);
     }
   }
 
-  join(playerId: string, onSnapshot: SnapshotListener) {
-    if (!this.players.has(playerId)) {
-      this.players.set(playerId, new Player({ id: playerId, ...SPAWN_POSITION }));
-      this.dirty.add(playerId);
-    }
-    this.listeners.set(playerId, onSnapshot);
-    notify(onSnapshot, this.snapshot());
-    this.ensureAlarm();
+  /**
+   * Registers a new player and queues a broadcast for the next tick.
+   * The joining player's own state is included in their first snapshot.
+   */
+  join(playerId: string, name: string, onSnapshot: SnapshotListener) {
+    this.ensureInitialized();
+    this.playerCollection.join(playerId, name);
+    this.removeListener(playerId);
+    const listener = onSnapshot.dup?.() ?? onSnapshot;
+    listener.onRpcBroken?.(() => {
+      this.removeListener(playerId);
+      this.needsBroadcast = true;
+    });
+    this.listeners.set(playerId, listener);
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+    this.startTickLoop();
   }
 
+  /**
+   * Enqueues player inputs, rate-limited to prevent flooding.
+   * Batches arriving faster than `MIN_INPUT_INTERVAL_MS` are silently dropped.
+   */
   sendInputs(playerId: string, inputs: PlayerInput[]) {
-    const queue = this.inputQueues.get(playerId);
-    if (queue) {
-      queue.push(...inputs);
-    } else {
-      this.inputQueues.set(playerId, [...inputs]);
-    }
+    const now = Date.now();
+    const last = this.lastInputTime.get(playerId) ?? 0;
+    if (now - last < MIN_INPUT_INTERVAL_MS) return;
+    this.lastInputTime.set(playerId, now);
+    this.playerCollection.queueInputs(playerId, inputs);
   }
 
+  /** Queues the player's own state for the next tick's snapshot. */
+  requestState(playerId: string) {
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Removes the player from the room; survivors see the change next tick. */
   leave(playerId: string) {
-    this.listeners.delete(playerId);
-    this.inputQueues.delete(playerId);
+    this.removeListener(playerId);
+    this.lastInputTime.delete(playerId);
+    this.playerCollection.leave(playerId);
+    this.needsBroadcast = true;
   }
 
-  override async onAlarm(): Promise<void> {
-    this.tick++;
+  override async alarm(info?: AlarmInvocationInfo) {
+    await this.alarms.alarm(info);
+  }
 
-    let changedThisTick = false;
-    for (const [id, queue] of this.inputQueues) {
-      if (queue.length === 0) continue;
-      const player = this.players.get(id);
-      if (!player) continue;
-      const { x, z } = player.state;
-      for (const input of queue) {
-        player.step(input);
-      }
-      this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
-      queue.length = 0;
-      if (player.state.x !== x || player.state.z !== z) {
-        this.dirty.add(id);
-        changedThisTick = true;
-      }
+  /** Runs a single tick; exposed publicly for external callers (e.g. tests). */
+  async runTick() {
+    return this.tick();
+  }
+
+  /**
+   * Core game loop body. Advances all collections, flushes all pending
+   * notifications to connected clients, and persists dirty state.
+   * The tick is the single point where data is sent to clients.
+   */
+  private async tick() {
+    this.ensureInitialized();
+
+    const tickStart = performance.now();
+    this.gameTick++;
+    for (const col of this.collections) {
+      if (col.tick()) this.needsBroadcast = true;
     }
+    this.lastTickTimeMs = performance.now() - tickStart;
 
-    if (changedThisTick && this.listeners.size > 0) {
-      const snap = this.snapshot();
-      for (const cb of this.listeners.values()) {
-        notify(cb, snap);
-      }
+    if (this.needsBroadcast && this.listeners.size > 0) {
+      this.needsBroadcast = false;
+      await this.broadcast(this.snapshot());
     }
-
-    if (this.tick % PERSIST_EVERY_N_TICKS === 0 && this.dirty.size > 0) {
-      this.flush();
+    if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
+      this.flushAll();
     }
-
-    if (this.listeners.size > 0) {
-      this.ctx.storage.setAlarm(Date.now() + TICK_MS);
-    } else if (this.dirty.size > 0) {
-      this.flush();
+    if (this.listeners.size === 0) {
+      this.stopTickLoop();
+      if (this.hasDirty()) this.flushAll();
     }
   }
 
+  /**
+   * Sends a per-client snapshot to all registered listeners. Each client
+   * receives remote players in `players` and optionally their own state in
+   * `self` (when queued by join or requestState). Broken listeners are
+   * removed and a re-broadcast is queued for the next tick.
+   */
+  private async broadcast(snap: RoomSnapshot): Promise<void> {
+    const entries = [...this.listeners.entries()];
+    const results = await Promise.all(entries.map(([id, cb]) => notify(cb, this.personalizeSnapshot(snap, id))));
+    this.pendingSelfState.clear();
+    const broken = entries.filter((_, i) => !results[i]).map(([id]) => id);
+    for (const id of broken) {
+      this.removeListener(id);
+    }
+    if (broken.length > 0) {
+      this.needsBroadcast = true;
+    }
+  }
+
+  /**
+   * Strips the player's own entry from `players` and optionally attaches it
+   * as `self` when the player has a pending state request.
+   */
+  private personalizeSnapshot(snap: RoomSnapshot, playerId: string): RoomSnapshot {
+    const { [playerId]: self, ...players } = snap.players;
+    return {
+      ...snap,
+      players,
+      self: this.pendingSelfState.has(playerId) ? self : undefined,
+    };
+  }
+
+  /** Builds a room snapshot from current state, filtered to online players. */
   private snapshot(): RoomSnapshot {
-    const players: Record<string, PlayerState> = {};
-    const acks: Record<string, number> = {};
-    for (const [id, player] of this.players) {
-      players[id] = player.state;
-      acks[id] = this.acks.get(id) ?? 0;
-    }
-    return { tick: this.tick, players, acks };
+    const onlinePlayerIds = new Set(this.listeners.keys());
+    return {
+      tick: this.gameTick,
+      players: this.playerCollection.snapshot(onlinePlayerIds),
+      acks: this.playerCollection.getAcks(onlinePlayerIds),
+      tickTimeMs: this.lastTickTimeMs,
+    };
   }
 
-  private flush() {
-    for (const id of this.dirty) {
-      const player = this.players.get(id);
-      if (player) {
-        this.db
-          .insert(schema.players)
-          .values(player.state)
-          .onConflictDoUpdate({
-            target: schema.players.id,
-            set: { x: player.state.x, y: player.state.y, z: player.state.z },
-          })
-          .run();
-      } else {
-        this.db.delete(schema.players).where(eq(schema.players.id, id)).run();
-      }
-    }
-    this.dirty.clear();
+  /** Returns `true` if any collection has unsaved dirty entities. */
+  private hasDirty(): boolean {
+    return this.collections.some((col) => col.hasDirty());
   }
 
-  private ensureAlarm() {
-    this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  /** Flushes all dirty collections to SQLite. */
+  private flushAll() {
+    for (const col of this.collections) {
+      col.flush(this.db);
+    }
+  }
+
+  /** Disposes a player's dup'd snapshot callback and removes it from the listener map. */
+  private removeListener(playerId: string) {
+    this.listeners.get(playerId)?.[Symbol.dispose]?.();
+    this.listeners.delete(playerId);
+  }
+
+  /** Starts the `setInterval` tick loop if not already running. */
+  private startTickLoop() {
+    if (this.tickInterval) return;
+    this.tickInterval = setInterval(() => this.tick(), TICK_MS);
+  }
+
+  /** Clears the `setInterval` tick loop. */
+  private stopTickLoop() {
+    if (!this.tickInterval) return;
+    clearInterval(this.tickInterval);
+    this.tickInterval = null;
   }
 }
 
 type GameRoomStub = DurableObjectStub<GameRoom>;
 
+/**
+ * Scoped capability returned from `AuthSession.join()`. Clients use this to
+ * send inputs and leave the room. The session is invalidated after `leave()`.
+ */
 export class RoomSession extends RpcTarget implements RoomSessionApi {
   #room: GameRoomStub;
   #playerId: string;
@@ -154,21 +260,75 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     this.#playerId = playerId;
   }
 
+  /** Forwards inputs to the authoritative `GameRoom`. */
   sendInputs(inputs: PlayerInput[]) {
     return this.#room.sendInputs(this.#playerId, inputs);
   }
 
+  /** Asks the server to include own state in the next tick's snapshot. */
+  requestState() {
+    return this.#room.requestState(this.#playerId);
+  }
+
+  /** Leaves the room (idempotent; subsequent calls are no-ops). */
   leave() {
     if (this.#left) return;
     this.#left = true;
     return this.#room.leave(this.#playerId);
   }
 
+  /** Called automatically when the RPC session is disposed. */
   [Symbol.dispose]() {
-    this.leave();
+    Promise.resolve(this.leave()).catch(() => {});
   }
 }
 
+/**
+ * Capability returned after successful authentication. Exposes player
+ * credentials and the ability to join a named room.
+ */
+export class AuthSession extends RpcTarget implements AuthenticatedApi {
+  #env: Env;
+  #playerId: string;
+  #name: string;
+
+  constructor(env: Env, playerId: string, name: string) {
+    super();
+    this.#env = env;
+    this.#playerId = playerId;
+    this.#name = name;
+  }
+
+  /** The authenticated player's ID and display name. */
+  get credentials(): PlayerCredentials {
+    return { playerId: this.#playerId, name: this.#name };
+  }
+
+  /**
+   * Looks up (or creates) the named Durable Object room, registers the
+   * player, and returns a `RoomSession` capability.
+   */
+  async join(roomId: string, onSnapshot: SnapshotListener) {
+    const id = this.#env.GameRoom.idFromName(roomId);
+    const stub = this.#env.GameRoom.get(id);
+    await stub.join(this.#playerId, this.#name, onSnapshot);
+    return new RoomSession(stub, this.#playerId);
+  }
+}
+
+/**
+ * Derives a deterministic player ID by SHA-256-hashing the player's name.
+ * The first 16 bytes are hex-encoded to form a 32-character ID.
+ */
+async function derivePlayerId(name: string): Promise<string> {
+  const data = new TextEncoder().encode(name);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash.slice(0, 16)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** RPC entry point. Validates the player name and returns an `AuthSession`. */
 export class GameServer extends RpcTarget implements GameApi {
   #env: Env;
 
@@ -177,10 +337,17 @@ export class GameServer extends RpcTarget implements GameApi {
     this.#env = env;
   }
 
-  async join(roomId: string, playerId: string, onSnapshot: SnapshotListener) {
-    const id = this.#env.GameRoom.idFromName(roomId);
-    const stub = this.#env.GameRoom.get(id);
-    await stub.join(playerId, onSnapshot);
-    return new RoomSession(stub, playerId);
+  /**
+   * Validates and trims the name, then returns an `AuthSession` for the derived
+   * player ID.
+   * @throws If the name is empty, too long, or contains invalid characters.
+   */
+  async authenticate(name: string) {
+    const trimmed = name.trim();
+    if (trimmed.length < 1 || trimmed.length > MAX_NAME_LENGTH || !NAME_PATTERN.test(trimmed)) {
+      throw new Error("Invalid player name");
+    }
+    const playerId = await derivePlayerId(trimmed);
+    return new AuthSession(this.#env, playerId, trimmed);
   }
 }

@@ -9,11 +9,23 @@ bun install
 To run:
 
 ```bash
-bun dev
+bun dev # Start development server
 ```
 
-To build into one `dist/index.html`:
+To build:
 
 ```bash
-bun build:static
+bun build # Build for production
+```
+
+To test:
+
+```bash
+bun test
+```
+
+To lint and format:
+
+```bash
+bun lint:fix
 ```
