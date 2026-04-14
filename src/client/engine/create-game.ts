@@ -1,6 +1,7 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
+import { createEffect } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
@@ -64,7 +65,7 @@ export type GameState = Readonly<MutableGameState>;
  * Full day-night cycle duration in seconds.
  * 4 phases (dawn / day / dusk / night) × 15 s each = 60 s total.
  */
-const DAY_LENGTH_S = 60;
+const DAY_LENGTH_S = 240;
 /** Duration of each phase (dawn, noon, dusk, night) in milliseconds. */
 const PHASE_MS = (DAY_LENGTH_S / 4) * 1000;
 
@@ -200,12 +201,26 @@ export function createGame(args: CreateGameArgs): GameState {
 
   // TODO: refactor to be general packet handling rather than only inputs
   let nextPacketSequence = 1;
-  let pendingPacket: PlayerPositionPacket | undefined;
+  let pendingPacket: Omit<PlayerPositionPacket, "sequence"> | undefined;
+
+  // track player position changes to send to server
+  createEffect(() => {
+    const player = room().player();
+    if (!player) return;
+    pendingPacket = {
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw: player.state.yaw,
+      pitch: player.state.pitch,
+    };
+  });
+
   makeTimer(
     () => {
       const s = room().session();
       if (!pendingPacket || !s) return;
-      s.sendPosition(pendingPacket);
+      s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
       pendingPacket = undefined;
     },
     INPUT_SEND_INTERVAL_MS,
@@ -255,14 +270,6 @@ export function createGame(args: CreateGameArgs): GameState {
     if (inputEnabled()) {
       const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
       room().replicated()?.predict(next);
-      pendingPacket = {
-        sequence: nextPacketSequence++,
-        x: player.state.x,
-        y: player.state.y,
-        z: player.state.z,
-        yaw: player.state.yaw,
-        pitch: player.state.pitch,
-      };
     }
     camera.setPosition(player.position);
 
