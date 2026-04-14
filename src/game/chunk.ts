@@ -190,7 +190,7 @@ export class Chunk {
       positions[4 * count] = wx;
       positions[4 * count + 1] = y;
       positions[4 * count + 2] = wz;
-      positions[4 * count + 3] = 0;
+      positions[4 * count + 3] = blockType;
 
       colors[3 * count] = c[0];
       colors[3 * count + 1] = c[1];
