@@ -9,7 +9,7 @@ export class WebGLUtilities {
    * @param source the shader source code as a string.
    * @return a WebGL shader
    */
-  public static createShader(ctx: WebGLRenderingContext, shaderType: number, source: string): WebGLShader {
+  public static createShader(ctx: WebGL2RenderingContext, shaderType: number, source: string): WebGLShader {
     /* TODO: error checking */
     const shader: WebGLShader = ctx.createShader(shaderType) as WebGLShader;
     ctx.shaderSource(shader, source);
@@ -28,7 +28,7 @@ export class WebGLUtilities {
    * @param fsSource the fragment shader source as a string
    * @return a WebGLProgram
    */
-  public static createProgram(ctx: WebGLRenderingContext, vsSource: string, fsSource: string): WebGLProgram {
+  public static createProgram(ctx: WebGL2RenderingContext, vsSource: string, fsSource: string): WebGLProgram {
     /* TODO: error checking */
 
     const shaderProgram: WebGLProgram = ctx.createProgram() as WebGLProgram;
@@ -56,52 +56,20 @@ export class WebGLUtilities {
   }
 
   /**
-   * Returns a WebGL context for the given Canvas
+   * Returns a WebGL 2 context for the given Canvas
    * @param canvas any HTML canvas element
-   * @return the WebGL rendering context for the canvas
+   * @return the WebGL 2 rendering context for the canvas
    */
-  public static requestWebGLContext(canvas: HTMLCanvasElement): WebGLRenderingContext {
-    /* Request WebGL Context */
-    let ctx: WebGLRenderingContext = canvas.getContext("webgl", {
+  public static requestWebGLContext(canvas: HTMLCanvasElement): WebGL2RenderingContext {
+    const ctx = canvas.getContext("webgl2", {
       preserveDrawingBuffer: true,
-    }) as WebGLRenderingContext;
+    });
 
     if (!ctx) {
-      console.log("Your browser does not support WebGL, falling back", "to Experimental WebGL");
-      ctx = canvas.getContext("experimental-webgl") as WebGLRenderingContext;
-    }
-
-    if (!ctx) {
-      throw new Error("Your browser does not support WebGL or Experimental-WebGL");
+      throw new Error("Your browser does not support WebGL 2");
     }
 
     return ctx;
-  }
-
-  /**
-   * Extends the given WebGL context with unsigned int indices
-   * @param ctx the WebGL rendering context to extend
-   */
-  public static requestIntIndicesExt(ctx: WebGLRenderingContext): void {
-    /* Request unsigned int indices extention */
-    const extIndex = ctx.getExtension("OES_element_index_uint");
-    if (!extIndex) {
-      throw new Error("Your browser does not support 32 bit indices");
-    }
-  }
-
-  /**
-   * Returns the VAO extension back if supported
-   * @param ctx the WebGL rendering context to extend
-   * @return the VAO extension
-   */
-  public static requestVAOExt(ctx: WebGLRenderingContext): OES_vertex_array_object {
-    /* Request vao extension */
-    const extVAO = ctx.getExtension("OES_vertex_array_object");
-    if (!extVAO) {
-      throw new Error("Your browser does not support the VAO extension.");
-    }
-    return extVAO;
   }
 }
 
@@ -111,8 +79,7 @@ export class WebGLUtilities {
  */
 export abstract class CanvasAnimation {
   protected c: HTMLCanvasElement;
-  protected ctx: WebGLRenderingContext;
-  protected extVAO: OES_vertex_array_object;
+  protected ctx: WebGL2RenderingContext;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -124,8 +91,6 @@ export abstract class CanvasAnimation {
     // Create webgl rendering context
     this.c = canvas;
     this.ctx = WebGLUtilities.requestWebGLContext(this.c);
-    WebGLUtilities.requestIntIndicesExt(this.ctx);
-    this.extVAO = WebGLUtilities.requestVAOExt(this.ctx);
 
     if (debugMode) {
       this.ctx = Debugger.makeDebugContext(this.ctx, glErrorCallback, glCallback);

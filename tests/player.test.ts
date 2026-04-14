@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PLAYER_SPEED, Player } from "../src/game/player";
+import { createEmptyInventory, createPlayerState, PLAYER_MAX_HEALTH, PLAYER_SPEED, Player } from "../src/game/player";
 
 const P = (
   overrides: Partial<{
@@ -11,7 +11,19 @@ const P = (
     yaw: number;
     pitch: number;
   }> = {},
-) => new Player({ id: "p1", name: "test", x: 0, y: 0, z: 0, yaw: 0, pitch: 0, ...overrides });
+) =>
+  new Player(
+    createPlayerState({
+      id: "p1",
+      name: "test",
+      x: 0,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+      ...overrides,
+    }),
+  );
 
 const I = (dx: number, dy: number, dz: number) => ({
   dx,
@@ -26,6 +38,7 @@ describe("Player", () => {
   it("initializes with given position", () => {
     const player = P({ x: 10, y: 20, z: 30 });
     expect(player.id).toBe("p1");
+    expect(player.state.health).toBe(PLAYER_MAX_HEALTH);
     expect(player.state.x).toBeCloseTo(10);
     expect(player.state.y).toBeCloseTo(20);
     expect(player.state.z).toBeCloseTo(30);
@@ -62,5 +75,17 @@ describe("Player", () => {
     b.step(input);
     expect(a.state.x).toBeCloseTo(b.state.x);
     expect(a.state.z).toBeCloseTo(b.state.z);
+  });
+
+  it("adds items into matching stacks before using empty slots", () => {
+    const player = P();
+    player.state.inventory = createEmptyInventory();
+    player.state.inventory[0] = { itemId: "wood", quantity: 60 };
+
+    const leftover = player.addItem({ itemId: "wood", quantity: 8 });
+
+    expect(leftover).toBeNull();
+    expect(player.state.inventory[0]).toEqual({ itemId: "wood", quantity: 64 });
+    expect(player.state.inventory[1]).toEqual({ itemId: "wood", quantity: 4 });
   });
 });

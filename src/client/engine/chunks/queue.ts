@@ -1,12 +1,14 @@
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "@/game/chunk";
-import type { ChunkOrigin, ChunkQueueArgs, ChunkRenderData } from "./client";
+import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 
 interface ChunkLike {
   renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void;
   getBlockWorld(wx: number, wy: number, wz: number): CubeType;
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
+  cubeFaceTiles0(): Float32Array;
+  cubeFaceTiles1(): Float32Array;
   numCubes(): number;
 }
 
@@ -126,7 +128,7 @@ export class ChunkGenerationQueue {
   }
 
   /** Replaces the desired visible set and returns a render from already-cached chunks. */
-  setVisibleChunks(args: ChunkQueueArgs): ChunkRenderData {
+  setVisibleChunks(args: ChunkQueueArgs): ChunkBatchData {
     this.ensureSeed(args.seed);
     this.activeGenerationId = args.generationId;
     this.queuedChunks = this.buildQueue(args.chunkOrigins);
@@ -135,7 +137,7 @@ export class ChunkGenerationQueue {
   }
 
   /** Generates one queued chunk and returns an updated render, or `null` if done or stale. */
-  generateNext(args: ChunkQueueArgs): ChunkRenderData | null {
+  generateNext(args: ChunkQueueArgs): ChunkBatchData | null {
     this.ensureSeed(args.seed);
     if (args.generationId !== this.activeGenerationId) return null;
 
@@ -194,15 +196,16 @@ export class ChunkGenerationQueue {
     return queue;
   }
 
-  private renderVisible(args: ChunkQueueArgs): ChunkRenderData {
-    const { originX, originZ, renderDistance } = args;
-    const visibleChunks: ChunkLike[] = [];
+  private renderVisible({ originX, originZ, renderDistance }: ChunkQueueArgs): ChunkBatchData {
+    const entries: { chunkX: number; chunkZ: number; chunk: ChunkLike }[] = [];
 
     for (let cx = -renderDistance; cx <= renderDistance; cx++) {
       for (let cz = -renderDistance; cz <= renderDistance; cz++) {
-        const key = chunkKey(originX + cx * CHUNK_SIZE, originZ + cz * CHUNK_SIZE);
-        const chunk = this.cache.get(key);
-        if (chunk) visibleChunks.push(chunk);
+        const chunkX = originX + cx * CHUNK_SIZE;
+        const chunkZ = originZ + cz * CHUNK_SIZE;
+        const chunk = this.cache.get(chunkKey(chunkX, chunkZ));
+        if (!chunk) continue;
+        entries.push({ chunkX, chunkZ, chunk });
       }
     }
 
@@ -212,33 +215,24 @@ export class ChunkGenerationQueue {
       return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone;
     };
 
-    for (const chunk of visibleChunks) chunk.renderChunk(worldGetBlock);
+    for (const { chunk } of entries) chunk.renderChunk(worldGetBlock);
 
-    let totalPositionCount = 0;
-    let totalColorCount = 0;
-    let totalCubes = 0;
-    for (const chunk of visibleChunks) {
-      totalPositionCount += chunk.cubePositions().length;
-      totalColorCount += chunk.cubeColors().length;
-      totalCubes += chunk.numCubes();
+    const chunks: SingleChunkData[] = [];
+    for (const { chunkX, chunkZ, chunk } of entries) {
+      const numCubes = chunk.numCubes();
+      if (numCubes === 0) continue;
+      chunks.push({
+        originX: chunkX,
+        originZ: chunkZ,
+        cubePositions: chunk.cubePositions(),
+        cubeColors: chunk.cubeColors(),
+        cubeFaceTiles0: chunk.cubeFaceTiles0(),
+        cubeFaceTiles1: chunk.cubeFaceTiles1(),
+        numCubes,
+      });
     }
 
-    const cubePositions = new Float32Array(totalPositionCount);
-    const cubeColors = new Float32Array(totalColorCount);
-    let positionOffset = 0;
-    let colorOffset = 0;
-
-    for (const chunk of visibleChunks) {
-      const positions = chunk.cubePositions();
-      cubePositions.set(positions, positionOffset);
-      positionOffset += positions.length;
-
-      const colors = chunk.cubeColors();
-      cubeColors.set(colors, colorOffset);
-      colorOffset += colors.length;
-    }
-
-    return { cubePositions, cubeColors, numCubes: totalCubes };
+    return { chunks };
   }
 
   public getBlockWorld(wx: number, wy: number, wz: number): CubeType {

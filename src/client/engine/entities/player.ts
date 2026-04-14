@@ -1,4 +1,4 @@
-import type { PlayerState } from "@/game/player";
+import type { PlayerPublicState } from "@/game/player";
 import { lerp, lerpAngle } from "@/utils/interpolations";
 import { Quad } from "../render/quad";
 import playerFSText from "../render/shaders/player.frag";
@@ -8,7 +8,7 @@ import { ensureBuffer } from "./pipeline";
 
 const quad = new Quad();
 
-export const playerPipelineConfig: EntityPipelineConfig<PlayerState> = {
+export const playerPipelineConfig: EntityPipelineConfig<PlayerPublicState> = {
   interpolate: (prev, curr, t) => ({
     id: curr.id,
     name: curr.name,
@@ -18,7 +18,7 @@ export const playerPipelineConfig: EntityPipelineConfig<PlayerState> = {
     yaw: lerpAngle(prev.yaw, curr.yaw, t),
     pitch: lerp(prev.pitch, curr.pitch, t),
   }),
-  pack: (players: PlayerState[], buffers: GpuBuffers) => {
+  pack: (players: PlayerPublicState[], buffers: GpuBuffers) => {
     const count = players.length;
     const positions = ensureBuffer(buffers, "aOffset", count * 4);
     const pitches = ensureBuffer(buffers, "aPitch", count);

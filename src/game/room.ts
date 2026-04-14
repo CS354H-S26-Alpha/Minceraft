@@ -5,8 +5,9 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
+import type { InventoryClickTarget } from "./crafting";
 import type { EntityCollection } from "./entity-collection";
-import type { PlayerInput } from "./player";
+import type { PlayerPositionPacket } from "./player";
 import { PlayerCollection } from "./player-collection";
 import type { AuthenticatedApi, GameApi, PlayerCredentials, RoomSessionApi, RoomSnapshot } from "./protocol";
 
@@ -109,16 +110,46 @@ export class GameRoom extends DurableObject<Env> {
    * Enqueues player inputs, rate-limited to prevent flooding.
    * Batches arriving faster than `MIN_INPUT_INTERVAL_MS` are silently dropped.
    */
-  sendInputs(playerId: string, inputs: PlayerInput[]) {
+  sendPosition(playerId: string, packet: PlayerPositionPacket) {
+    this.ensureInitialized();
     const now = Date.now();
     const last = this.lastInputTime.get(playerId) ?? 0;
     if (now - last < MIN_INPUT_INTERVAL_MS) return;
     this.lastInputTime.set(playerId, now);
-    this.playerCollection.queueInputs(playerId, inputs);
+    const result = this.playerCollection.queuePosition(playerId, packet);
+    if (result === "invalid") {
+      this.pendingSelfState.add(playerId);
+      this.needsBroadcast = true;
+    }
   }
 
   /** Queues the player's own state for the next tick's snapshot. */
   requestState(playerId: string) {
+    this.ensureInitialized();
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Applies an inventory or crafting click for the player. */
+  clickInventory(playerId: string, target: InventoryClickTarget) {
+    this.ensureInitialized();
+    if (!this.playerCollection.interactInventory(playerId, target)) return;
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Returns crafting-grid items and the cursor back into the player's inventory. */
+  closeInventory(playerId: string) {
+    this.ensureInitialized();
+    if (!this.playerCollection.closeInventory(playerId)) return;
+    this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  /** Updates the active hotbar slot. */
+  selectHotbarSlot(playerId: string, slotIndex: number) {
+    this.ensureInitialized();
+    if (!this.playerCollection.setSelectedHotbarSlot(playerId, slotIndex)) return;
     this.pendingSelfState.add(playerId);
     this.needsBroadcast = true;
   }
@@ -200,11 +231,13 @@ export class GameRoom extends DurableObject<Env> {
    * as `self` when the player has a pending state request.
    */
   private personalizeSnapshot(snap: RoomSnapshot, playerId: string): RoomSnapshot {
-    const { [playerId]: self, ...players } = snap.players;
+    const { [playerId]: _self, ...players } = snap.players;
+    const includeSelf = this.pendingSelfState.has(playerId);
     return {
       ...snap,
       players,
-      self: this.pendingSelfState.has(playerId) ? self : undefined,
+      self: includeSelf ? this.playerCollection.selfState(playerId) : undefined,
+      inventoryUi: includeSelf ? this.playerCollection.getInventoryUi(playerId) : undefined,
     };
   }
 
@@ -268,9 +301,9 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     this.#playerId = playerId;
   }
 
-  /** Forwards inputs to the authoritative `GameRoom`. */
-  sendInputs(inputs: PlayerInput[]) {
-    return this.#room.sendInputs(this.#playerId, inputs);
+  /** Forwards client position packets to the authoritative `GameRoom`. */
+  sendPosition(packet: PlayerPositionPacket) {
+    return this.#room.sendPosition(this.#playerId, packet);
   }
 
   /** Asks the server to include own state in the next tick's snapshot. */
@@ -281,6 +314,21 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number) {
     return this.#room.teleportTo(this.#playerId, x, y, z);
+  }
+
+  /** Applies an inventory or crafting interaction. */
+  clickInventory(target: InventoryClickTarget) {
+    return this.#room.clickInventory(this.#playerId, target);
+  }
+
+  /** Returns crafting-grid items and the cursor to the player's inventory. */
+  closeInventory() {
+    return this.#room.closeInventory(this.#playerId);
+  }
+
+  /** Changes the selected hotbar slot. */
+  selectHotbarSlot(slotIndex: number) {
+    return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */

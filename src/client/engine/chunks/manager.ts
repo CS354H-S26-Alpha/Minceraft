@@ -1,27 +1,48 @@
-import { CHUNK_SIZE, chunkOrigin } from "@/game/chunk";
-import { type ChunkOrigin, type ChunkQueueArgs, type ChunkRenderData, ChunkWorkerClient } from "./client";
+import { Mat4, type Mat4Like } from "gl-matrix";
+import { CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
+import {
+  type ChunkBatchData,
+  type ChunkOrigin,
+  type ChunkQueueArgs,
+  type SingleChunkData,
+} from "./client";
+import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
 const RENDER_DISTANCE = 1;
 const LOAD_DISTANCE = RENDER_DISTANCE + 2;
 const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 
+export interface ChunkClient {
+  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
+  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  dispose(): void;
+}
+
 /**
  * Main-thread coordinator that keeps the renderer fed with terrain data
- * from the chunk generation worker.
+ * from the chunk generation worker, with per-frame frustum culling.
  */
 export class ChunkManager {
-  private readonly client: ChunkWorkerClient;
+  private readonly client: ChunkClient;
   private readonly seed: number;
   private lastOriginX = NaN;
   private lastOriginZ = NaN;
   private activeGeneration = 0;
 
+  private chunkDataMap = new Map<string, SingleChunkData>();
+  private positionBuffer = new Float32Array(0);
+  private colorBuffer = new Float32Array(0);
+  private faceTiles0Buffer = new Float32Array(0);
+  private faceTiles1Buffer = new Float32Array(0);
+
   positions = new Float32Array(0);
   colors = new Float32Array(0);
+  faceTiles0 = new Float32Array(0);
+  faceTiles1 = new Float32Array(0);
   count = 0;
 
-  constructor(spawnX: number, spawnZ: number, seed: number) {
-    this.client = new ChunkWorkerClient();
+  constructor(spawnX: number, spawnZ: number, seed: number, client: ChunkClient) {
+    this.client = client;
     this.seed = seed;
     this.update(spawnX, spawnZ);
   }
@@ -53,28 +74,77 @@ export class ChunkManager {
   }
 
   reset(wx: number, wz: number): void {
-    // Invalidate origin so update() will always trigger a new generation
     this.lastOriginX = NaN;
     this.lastOriginZ = NaN;
-    // Tell the worker to clear its chunk cache
     void this.client.clearCache();
     this.update(wx, wz);
   }
 
+  /** Frustum-cull chunks and concatenate visible ones into flat arrays. */
+  cull(viewMatrix: Readonly<Mat4Like>, projMatrix: Readonly<Mat4Like>): void {
+    const vp = Mat4.multiply(new Mat4(), projMatrix, viewMatrix) as Mat4;
+    const planes = extractFrustumPlanes(vp);
+
+    let totalCubes = 0;
+    const visible: SingleChunkData[] = [];
+
+    for (const chunk of this.chunkDataMap.values()) {
+      const aabb = chunkAABB(chunk.originX, chunk.originZ);
+      if (aabbInFrustum(aabb, planes)) {
+        visible.push(chunk);
+        totalCubes += chunk.numCubes;
+      }
+    }
+
+    if (this.positionBuffer.length < totalCubes * 4) {
+      this.positionBuffer = new Float32Array(totalCubes * 4);
+    }
+    if (this.colorBuffer.length < totalCubes * 3) {
+      this.colorBuffer = new Float32Array(totalCubes * 3);
+    }
+    if (this.faceTiles0Buffer.length < totalCubes * 3) {
+      this.faceTiles0Buffer = new Float32Array(totalCubes * 3);
+    }
+    if (this.faceTiles1Buffer.length < totalCubes * 3) {
+      this.faceTiles1Buffer = new Float32Array(totalCubes * 3);
+    }
+
+    let posOffset = 0;
+    let colOffset = 0;
+    let ft0Offset = 0;
+    let ft1Offset = 0;
+    for (const chunk of visible) {
+      this.positionBuffer.set(chunk.cubePositions, posOffset);
+      posOffset += chunk.cubePositions.length;
+      this.colorBuffer.set(chunk.cubeColors, colOffset);
+      colOffset += chunk.cubeColors.length;
+      this.faceTiles0Buffer.set(chunk.cubeFaceTiles0, ft0Offset);
+      ft0Offset += chunk.cubeFaceTiles0.length;
+      this.faceTiles1Buffer.set(chunk.cubeFaceTiles1, ft1Offset);
+      ft1Offset += chunk.cubeFaceTiles1.length;
+    }
+
+    this.positions = this.positionBuffer.subarray(0, totalCubes * 4);
+    this.colors = this.colorBuffer.subarray(0, totalCubes * 3);
+    this.faceTiles0 = this.faceTiles0Buffer.subarray(0, totalCubes * 3);
+    this.faceTiles1 = this.faceTiles1Buffer.subarray(0, totalCubes * 3);
+    this.count = totalCubes;
+  }
   private async load(args: ChunkQueueArgs): Promise<void> {
-    this.apply(await this.client.setVisibleChunks(args), args.generationId);
+    this.applyBatch(await this.client.setVisibleChunks(args), args.generationId);
     while (args.generationId === this.activeGeneration) {
       const next = await this.client.generateNext(args);
       if (!next) return;
-      this.apply(next, args.generationId);
+      this.applyBatch(next, args.generationId);
     }
   }
 
-  private apply(data: ChunkRenderData, generationId: number): void {
+  private applyBatch(batch: ChunkBatchData, generationId: number): void {
     if (generationId !== this.activeGeneration) return;
-    this.positions = data.cubePositions as Float32Array<ArrayBuffer>;
-    this.colors = data.cubeColors as Float32Array<ArrayBuffer>;
-    this.count = data.numCubes;
+    this.chunkDataMap.clear();
+    for (const chunk of batch.chunks) {
+      this.chunkDataMap.set(chunkKey(chunk.originX, chunk.originZ), chunk);
+    }
   }
 
   dispose(): void {

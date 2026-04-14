@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ChunkOrigin, VisibleChunkQueueArgs } from "../src/client/engine/chunks/chunk-generation-protocol";
-import { ChunkGenerationQueue } from "../src/client/engine/chunks/chunk-generation-queue";
+import type { ChunkOrigin, ChunkQueueArgs } from "../src/client/engine/chunks/client";
+import { ChunkGenerationQueue } from "../src/client/engine/chunks/queue";
 import { CubeType } from "../src/client/engine/render/cube-types";
 
 class FakeChunk {
@@ -27,12 +27,20 @@ class FakeChunk {
     return new Float32Array([1, 1, 1]);
   }
 
+  public cubeFaceTiles0(): Float32Array {
+    return new Float32Array([0, 0, 0]);
+  }
+
+  public cubeFaceTiles1(): Float32Array {
+    return new Float32Array([0, 0, 0]);
+  }
+
   public numCubes(): number {
     return 1;
   }
 }
 
-function buildArgs(generationId: number, seed: number, chunkOrigins: ChunkOrigin[]): VisibleChunkQueueArgs {
+function buildArgs(generationId: number, seed: number, chunkOrigins: ChunkOrigin[]): ChunkQueueArgs {
   return {
     generationId,
     seed,
@@ -57,9 +65,9 @@ describe("ChunkGenerationQueue", () => {
     ];
 
     queue.setVisibleChunks(buildArgs(1, 123, firstChunks));
-    queue.generateNextVisibleChunk(buildArgs(1, 123, firstChunks));
-    queue.generateNextVisibleChunk(buildArgs(1, 123, firstChunks));
-    queue.generateNextVisibleChunk(buildArgs(1, 123, firstChunks));
+    queue.generateNext(buildArgs(1, 123, firstChunks));
+    queue.generateNext(buildArgs(1, 123, firstChunks));
+    queue.generateNext(buildArgs(1, 123, firstChunks));
 
     const secondChunks = [
       { originX: 0, originZ: 0 },
@@ -67,7 +75,7 @@ describe("ChunkGenerationQueue", () => {
       { originX: 128, originZ: 0 },
     ];
     queue.setVisibleChunks(buildArgs(2, 123, secondChunks));
-    queue.generateNextVisibleChunk(buildArgs(2, 123, secondChunks));
+    queue.generateNext(buildArgs(2, 123, secondChunks));
 
     expect(created).toEqual(["0,0", "64,0", "0,64", "128,0"]);
   });
@@ -80,7 +88,7 @@ describe("ChunkGenerationQueue", () => {
     queue.setVisibleChunks(buildArgs(1, 123, firstChunks));
     queue.setVisibleChunks(buildArgs(2, 123, secondChunks));
 
-    expect(queue.generateNextVisibleChunk(buildArgs(1, 123, firstChunks))).toBeNull();
-    expect(queue.generateNextVisibleChunk(buildArgs(2, 123, secondChunks))?.numCubes).toBe(1);
+    expect(queue.generateNext(buildArgs(1, 123, firstChunks))).toBeNull();
+    expect(queue.generateNext(buildArgs(2, 123, secondChunks))?.chunks[0]?.numCubes).toBe(1);
   });
 });

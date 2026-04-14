@@ -2,6 +2,7 @@ import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
+import { createInventoryUiState } from "@/game/crafting";
 import { Player } from "@/game/player";
 import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
@@ -13,8 +14,8 @@ import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
  * consumed by `createGame`. Must be called inside a Solid reactive scope.
  */
 export function joinWorld(roomId: string) {
-  const { credentials, join } = useSession();
-  const { playerId } = credentials;
+  const { join, credentials } = useSession();
+  const playerId = credentials.playerId;
   const [player, setPlayer] = createSignal<Player>();
   const replicated = createMemo(() => {
     const p = player();
@@ -27,6 +28,7 @@ export function joinWorld(roomId: string) {
     acks: {},
     tickTimeMs: 0,
   });
+  const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
@@ -37,16 +39,19 @@ export function joinWorld(roomId: string) {
     batch(() => {
       setSnapCount((c) => c + 1);
       setSnapshot(reconcile(snap));
+      if (snap.inventoryUi) {
+        setInventoryUi(reconcile(snap.inventoryUi));
+      }
+      replicated()?.acknowledge(snap.acks[playerId] ?? 0);
+      const currentPlayer = player();
 
       if (snap.self) {
-        if (!player()) {
+        if (!currentPlayer) {
           setPlayer(new Player(snap.self));
         } else {
           replicated()?.initialize(snap.self);
         }
       }
-
-      replicated()?.acknowledge(snap.acks[playerId] ?? 0);
     });
   }).then((s) => setSession(() => s));
 
@@ -54,5 +59,5 @@ export function joinWorld(roomId: string) {
     session()?.leave();
   });
 
-  return { player, snapshot, snapCount, session, replicated } as const;
+  return { player, snapshot, snapCount, session, replicated, inventoryUi } as const;
 }

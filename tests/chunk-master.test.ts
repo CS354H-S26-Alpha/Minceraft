@@ -1,33 +1,40 @@
 import { describe, expect, it } from "vitest";
-import type { ChunkGenerationService } from "../src/client/engine/chunks/chunk-generation-client";
-import type {
-  VisibleChunkQueueArgs,
-  VisibleChunkRenderData,
-} from "../src/client/engine/chunks/chunk-generation-protocol";
-import { ChunkMaster } from "../src/client/engine/chunks/chunk-master";
+import type { ChunkBatchData, ChunkQueueArgs } from "../src/client/engine/chunks/client";
+import type { ChunkClient } from "../src/client/engine/chunks/manager";
+import { ChunkManager } from "../src/client/engine/chunks/manager";
 
 function flushPromises(): Promise<void> {
   return Promise.resolve();
 }
 
-function renderData(value: number): VisibleChunkRenderData {
+function renderData(value: number): ChunkBatchData {
   return {
-    cubePositions: new Float32Array([value, 0, 0, 0]),
-    cubeColors: new Float32Array([value, 0, 0]),
-    numCubes: value,
+    chunks: [
+      {
+        originX: 0,
+        originZ: 0,
+        cubePositions: new Float32Array([value, 0, 0, 0]),
+        cubeColors: new Float32Array([value, 0, 0]),
+        cubeFaceTiles0: new Float32Array(3),
+        cubeFaceTiles1: new Float32Array(3),
+        numCubes: 1,
+      },
+    ],
   };
 }
 
-describe("ChunkMaster", () => {
+const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+describe("ChunkManager", () => {
   it("submits the visible chunk queue in center-first order and pumps incremental updates", async () => {
-    const setCalls: VisibleChunkQueueArgs[] = [];
+    const setCalls: ChunkQueueArgs[] = [];
     let nextCalls = 0;
-    const client: ChunkGenerationService = {
+    const client: ChunkClient = {
       async setVisibleChunks(args) {
         setCalls.push(args);
         return renderData(0);
       },
-      async generateNextVisibleChunk() {
+      async generateNext() {
         nextCalls++;
         if (nextCalls > 3) return null;
         return renderData(nextCalls);
@@ -35,7 +42,7 @@ describe("ChunkMaster", () => {
       dispose: () => {},
     };
 
-    const chunkMaster = new ChunkMaster(0, 0, 123, client);
+    const chunkManager = new ChunkManager(0, 0, 123, client);
 
     await flushPromises();
     await flushPromises();
@@ -50,20 +57,21 @@ describe("ChunkMaster", () => {
       { originX: -64, originZ: 64 },
       { originX: 0, originZ: -64 },
     ]);
-    expect(Array.from(chunkMaster.getNearCubePositionsFlattened())).toEqual([3, 0, 0, 0]);
-    expect(Array.from(chunkMaster.getNearCubeColorsFlattened())).toEqual([3, 0, 0]);
-    expect(chunkMaster.getNearCubeSize()).toBe(3);
+    chunkManager.cull(identity, identity);
+    expect(Array.from(chunkManager.positions)).toEqual([3, 0, 0, 0]);
+    expect(Array.from(chunkManager.colors)).toEqual([3, 0, 0]);
+    expect(chunkManager.count).toBe(1);
   });
 
   it("ignores stale queued results after moving to a new chunk", async () => {
-    let resolveFirst: ((value: VisibleChunkRenderData | null) => void) | undefined;
+    let resolveFirst: ((value: ChunkBatchData | null) => void) | undefined;
     let generationSeenBySet = -1;
-    const client: ChunkGenerationService = {
+    const client: ChunkClient = {
       async setVisibleChunks(args) {
         generationSeenBySet = args.generationId;
         return renderData(args.generationId);
       },
-      generateNextVisibleChunk(args) {
+      generateNext(args) {
         if (args.generationId === 1) {
           return new Promise((resolve) => {
             resolveFirst = resolve;
@@ -74,18 +82,19 @@ describe("ChunkMaster", () => {
       dispose: () => {},
     };
 
-    const chunkMaster = new ChunkMaster(0, 0, 123, client);
+    const chunkManager = new ChunkManager(0, 0, 123, client);
     await flushPromises();
 
-    chunkMaster.updateChunksAroundPos(64, 0);
+    chunkManager.update(64, 0);
     await flushPromises();
 
     resolveFirst?.(renderData(999));
     await flushPromises();
 
     expect(generationSeenBySet).toBe(2);
-    expect(Array.from(chunkMaster.getNearCubePositionsFlattened())).toEqual([2, 0, 0, 0]);
-    expect(Array.from(chunkMaster.getNearCubeColorsFlattened())).toEqual([2, 0, 0]);
-    expect(chunkMaster.getNearCubeSize()).toBe(2);
+    chunkManager.cull(identity, identity);
+    expect(Array.from(chunkManager.positions)).toEqual([2, 0, 0, 0]);
+    expect(Array.from(chunkManager.colors)).toEqual([2, 0, 0]);
+    expect(chunkManager.count).toBe(1);
   });
 });
