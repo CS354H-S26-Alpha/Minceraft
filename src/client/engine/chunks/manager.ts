@@ -1,16 +1,17 @@
 import { Mat4, type Mat4Like } from "gl-matrix";
 import { CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
-import {
-  type ChunkBatchData,
-  type ChunkOrigin,
-  type ChunkQueueArgs,
-  type SingleChunkData,
-} from "./client";
+import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
 const RENDER_DISTANCE = 1;
 const LOAD_DISTANCE = RENDER_DISTANCE + 2;
 const EVICT_DISTANCE = LOAD_DISTANCE + 2;
+
+export interface ChunkClient {
+  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
+  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  dispose(): void;
+}
 
 export interface ChunkClient {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
