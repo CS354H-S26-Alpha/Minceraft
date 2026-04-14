@@ -160,7 +160,7 @@ export interface PlayerPositionPacket {
 export class Player extends Entity<PlayerState, PlayerInput> {
   public static readonly CYLINDER_RADIUS = 0.4;
   public static readonly CYLINDER_HEIGHT = 2;
-  
+
   public collisionQuery: CollisionQuery | undefined = undefined;
 
   /** Unique player identifier (alias for `state.id`). */
