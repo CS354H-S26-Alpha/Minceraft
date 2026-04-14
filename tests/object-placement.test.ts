@@ -7,6 +7,7 @@ import {
   type ObjectPlacementSample,
   PLACED_OBJECT_TYPES,
   PlacedObjectType,
+  RENDERABLE_PLACED_OBJECT_TYPES,
   supportsObjectPlacement,
   supportsPlacedFootprint,
 } from "../src/game/object-placement";
@@ -33,6 +34,14 @@ function sample(overrides: Partial<ObjectPlacementSample> = {}): ObjectPlacement
 describe("object placement rules", () => {
   it("defines rules for every supported object type", () => {
     expect(Object.keys(OBJECT_PLACEMENT_RULES).sort()).toEqual([...PLACED_OBJECT_TYPES].sort());
+  });
+
+  it("limits renderable placed object types to non-block props", () => {
+    expect(RENDERABLE_PLACED_OBJECT_TYPES).toEqual([
+      PlacedObjectType.Grass,
+      PlacedObjectType.Rock,
+      PlacedObjectType.EnemySpawn,
+    ]);
   });
 
   it("computes local relief from neighbor heights", () => {
