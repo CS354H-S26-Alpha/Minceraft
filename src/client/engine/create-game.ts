@@ -259,7 +259,7 @@ export function createGame(args: CreateGameArgs): GameState {
       computeTimeHistory: computeHistory.ordered(),
       placedObjectCount: renderedPlacedObjectCount,
       generatedPlacedObjectCount: chunks.getVisiblePlacedObjectCount(),
-      placedObjectCounts: renderedPlacedObjectCounts,
+      placedObjectCounts: { ...chunks.getVisiblePlacedObjectCounts() },
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {

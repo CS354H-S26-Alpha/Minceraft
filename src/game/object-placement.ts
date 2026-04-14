@@ -145,7 +145,7 @@ export const OBJECT_PLACEMENT_RULES = {
     maxLocalRelief: 0,
     minSpacing: 5,
     noiseFrequency: 1 / 14,
-    spawnThreshold: 0.75,
+    spawnThreshold: 0.73,
     edgePadding: 2,
     requiresDrySurface: true,
     tags: ["low-profile"],
@@ -173,9 +173,9 @@ export const OBJECT_PLACEMENT_RULES = {
     minSurfaceY: 50,
     maxSurfaceY: 88,
     maxLocalRelief: 0,
-    minSpacing: 7,
+    minSpacing: 6,
     noiseFrequency: 1 / 24,
-    spawnThreshold: 0.84,
+    spawnThreshold: 0.8,
     edgePadding: 2,
     requiresDrySurface: true,
     tags: ["tall", "blocks-visibility"],
@@ -221,7 +221,14 @@ export function supportsObjectPlacement(rule: ObjectPlacementRule, sample: Objec
 }
 
 function placementNoise(rule: ObjectPlacementRule, seed: number, x: number, z: number): number {
-  return valueNoise(seed + OBJECT_PLACEMENT_SEED_OFFSETS[rule.type], x, z, rule.noiseFrequency);
+  const noise = valueNoise(seed + OBJECT_PLACEMENT_SEED_OFFSETS[rule.type], x, z, rule.noiseFrequency);
+  if (rule.type === PlacedObjectType.Tree || rule.type === PlacedObjectType.Shrub) {
+    const distanceSq = x * x + z * z;
+    if (distanceSq <= 192 * 192) {
+      return Math.min(1, noise + 0.08);
+    }
+  }
+  return noise;
 }
 
 function placementJitterRange(type: PlacedObjectType): number {

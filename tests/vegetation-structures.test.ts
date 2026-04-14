@@ -62,6 +62,7 @@ describe("vegetation structures", () => {
     expect(canPlaceVegetationTemplate(access, 20, 64, 20, template)).toBe(true);
     placeVegetationTemplate(access, 20, 64, 20, template);
 
-    expect(access.placed.get("20,65,20")).toBe(CubeType.ShrubLeaf);
+    expect(access.placed.get("20,65,20")).toBe(CubeType.ShrubStem);
+    expect(access.placed.get("20,66,20")).toBe(CubeType.ShrubLeaf);
   });
 });

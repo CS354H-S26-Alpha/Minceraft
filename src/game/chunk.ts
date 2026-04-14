@@ -34,6 +34,13 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private seed: number; // Seed for terrain generation
   private placedObjectsData: PlacedObject[] = [];
+  private placedObjectCountsData: Record<PlacedObjectType, number> = {
+    [PlacedObjectType.Grass]: 0,
+    [PlacedObjectType.Shrub]: 0,
+    [PlacedObjectType.Rock]: 0,
+    [PlacedObjectType.Tree]: 0,
+    [PlacedObjectType.EnemySpawn]: 0,
+  };
 
   // types to update for Rendering
   private cubes: number = 0;
@@ -76,10 +83,18 @@ export class Chunk {
     chunkOriginZ: number,
   ): PlacedObject[] {
     const renderableObjects: PlacedObject[] = [];
+    const counts: Record<PlacedObjectType, number> = {
+      [PlacedObjectType.Grass]: 0,
+      [PlacedObjectType.Shrub]: 0,
+      [PlacedObjectType.Rock]: 0,
+      [PlacedObjectType.Tree]: 0,
+      [PlacedObjectType.EnemySpawn]: 0,
+    };
 
     for (const anchor of anchors) {
       if (anchor.type !== PlacedObjectType.Tree && anchor.type !== PlacedObjectType.Shrub) {
         renderableObjects.push(anchor);
+        counts[anchor.type]++;
         continue;
       }
 
@@ -113,8 +128,10 @@ export class Chunk {
         anchorLocalZ,
         template,
       );
+      counts[anchor.type]++;
     }
 
+    this.placedObjectCountsData = counts;
     return renderableObjects;
   }
 
@@ -277,6 +294,21 @@ export class Chunk {
     // Pre-compute min neighbor surface height for interior columns.
     // Blocks at y in (0, surfaceY) with y <= minNeighborHeight are fully buried.
     const minNH = new Uint8Array(STRIDE_Y);
+    const topYByColumn = new Uint8Array(STRIDE_Y);
+    for (let i = 0; i < S; i++) {
+      for (let j = 0; j < S; j++) {
+        const idx = i * S + j;
+        let topY = hm[idx]!;
+        for (let y = CHUNK_HEIGHT - 1; y > topY; y--) {
+          if (this.getBlock(j, y, i) !== CubeType.Air) {
+            topY = y;
+            break;
+          }
+        }
+        topYByColumn[idx] = topY;
+      }
+    }
+
     for (let i = 1; i < S - 1; i++) {
       for (let j = 1; j < S - 1; j++) {
         const idx = i * S + j;
@@ -290,11 +322,12 @@ export class Chunk {
       for (let j = 0; j < S; j++) {
         const idx = i * S + j;
         const surfY = hm[idx]!;
+        const topY = topYByColumn[idx]!;
         if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
-          total += surfY + 1;
+          total += topY + 1;
         } else {
           const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
-          total += 1 + (surfY - start + 1);
+          total += 1 + (topY - start + 1);
         }
       }
     }
@@ -307,12 +340,13 @@ export class Chunk {
       for (let j = 0; j < S; j++) {
         const idx = i * S + j;
         const surfY = hm[idx]!;
+        const topY = topYByColumn[idx]!;
         const wx = topleftx + j;
         const wz = topleftz + i;
 
         if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
           // Edge column: use touchesAir with cross-chunk awareness
-          for (let y = 0; y <= surfY; y++) {
+          for (let y = 0; y <= topY; y++) {
             const blockType = this.getBlock(j, y, i);
             if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
             const c = CUBE_TYPE_INFO[blockType].baseColor;
@@ -339,8 +373,10 @@ export class Chunk {
           count++;
 
           const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
-          for (let y = start; y <= surfY; y++) {
+          for (let y = start; y <= topY; y++) {
             const bt = blocks[y * STRIDE_Y + idx]! as CubeType;
+            if (bt === CubeType.Air) continue;
+            if (y > surfY && !touchesAir(j, y, i)) continue;
             const c = CUBE_TYPE_INFO[bt].baseColor;
             positions[4 * count] = wx;
             positions[4 * count + 1] = y;
@@ -372,6 +408,10 @@ export class Chunk {
 
   public placedObjects(): readonly PlacedObject[] {
     return this.placedObjectsData;
+  }
+
+  public placedObjectCounts(): Readonly<Record<PlacedObjectType, number>> {
+    return this.placedObjectCountsData;
   }
 
   /** Returns the number of cubes to render this frame. */

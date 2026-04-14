@@ -123,4 +123,42 @@ describe("Chunk", () => {
 
     expect(vegetationBlocks).toBeGreaterThan(0);
   });
+
+  it("renders vegetation blocks that rise above the terrain surface", () => {
+    const chunk = new Chunk(32, 32, 64, 123);
+    const renderedPositions = new Set<string>();
+
+    const positions = chunk.cubePositions();
+    for (let i = 0; i < chunk.numCubes(); i++) {
+      renderedPositions.add(`${positions[4 * i]},${positions[4 * i + 1]},${positions[4 * i + 2]}`);
+    }
+
+    let foundRenderedVegetation = false;
+    const originX = 32 - 32;
+    const originZ = 32 - 32;
+    for (let z = 0; z < 64 && !foundRenderedVegetation; z++) {
+      for (let x = 0; x < 64 && !foundRenderedVegetation; x++) {
+        const surfaceY = chunk.heightMap[z * 64 + x] as number;
+        for (let y = surfaceY + 1; y < CHUNK_HEIGHT; y++) {
+          const block = chunk.getBlock(x, y, z);
+          if (
+            block !== CubeType.OakLog &&
+            block !== CubeType.OakLeaf &&
+            block !== CubeType.ShrubLeaf &&
+            block !== CubeType.ShrubStem
+          ) {
+            continue;
+          }
+
+          const key = `${originX + x},${y},${originZ + z}`;
+          if (renderedPositions.has(key)) {
+            foundRenderedVegetation = true;
+            break;
+          }
+        }
+      }
+    }
+
+    expect(foundRenderedVegetation).toBe(true);
+  });
 });

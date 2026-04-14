@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChunkOrigin, ChunkQueueArgs } from "../src/client/engine/chunks/client";
 import { ChunkGenerationQueue } from "../src/client/engine/chunks/queue";
 import { CubeType } from "../src/client/engine/render/cube-types";
-import type { PlacedObject } from "../src/game/object-placement";
+import { PlacedObjectType, type PlacedObject } from "../src/game/object-placement";
 
 class FakeChunk {
   public renderCount = 0;
@@ -34,6 +34,16 @@ class FakeChunk {
 
   public placedObjects(): readonly PlacedObject[] {
     return [];
+  }
+
+  public placedObjectCounts(): Readonly<Record<PlacedObjectType, number>> {
+    return {
+      [PlacedObjectType.Grass]: 0,
+      [PlacedObjectType.Shrub]: 0,
+      [PlacedObjectType.Rock]: 0,
+      [PlacedObjectType.Tree]: 0,
+      [PlacedObjectType.EnemySpawn]: 0,
+    };
   }
 }
 

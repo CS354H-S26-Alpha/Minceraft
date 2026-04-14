@@ -46,6 +46,7 @@ const TREE_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 1, dy: 5, dz: 0, cubeType: CubeType.OakLeaf },
       { dx: 0, dy: 5, dz: -1, cubeType: CubeType.OakLeaf },
       { dx: 0, dy: 5, dz: 1, cubeType: CubeType.OakLeaf },
+      { dx: 0, dy: 6, dz: 0, cubeType: CubeType.OakLeaf },
     ],
   },
   {
@@ -73,6 +74,7 @@ const TREE_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 1, dy: 6, dz: 0, cubeType: CubeType.OakLeaf },
       { dx: 0, dy: 6, dz: -1, cubeType: CubeType.OakLeaf },
       { dx: 0, dy: 6, dz: 1, cubeType: CubeType.OakLeaf },
+      { dx: 0, dy: 7, dz: 0, cubeType: CubeType.OakLeaf },
     ],
   },
   {
@@ -103,6 +105,7 @@ const TREE_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 1, dy: 5, dz: 0, cubeType: CubeType.OakLeaf },
       { dx: 0, dy: 5, dz: -1, cubeType: CubeType.OakLeaf },
       { dx: 0, dy: 5, dz: 1, cubeType: CubeType.OakLeaf },
+      { dx: 0, dy: 6, dz: 0, cubeType: CubeType.OakLeaf },
     ],
   },
 ] as const;
@@ -113,13 +116,15 @@ const SHRUB_TEMPLATES: readonly VegetationStructureTemplate[] = [
     blocks: [
       { dx: 0, dy: 1, dz: 0, cubeType: CubeType.ShrubStem },
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: -1, dy: 2, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: 1, dy: 2, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: 0, dy: 2, dz: -1, cubeType: CubeType.ShrubLeaf },
+      { dx: 0, dy: 2, dz: 1, cubeType: CubeType.ShrubLeaf },
       { dx: -1, dy: 1, dz: 0, cubeType: CubeType.ShrubLeaf },
       { dx: 1, dy: 1, dz: 0, cubeType: CubeType.ShrubLeaf },
       { dx: 0, dy: 1, dz: -1, cubeType: CubeType.ShrubLeaf },
       { dx: 0, dy: 1, dz: 1, cubeType: CubeType.ShrubLeaf },
-      { dx: -1, dy: 1, dz: -1, cubeType: CubeType.ShrubLeaf },
-      { dx: 1, dy: 1, dz: -1, cubeType: CubeType.ShrubLeaf },
-      { dx: 0, dy: 1, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: 0, dy: 3, dz: 0, cubeType: CubeType.ShrubLeaf },
     ],
   },
   {
@@ -135,6 +140,11 @@ const SHRUB_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: -1, dy: 1, dz: 1, cubeType: CubeType.ShrubLeaf },
       { dx: 1, dy: 1, dz: 1, cubeType: CubeType.ShrubLeaf },
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: -1, dy: 2, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: 1, dy: 2, dz: 0, cubeType: CubeType.ShrubLeaf },
+      { dx: 0, dy: 2, dz: -1, cubeType: CubeType.ShrubLeaf },
+      { dx: 0, dy: 2, dz: 1, cubeType: CubeType.ShrubLeaf },
+      { dx: 0, dy: 3, dz: 0, cubeType: CubeType.ShrubLeaf },
     ],
   },
 ] as const;

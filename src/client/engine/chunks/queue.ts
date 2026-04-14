@@ -10,6 +10,7 @@ interface ChunkLike {
   cubeColors(): Float32Array;
   numCubes(): number;
   placedObjects(): readonly PlacedObject[];
+  placedObjectCounts(): Readonly<Record<PlacedObjectType, number>>;
 }
 
 type ChunkFactory = (centerX: number, centerZ: number, size: number, seed: number) => ChunkLike;
@@ -115,7 +116,10 @@ export class ChunkGenerationQueue {
       totalCubes += chunk.numCubes();
       for (const object of chunk.placedObjects()) {
         placedObjects.push(object);
-        placedObjectCounts[object.type]++;
+      }
+      const chunkCounts = chunk.placedObjectCounts();
+      for (const type of Object.values(PlacedObjectType)) {
+        placedObjectCounts[type] += chunkCounts[type];
       }
     }
 

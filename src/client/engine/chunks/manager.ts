@@ -85,7 +85,7 @@ export class ChunkManager {
   }
 
   getVisiblePlacedObjectCount(): number {
-    return this.placedObjects.length;
+    return Object.values(this.placedObjectCounts).reduce((total, count) => total + count, 0);
   }
 
   getVisiblePlacedObjectCounts(): Readonly<Record<PlacedObjectType, number>> {

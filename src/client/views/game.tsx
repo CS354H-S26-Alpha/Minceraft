@@ -1,5 +1,5 @@
 import { createSignal, Show } from "solid-js";
-import { RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
+import { PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { createGame } from "../engine";
 import { joinWorld } from "../primitives/join-world";
@@ -25,7 +25,7 @@ export default function GameView() {
             computeTimeHistory={game.diagnostics.client.computeTimeHistory}
             placedObjectCount={game.diagnostics.client.placedObjectCount}
             generatedPlacedObjectCount={game.diagnostics.client.generatedPlacedObjectCount}
-            placedObjectCounts={RENDERABLE_PLACED_OBJECT_TYPES.map((type) => ({
+            placedObjectCounts={PLACED_OBJECT_TYPES.map((type) => ({
               type,
               count: game.diagnostics.client.placedObjectCounts[type],
             }))}
