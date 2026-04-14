@@ -1,33 +1,56 @@
 precision mediump float;
 
+uniform vec4 uLightPos;
 uniform mat4 uView;
 uniform mat4 uProj;
 
+attribute vec4 aNorm;
 attribute vec4 aVertPos;
-attribute vec4 aOffset; // xyz = base position, w = render type
+attribute vec4 aOffset; // xyz = base position, w = random yaw
 attribute float aScale;
+attribute vec2 aMeta; // x = render type, y = random yaw
 attribute vec2 aUV;
 
 varying vec2 uv;
 varying float objectType;
+varying float lightMix;
+varying float heightMix;
+varying vec3 localPos;
 
 vec2 sizeForType(float typeIndex) {
   if (typeIndex < 0.5) return vec2(0.45, 0.85);
-  if (typeIndex < 1.5) return vec2(0.9, 1.1);
-  if (typeIndex < 2.5) return vec2(1.0, 1.0);
-  if (typeIndex < 3.5) return vec2(1.8, 3.4);
-  return vec2(1.2, 2.2);
+  if (typeIndex < 1.5) return vec2(1.1, 1.35);
+  if (typeIndex < 2.5) return vec2(1.15, 1.05);
+  if (typeIndex < 3.5) return vec2(2.2, 3.8);
+  return vec2(1.35, 2.3);
 }
 
 void main() {
-  vec2 local = vec2(aVertPos.x, aVertPos.y + 0.5);
-  vec2 size = sizeForType(aOffset.w) * aScale;
+  float yaw = aMeta.y;
+  float cy = cos(yaw);
+  float sy = sin(yaw);
+  vec2 size = sizeForType(aMeta.x) * aScale;
 
-  vec3 cameraRight = normalize(uView[0].xyz);
-  vec3 cameraUp = normalize(uView[1].xyz);
-  vec3 worldPos = aOffset.xyz + cameraRight * local.x * size.x + cameraUp * local.y * size.y;
+  vec3 local = vec3(aVertPos.x * size.x, (aVertPos.y + 0.5) * size.y, aVertPos.z * size.x);
+  vec3 rotated = vec3(
+    local.x * cy + local.z * sy,
+    local.y,
+    -local.x * sy + local.z * cy
+  );
+  vec3 worldPos = aOffset.xyz + rotated;
+
+  vec3 localNormal = vec3(aNorm.x, aNorm.y, aNorm.z);
+  vec3 rotatedNormal = normalize(vec3(
+    localNormal.x * cy + localNormal.z * sy,
+    localNormal.y,
+    -localNormal.x * sy + localNormal.z * cy
+  ));
+  vec3 lightDir = normalize(uLightPos.xyz - worldPos);
 
   gl_Position = uProj * uView * vec4(worldPos, 1.0);
   uv = aUV;
-  objectType = aOffset.w;
+  objectType = aMeta.x;
+  lightMix = clamp(dot(rotatedNormal, lightDir) * 0.45 + 0.55, 0.3, 1.0);
+  heightMix = clamp((aVertPos.y + 0.5), 0.0, 1.0);
+  localPos = rotated;
 }
