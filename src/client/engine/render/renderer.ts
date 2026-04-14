@@ -34,7 +34,7 @@ interface BlockAtlasTextureInfo {
 
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: WebGLRenderingContext;
+  private readonly ctx: WebGL2RenderingContext;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly blockAtlasTexture: WebGLTexture;
   private readonly blockAtlasTileCount: number;
@@ -51,19 +51,17 @@ export class Renderer {
     this.canvas = canvas;
     this.ctx = WebGLUtilities.requestWebGLContext(canvas);
     this.gpuTimer = new GpuTimer(this.ctx);
-    WebGLUtilities.requestIntIndicesExt(this.ctx);
-    const extVAO = WebGLUtilities.requestVAOExt(this.ctx);
 
     const cubeGeometry = new Cube();
     const blockAtlas = createBlockAtlasTexture(this.ctx);
     this.blockAtlasTexture = blockAtlas.texture;
     this.blockAtlasTileCount = blockAtlas.tileCount;
-    this.blankCubeRenderPass = new RenderPass(extVAO, this.ctx, blankCubeVSText, blankCubeFSText);
+    this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
     this.entityPasses = new Map();
     for (const def of entityDefs) {
-      const pass = new RenderPass(extVAO, this.ctx, def.vertexShader, def.fragmentShader);
+      const pass = new RenderPass(this.ctx, def.vertexShader, def.fragmentShader);
       this.initEntityPass(pass, def);
       this.entityPasses.set(def.key, {
         pass,
@@ -226,13 +224,13 @@ export class Renderer {
   }
 
   private addSharedUniforms(pass: RenderPass): void {
-    pass.addUniform("uLightPos", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    pass.addUniform("uLightPos", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform4fv(loc, this.currentView.lightPosition);
     });
-    pass.addUniform("uProj", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    pass.addUniform("uProj", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
     });
-    pass.addUniform("uView", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    pass.addUniform("uView", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
     });
     pass.addUniform("uBlockAtlas", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {

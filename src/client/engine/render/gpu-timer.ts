@@ -1,31 +1,25 @@
 interface TimerQueryExt {
-  createQueryEXT(): object | null;
-  deleteQueryEXT(query: object): void;
-  beginQueryEXT(target: number, query: object): void;
-  endQueryEXT(target: number): void;
-  getQueryObjectEXT(query: object, pname: number): unknown;
   readonly TIME_ELAPSED_EXT: number;
-  readonly QUERY_RESULT_AVAILABLE_EXT: number;
-  readonly QUERY_RESULT_EXT: number;
   readonly GPU_DISJOINT_EXT: number;
 }
 
 /**
- * Async GPU timer using the EXT_disjoint_timer_query extension.
+ * Async GPU timer using native WebGL2 queries with the
+ * EXT_disjoint_timer_query_webgl2 extension for timing constants.
  *
  * Query results arrive 1-2 frames late, so the class maintains a queue of
  * pending queries and drains completed ones each frame.
  */
 export class GpuTimer {
   private readonly ext: TimerQueryExt | null;
-  private readonly gl: WebGLRenderingContext;
-  private pending: object[] = [];
+  private readonly gl: WebGL2RenderingContext;
+  private pending: WebGLQuery[] = [];
   private active = false;
   lastTimeMs = 0;
 
-  constructor(gl: WebGLRenderingContext) {
+  constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
-    this.ext = gl.getExtension("EXT_disjoint_timer_query") as TimerQueryExt | null;
+    this.ext = gl.getExtension("EXT_disjoint_timer_query_webgl2") as TimerQueryExt | null;
   }
 
   get supported(): boolean {
@@ -34,16 +28,16 @@ export class GpuTimer {
 
   begin(): void {
     if (!this.ext) return;
-    const query = this.ext.createQueryEXT();
+    const query = this.gl.createQuery();
     if (!query) return;
     this.pending.push(query);
-    this.ext.beginQueryEXT(this.ext.TIME_ELAPSED_EXT, query);
+    this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, query);
     this.active = true;
   }
 
   end(): void {
     if (!this.ext || !this.active) return;
-    this.ext.endQueryEXT(this.ext.TIME_ELAPSED_EXT);
+    this.gl.endQuery(this.ext.TIME_ELAPSED_EXT);
     this.active = false;
   }
 
@@ -56,15 +50,15 @@ export class GpuTimer {
     for (;;) {
       const query = this.pending[0];
       if (!query) break;
-      const available = this.ext.getQueryObjectEXT(query, this.ext.QUERY_RESULT_AVAILABLE_EXT) as boolean;
+      const available = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT_AVAILABLE) as boolean;
       if (!available) break;
 
       this.pending.shift();
       if (!disjoint) {
-        const ns = this.ext.getQueryObjectEXT(query, this.ext.QUERY_RESULT_EXT) as number;
+        const ns = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT) as number;
         this.lastTimeMs = ns / 1_000_000;
       }
-      this.ext.deleteQueryEXT(query);
+      this.gl.deleteQuery(query);
     }
   }
 }

@@ -461,11 +461,11 @@ export class Debugger {
   /**
    * PROVIDED BY KHRONOS
    * Initializes this module. Safe to call more than once.
-   * @param {!WebGLRenderingContext} ctx A WebGL context. If
+   * @param {!WebGL2RenderingContext} ctx A WebGL context. If
    *    you have more than one context it doesn't matter which one
    *    you pass in, it is only used to pull out constants.
    */
-  public static init(ctx: WebGLRenderingContext): void {
+  public static init(ctx: WebGL2RenderingContext): void {
     if (Debugger.glEnums == null) {
       Debugger.glEnums = {};
       Debugger.enumStringToValue = {};
@@ -618,14 +618,14 @@ export class Debugger {
    * @param {!function(funcName, args): void} opt_onFunc The
    *        function to call when each webgl function is called.
    *        You can use this to log all calls for example.
-   * @param {!WebGLRenderingContext} opt_err_ctx The webgl context
+   * @param {!WebGL2RenderingContext} opt_err_ctx The webgl context
    *        to call getError on if different than ctx.
    */
   public static makeDebugContext(
-    ctx: WebGLRenderingContext,
+    ctx: WebGL2RenderingContext,
     opt_onErrorFunc: GLErrorCallback = Debugger.defaultErrorCallback,
     opt_onFunc?: GLCallback,
-  ): WebGLRenderingContext {
+  ): WebGL2RenderingContext {
     Debugger.init(ctx);
 
     // Holds booleans for each GL error so after we get the error ourselves
@@ -633,7 +633,7 @@ export class Debugger {
     var glErrorShadow = {};
 
     // Makes a function that calls a WebGL function and then calls getError.
-    function makeErrorWrapper(ctx: WebGLRenderingContext, functionName: string) {
+    function makeErrorWrapper(ctx: WebGL2RenderingContext, functionName: string) {
       return function () {
         if (opt_onFunc) {
           opt_onFunc(functionName, arguments);
@@ -671,7 +671,7 @@ export class Debugger {
     }
 
     // Override the getError function with one that returns our saved results.
-    (wrapper as WebGLRenderingContext).getError = (): number => {
+    (wrapper as WebGL2RenderingContext).getError = (): number => {
       for (var err in glErrorShadow) {
         var errNum = parseInt(err, 10);
         if (Object.hasOwn(glErrorShadow, err)) {
@@ -684,6 +684,6 @@ export class Debugger {
       return ctx.NO_ERROR;
     };
 
-    return wrapper as WebGLRenderingContext;
+    return wrapper as WebGL2RenderingContext;
   }
 }
