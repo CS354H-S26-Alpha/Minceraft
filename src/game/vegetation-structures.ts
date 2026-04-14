@@ -156,6 +156,8 @@ const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 0, dy: 1, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 1, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 1, dy: 3, dz: 0, cubeType: CubeType.Cactus },
     ],
   },
   {
@@ -165,6 +167,8 @@ const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 4, dz: 0, cubeType: CubeType.Cactus },
+      { dx: -1, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+      { dx: -1, dy: 3, dz: 0, cubeType: CubeType.Cactus },
     ],
   },
   {
@@ -175,6 +179,10 @@ const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 4, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 5, dz: 0, cubeType: CubeType.Cactus },
+      { dx: -1, dy: 3, dz: 0, cubeType: CubeType.Cactus },
+      { dx: -1, dy: 4, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 1, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 1, dy: 3, dz: 0, cubeType: CubeType.Cactus },
     ],
   },
 ] as const;
@@ -208,6 +216,10 @@ export function canPlaceVegetationTemplate(
   anchorLocalZ: number,
   template: VegetationStructureTemplate,
 ): boolean {
+  const occupied = new Set(
+    template.blocks.map((block) => `${anchorLocalX + block.dx},${groundY + block.dy},${anchorLocalZ + block.dz}`),
+  );
+
   for (const block of template.blocks) {
     const localX = anchorLocalX + block.dx;
     const localZ = anchorLocalZ + block.dz;
@@ -216,10 +228,17 @@ export function canPlaceVegetationTemplate(
     if (y <= 0 || y >= access.chunkHeight) return false;
     if (access.getBlock(localX, y, localZ) !== CubeType.Air) return false;
     if (block.cubeType === CubeType.Cactus) {
-      if (access.getBlock(localX + 1, y, localZ) !== CubeType.Air) return false;
-      if (access.getBlock(localX - 1, y, localZ) !== CubeType.Air) return false;
-      if (access.getBlock(localX, y, localZ + 1) !== CubeType.Air) return false;
-      if (access.getBlock(localX, y, localZ - 1) !== CubeType.Air) return false;
+      const neighbors = [
+        [localX + 1, y, localZ],
+        [localX - 1, y, localZ],
+        [localX, y, localZ + 1],
+        [localX, y, localZ - 1],
+      ] as const;
+      for (const [nx, ny, nz] of neighbors) {
+        const key = `${nx},${ny},${nz}`;
+        if (occupied.has(key)) continue;
+        if (access.getBlock(nx, ny, nz) !== CubeType.Air) return false;
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Cube } from "~/client/engine/render/cube";
+import { Cube } from "../src/client/engine/render/cube";
 
 describe("Cube", () => {
   it("has 24 vertices (6 faces * 4 vertices)", () => {

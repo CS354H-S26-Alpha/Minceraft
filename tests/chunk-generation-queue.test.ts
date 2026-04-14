@@ -90,6 +90,6 @@ describe("ChunkGenerationQueue", () => {
     queue.setVisibleChunks(buildArgs(2, 123, secondChunks));
 
     expect(queue.generateNext(buildArgs(1, 123, firstChunks))).toBeNull();
-    expect(queue.generateNext(buildArgs(2, 123, secondChunks))?.numCubes).toBe(1);
+    expect(queue.generateNext(buildArgs(2, 123, secondChunks))?.chunks[0]?.numCubes).toBe(1);
   });
 });

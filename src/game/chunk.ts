@@ -333,6 +333,22 @@ export class Chunk {
     const colors = new Float32Array(3 * total);
     let count = 0;
 
+    const writeCube = (blockType: CubeType, wx: number, y: number, wz: number): void => {
+      const info = CUBE_TYPE_INFO[blockType];
+      const c = info.baseColor;
+
+      positions[4 * count] = wx;
+      positions[4 * count + 1] = y;
+      positions[4 * count + 2] = wz;
+      positions[4 * count + 3] = 0;
+
+      colors[3 * count] = c[0];
+      colors[3 * count + 1] = c[1];
+      colors[3 * count + 2] = c[2];
+
+      count++;
+    };
+
     for (let i = 0; i < S; i++) {
       for (let j = 0; j < S; j++) {
         const idx = i * S + j;
@@ -346,43 +362,19 @@ export class Chunk {
           for (let y = 0; y <= topY; y++) {
             const blockType = this.getBlock(j, y, i);
             if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-            const c = CUBE_TYPE_INFO[blockType].baseColor;
-            positions[4 * count] = wx;
-            positions[4 * count + 1] = y;
-            positions[4 * count + 2] = wz;
-            positions[4 * count + 3] = 0;
-            colors[3 * count] = c[0];
-            colors[3 * count + 1] = c[1];
-            colors[3 * count + 2] = c[2];
-            count++;
+            writeCube(blockType, wx, y, wz);
           }
         } else {
           // Interior column: heightMap-based culling
           const bt0 = blocks[idx]! as CubeType;
-          const c0 = CUBE_TYPE_INFO[bt0].baseColor;
-          positions[4 * count] = wx;
-          positions[4 * count + 1] = 0;
-          positions[4 * count + 2] = wz;
-          positions[4 * count + 3] = 0;
-          colors[3 * count] = c0[0];
-          colors[3 * count + 1] = c0[1];
-          colors[3 * count + 2] = c0[2];
-          count++;
+          writeCube(bt0, wx, 0, wz);
 
           const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
           for (let y = start; y <= topY; y++) {
             const bt = blocks[y * STRIDE_Y + idx]! as CubeType;
             if (bt === CubeType.Air) continue;
             if (y > surfY && !touchesAir(j, y, i)) continue;
-            const c = CUBE_TYPE_INFO[bt].baseColor;
-            positions[4 * count] = wx;
-            positions[4 * count + 1] = y;
-            positions[4 * count + 2] = wz;
-            positions[4 * count + 3] = 0;
-            colors[3 * count] = c[0];
-            colors[3 * count + 1] = c[1];
-            colors[3 * count + 2] = c[2];
-            count++;
+            writeCube(bt, wx, y, wz);
           }
         }
       }

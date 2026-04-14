@@ -78,4 +78,9 @@ describe("vegetation structures", () => {
     expect(access.placed.get("22,65,22")).toBe(CubeType.Cactus);
     expect(access.placed.get("22,67,22")).toBe(CubeType.Cactus);
   });
+
+  it("includes branched cactus silhouettes", () => {
+    const templates = vegetationTemplatesFor(PlacedObjectType.Cactus);
+    expect(templates.some((template) => template.blocks.some((block) => block.dx !== 0 || block.dz !== 0))).toBe(true);
+  });
 });

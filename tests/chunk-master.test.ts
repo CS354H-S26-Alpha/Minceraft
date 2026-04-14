@@ -1,5 +1,7 @@
+import { Mat4 } from "gl-matrix";
 import { describe, expect, it } from "vitest";
-import type { ChunkQueueArgs, ChunkRenderData, ChunkWorkerClientApi } from "../src/client/engine/chunks/client";
+import type { ChunkBatchData, ChunkQueueArgs } from "../src/client/engine/chunks/client";
+import type { ChunkClient } from "../src/client/engine/chunks/manager";
 import { ChunkManager } from "../src/client/engine/chunks/manager";
 import { Biome } from "../src/game/biome";
 import {
@@ -30,28 +32,29 @@ function placedObject(type: PlacedObjectType): PlacedObject {
   };
 }
 
-function renderData(
-  value: number,
-  objects: readonly PlacedObject[] = [],
-  counts: Partial<Record<PlacedObjectType, number>> = {},
-): ChunkRenderData {
+function renderData(value: number, objects: readonly PlacedObject[] = []): ChunkBatchData {
   return {
-    cubePositions: new Float32Array([value, 0, 0, 0]),
-    cubeColors: new Float32Array([value, 0, 0]),
-    numCubes: value,
-    placedObjects: objects,
-    placedObjectCounts: {
-      ...emptyPlacedObjectCounts(),
-      ...counts,
-    },
+    chunks: [
+      {
+        originX: 0,
+        originZ: 0,
+        cubePositions: new Float32Array([value, 0, 0, 0]),
+        cubeColors: new Float32Array([value, 0, 0]),
+        numCubes: 1,
+        placedObjects: objects,
+        placedObjectCounts: emptyPlacedObjectCounts(),
+      },
+    ],
   };
 }
+
+const identity = Mat4.create();
 
 describe("ChunkManager", () => {
   it("submits the visible chunk queue in center-first order and pumps incremental updates", async () => {
     const setCalls: ChunkQueueArgs[] = [];
     let nextCalls = 0;
-    const client: ChunkWorkerClientApi = {
+    const client: ChunkClient = {
       async setVisibleChunks(args) {
         setCalls.push(args);
         return renderData(0);
@@ -79,15 +82,16 @@ describe("ChunkManager", () => {
       { originX: -64, originZ: 64 },
       { originX: 0, originZ: -64 },
     ]);
+    chunkManager.cull(identity, identity);
     expect(Array.from(chunkManager.positions)).toEqual([3, 0, 0, 0]);
     expect(Array.from(chunkManager.colors)).toEqual([3, 0, 0]);
-    expect(chunkManager.count).toBe(3);
+    expect(chunkManager.count).toBe(1);
   });
 
   it("ignores stale queued results after moving to a new chunk", async () => {
-    let resolveFirst: ((value: ChunkRenderData | null) => void) | undefined;
+    let resolveFirst: ((value: ChunkBatchData | null) => void) | undefined;
     let generationSeenBySet = -1;
-    const client: ChunkWorkerClientApi = {
+    const client: ChunkClient = {
       async setVisibleChunks(args) {
         generationSeenBySet = args.generationId;
         return renderData(args.generationId);
@@ -113,20 +117,18 @@ describe("ChunkManager", () => {
     await flushPromises();
 
     expect(generationSeenBySet).toBe(2);
+    chunkManager.cull(identity, identity);
     expect(Array.from(chunkManager.positions)).toEqual([2, 0, 0, 0]);
     expect(Array.from(chunkManager.colors)).toEqual([2, 0, 0]);
-    expect(chunkManager.count).toBe(2);
+    expect(chunkManager.count).toBe(1);
   });
 
-  it("stores placed object data from the worker render payload", async () => {
+  it("stores placed object data from the worker batch payload", async () => {
     const rock = placedObject(PlacedObjectType.Rock);
     const tree = placedObject(PlacedObjectType.Tree);
-    const client: ChunkWorkerClientApi = {
+    const client: ChunkClient = {
       async setVisibleChunks() {
-        return renderData(1, [rock, tree], {
-          [PlacedObjectType.Rock]: 1,
-          [PlacedObjectType.Tree]: 1,
-        });
+        return renderData(1, [rock, tree]);
       },
       async generateNext() {
         return null;
@@ -137,9 +139,6 @@ describe("ChunkManager", () => {
     const chunkManager = new ChunkManager(0, 0, 123, client);
     await flushPromises();
 
-    expect(chunkManager.getVisiblePlacedObjectCount()).toBe(2);
     expect(chunkManager.getVisiblePlacedObjects()).toEqual([rock, tree]);
-    expect(chunkManager.getVisiblePlacedObjectCounts()[PlacedObjectType.Rock]).toBe(1);
-    expect(chunkManager.getVisiblePlacedObjectCounts()[PlacedObjectType.Tree]).toBe(1);
   });
 });

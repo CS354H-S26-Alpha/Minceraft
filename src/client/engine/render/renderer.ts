@@ -1,8 +1,9 @@
-import type { Mat4, Vec4 } from "gl-matrix";
+import type { Mat4 } from "gl-matrix";
 import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
 import { Cube } from "./cube";
+import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
 
@@ -12,8 +13,12 @@ export interface RenderView {
   cubePositions: Float32Array;
   cubeColors: Float32Array;
   numCubes: number;
-  lightPosition: Vec4;
-  backgroundColor: Vec4;
+  lightPosition: Float32Array;
+  backgroundColor: Float32Array;
+  /** RGB ambient light color (changes with time of day). */
+  ambientColor: Float32Array;
+  /** RGB sun/moon light color (changes with time of day). */
+  sunColor: Float32Array;
   entities: EntityDrawData[];
 }
 
@@ -25,9 +30,10 @@ interface EntityPass {
 
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: WebGLRenderingContext;
+  private readonly ctx: WebGL2RenderingContext;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
+  readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
   private lastCubePositions: Float32Array | null = null;
@@ -36,16 +42,15 @@ export class Renderer {
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
     this.ctx = WebGLUtilities.requestWebGLContext(canvas);
-    WebGLUtilities.requestIntIndicesExt(this.ctx);
-    const extVAO = WebGLUtilities.requestVAOExt(this.ctx);
+    this.gpuTimer = new GpuTimer(this.ctx);
 
     const cubeGeometry = new Cube();
-    this.blankCubeRenderPass = new RenderPass(extVAO, this.ctx, blankCubeVSText, blankCubeFSText);
+    this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
     this.entityPasses = new Map();
     for (const def of entityDefs) {
-      const pass = new RenderPass(extVAO, this.ctx, def.vertexShader, def.fragmentShader);
+      const pass = new RenderPass(this.ctx, def.vertexShader, def.fragmentShader);
       this.initEntityPass(pass, def);
       this.entityPasses.set(def.key, {
         pass,
@@ -59,8 +64,8 @@ export class Renderer {
     this.currentView = view;
 
     const gl = this.ctx;
-    const bg = view.backgroundColor;
-    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
+    const [bgR = 0, bgG = 0, bgB = 0, bgA = 1] = view.backgroundColor;
+    gl.clearColor(bgR, bgG, bgB, bgA);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
@@ -68,6 +73,9 @@ export class Renderer {
     gl.cullFace(gl.BACK);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+
+    this.gpuTimer.poll();
+    this.gpuTimer.begin();
 
     if (view.cubePositions !== this.lastCubePositions) {
       this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
@@ -92,6 +100,8 @@ export class Renderer {
       ep.pass.drawInstanced(entity.count);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
+
+    this.gpuTimer.end();
   }
 
   private initEntityPass(pass: RenderPass, def: EntityPassDef): void {
@@ -146,7 +156,6 @@ export class Renderer {
       undefined,
       cube.normalsFlat(),
     );
-    pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, cube.uvFlat());
     pass.addInstancedAttribute(
       "aOffset",
       4,
@@ -174,14 +183,20 @@ export class Renderer {
   }
 
   private addSharedUniforms(pass: RenderPass): void {
-    pass.addUniform("uLightPos", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    pass.addUniform("uLightPos", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform4fv(loc, this.currentView.lightPosition);
     });
-    pass.addUniform("uProj", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    pass.addUniform("uProj", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
     });
-    pass.addUniform("uView", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    pass.addUniform("uView", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
+    });
+    pass.addUniform("uAmbient", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.ambientColor);
+    });
+    pass.addUniform("uSunColor", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.sunColor);
     });
   }
 }

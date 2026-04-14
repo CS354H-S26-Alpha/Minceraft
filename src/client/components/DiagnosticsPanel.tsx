@@ -1,5 +1,3 @@
-import { For } from "solid-js";
-import type { PlacedObjectType } from "@/game/object-placement";
 import type { PlayerState } from "@/game/player";
 
 const FRAME_GRAPH_WIDTH = 240;
@@ -19,9 +17,8 @@ interface DiagnosticsPanelProps {
   fps: number;
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
-  placedObjectCount: number;
-  generatedPlacedObjectCount: number;
-  placedObjectCounts: readonly { type: PlacedObjectType; count: number }[];
+  gpuTimeMs: number;
+  gpuTimeHistory: readonly number[];
   tps: number;
   mspt: number;
   msptHistory: readonly number[];
@@ -66,6 +63,8 @@ function Graph(props: {
   history: readonly number[];
   stroke: string;
   title: string;
+  overlayHistory?: readonly number[];
+  overlayStroke?: string;
 }) {
   return (
     <svg
@@ -76,40 +75,49 @@ function Graph(props: {
       role="img"
     >
       <title>{props.title}</title>
-      <For each={props.guides}>
-        {(g) => {
-          const y = guideY(props.height, props.maxMs, g.ms);
-          return (
-            <>
-              <line
-                x1="0"
-                x2={FRAME_GRAPH_WIDTH.toString()}
-                y1={y}
-                y2={y}
-                stroke={g.stroke}
-                stroke-dasharray="4 3"
-                stroke-width="1"
-              />
-              <rect
-                x={(FRAME_GRAPH_WIDTH - 46).toString()}
-                y={(Number(y) - 7).toString()}
-                width="46"
-                height="12"
-                fill="rgb(0 0 0 / 0.55)"
-                rx="2"
-              />
-              <text
-                x={(FRAME_GRAPH_WIDTH - 42).toString()}
-                y={(Number(y) + 2.5).toString()}
-                fill={g.stroke}
-                font-size="8"
-              >
-                {g.label}
-              </text>
-            </>
-          );
-        }}
-      </For>
+      {props.guides.map((g) => {
+        const y = guideY(props.height, props.maxMs, g.ms);
+        return (
+          <>
+            <line
+              x1="0"
+              x2={FRAME_GRAPH_WIDTH.toString()}
+              y1={y}
+              y2={y}
+              stroke={g.stroke}
+              stroke-dasharray="4 3"
+              stroke-width="1"
+            />
+            <rect
+              x={(FRAME_GRAPH_WIDTH - 46).toString()}
+              y={(Number(y) - 7).toString()}
+              width="46"
+              height="12"
+              fill="rgb(0 0 0 / 0.55)"
+              rx="2"
+            />
+            <text
+              x={(FRAME_GRAPH_WIDTH - 42).toString()}
+              y={(Number(y) + 2.5).toString()}
+              fill={g.stroke}
+              font-size="8"
+            >
+              {g.label}
+            </text>
+          </>
+        );
+      })}
+      {props.overlayHistory && (
+        <polyline
+          fill="none"
+          points={polyline(FRAME_GRAPH_WIDTH, props.height, props.maxMs, props.overlayHistory)}
+          stroke={props.overlayStroke}
+          stroke-width="1.5"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+          opacity="0.7"
+        />
+      )}
       <polyline
         fill="none"
         points={polyline(FRAME_GRAPH_WIDTH, props.height, props.maxMs, props.history)}
@@ -135,7 +143,13 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         XYZ: {player().x.toFixed(2)} / {player().y.toFixed(2)} / {player().z.toFixed(2)}
       </div>
       <div>
-        {props.fps} fps ({props.computeTimeMs.toFixed(2)}ms)
+        {props.fps} fps · <span class="text-blue-400">{props.computeTimeMs.toFixed(2)}ms</span>
+        {props.gpuTimeMs > 0 && (
+          <span>
+            {" "}
+            · <span class="text-orange-400">gpu {props.gpuTimeMs.toFixed(2)}ms</span>
+          </span>
+        )}
       </div>
       <div class="my-2">
         <Graph
@@ -144,6 +158,8 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           guides={frameGuides}
           history={props.computeTimeHistory}
           stroke="rgb(96 165 250)"
+          overlayHistory={props.gpuTimeMs > 0 ? props.gpuTimeHistory : undefined}
+          overlayStroke="rgb(251 146 60)"
           title="Per-frame compute time graph"
         />
       </div>
@@ -161,40 +177,25 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         />
       </div>
       <div class="border-t border-white/20 pt-2">
-        <div class="text-gray-400">
-          placed objects ({props.placedObjectCount} rendered / {props.generatedPlacedObjectCount} generated)
-        </div>
-        <ul class="mt-1">
-          <For each={props.placedObjectCounts}>
-            {(entry) => (
-              <li>
-                {entry.type}: {entry.count}
-              </li>
-            )}
-          </For>
-        </ul>
-      </div>
-      <div class="border-t border-white/20 pt-2">
         <div class="text-gray-400">controls</div>
         <div class="mt-1 text-xs text-white/80">click canvas to lock pointer</div>
         <div class="text-xs text-white/80">WASD move · mouse look · R reset view</div>
+        <div class="text-xs text-white/80">E inventory · P skip day phase</div>
       </div>
       <div class="border-t border-white/20 pt-2">
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
         <ul class="mt-1">
-          <For each={props.onlinePlayers}>
-            {(playerInfo) => (
-              <li>
-                <button
-                  type="button"
-                  class="text-left text-white hover:text-blue-400 hover:underline"
-                  onClick={() => props.onTeleportTo(playerInfo.id)}
-                >
-                  {playerInfo.name}
-                </button>
-              </li>
-            )}
-          </For>
+          {props.onlinePlayers.map((p) => (
+            <li>
+              <button
+                type="button"
+                class="text-left text-white hover:text-blue-400 hover:underline"
+                onClick={() => props.onTeleportTo(p.id)}
+              >
+                {p.name}
+              </button>
+            </li>
+          ))}
         </ul>
       </div>
     </div>

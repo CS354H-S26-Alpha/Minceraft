@@ -1,15 +1,16 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
-import { Vec3, Vec4 } from "gl-matrix";
+import { Vec3 } from "gl-matrix";
 import { onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { emptyPlacedObjectCounts, PlacedObjectType } from "@/game/object-placement";
+import { PlacedObjectType } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
-import type { Player, PlayerInput } from "@/game/player";
+import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
+import { ChunkWorkerClient } from "./chunks/client";
 import {
   createEntityPipeline,
   type EntityDrawData,
@@ -21,13 +22,15 @@ import {
   playerPassDef,
   playerPipelineConfig,
 } from "./entities";
-import { createInput } from "./input";
+import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 
 export interface CreateGameArgs {
   glCanvas: () => HTMLCanvasElement | undefined;
   room: ReturnType<typeof joinWorld>;
+  inputEnabled?: () => boolean;
+  shortcuts?: Omit<InputOptions, "onReset">;
 }
 
 export interface ClientDiagnostics {
@@ -35,9 +38,8 @@ export interface ClientDiagnostics {
   frameCount: number;
   computeTimeMs: number;
   computeTimeHistory: number[];
-  placedObjectCount: number;
-  generatedPlacedObjectCount: number;
-  placedObjectCounts: Record<PlacedObjectType, number>;
+  gpuTimeMs: number;
+  gpuTimeHistory: number[];
   pointerLocked: boolean;
 }
 
@@ -58,8 +60,45 @@ interface MutableGameState {
 
 export type GameState = Readonly<MutableGameState>;
 
-const LIGHT_POSITION = new Vec4([-1000, 1000, -1000, 1]);
-const BACKGROUND_COLOR = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
+const DAY_LENGTH_S = 60;
+const PHASE_MS = (DAY_LENGTH_S / 4) * 1000;
+
+const _lightPos = new Float32Array(4);
+const _bgColor = new Float32Array(4);
+const _ambient = new Float32Array(3);
+const _sunColor = new Float32Array(3);
+
+let _timeOffset = 0;
+
+function computeDayNight(nowMs: number): void {
+  const t = ((nowMs + _timeOffset) / 1000) % DAY_LENGTH_S;
+  const angle = (t / DAY_LENGTH_S) * Math.PI * 2;
+  const sinA = Math.sin(angle);
+  const cosA = Math.cos(angle);
+
+  _lightPos[0] = cosA * 2000;
+  _lightPos[1] = sinA * 2000;
+  _lightPos[2] = 600;
+  _lightPos[3] = 1;
+
+  const day = Math.max(0, sinA);
+  const night = Math.max(0, -sinA);
+  const horizon = Math.max(0, 1 - Math.abs(sinA) / 0.35) * 0.35;
+
+  _bgColor[0] = Math.min(1, day * 0.4 + horizon * 0.92 + night * 0.02);
+  _bgColor[1] = Math.min(1, day * 0.62 + horizon * 0.42 + night * 0.02);
+  _bgColor[2] = Math.min(1, day * 0.96 + horizon * 0.12 + night * 0.1);
+  _bgColor[3] = 1;
+
+  _ambient[0] = day * 0.28 + horizon * 0.35 + night * 0.04;
+  _ambient[1] = day * 0.28 + horizon * 0.18 + night * 0.04;
+  _ambient[2] = day * 0.32 + horizon * 0.06 + night * 0.1;
+
+  _sunColor[0] = day * 1.0 + horizon * 1.0 + night * 0.3;
+  _sunColor[1] = day * 0.96 + horizon * 0.52 + night * 0.32;
+  _sunColor[2] = day * 0.82 + horizon * 0.1 + night * 0.5;
+}
+
 const FPS_WINDOW_MS = 500;
 const FRAME_HISTORY_SIZE = 120;
 const TEMP_START_SEED = 123;
@@ -76,11 +115,7 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
 
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
-  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED);
-
-  onCleanup(() => {
-    chunks.dispose();
-  });
+  const inputEnabled = () => args.inputEnabled?.() ?? true;
 
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
@@ -90,9 +125,8 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
-        placedObjectCount: 0,
-        generatedPlacedObjectCount: chunks.getVisiblePlacedObjectCount(),
-        placedObjectCounts: chunks.getVisiblePlacedObjectCounts(),
+        gpuTimeMs: 0,
+        gpuTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         pointerLocked: false,
       },
       server: {
@@ -104,37 +138,46 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
+  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient());
+  onCleanup(() => {
+    chunks.dispose();
+  });
+
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const placedObjectBuffers: GpuBuffers = {};
   const placedRockBuffers: GpuBuffers = {};
   let frame = 0;
-  let lastYaw = 0;
-  let lastPitch = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
   let lastPlacedObjects = chunks.getVisiblePlacedObjects();
   let lastRenderCenterX = NaN;
   let lastRenderCenterZ = NaN;
-  let renderedPlacedObjectCount = 0;
   let renderedFoliageCount = 0;
   let renderedRockCount = 0;
-  let renderedPlacedObjectCounts = emptyPlacedObjectCounts();
 
-  const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+  const input = createInput(args.glCanvas, {
+    onReset: () => ctx?.camera.reset(),
+    onCycleDayPhase: () => {
+      _timeOffset += PHASE_MS;
+    },
+    ...args.shortcuts,
+  });
 
-  let unsent: PlayerInput[] = [];
+  let nextPacketSequence = 1;
+  let pendingPacket: PlayerPositionPacket | undefined;
   makeTimer(
     () => {
       const session = room().session();
-      if (unsent.length === 0 || !session) return;
-      session.sendInputs(unsent);
-      unsent = [];
+      if (!pendingPacket || !session) return;
+      session.sendPosition(pendingPacket);
+      pendingPacket = undefined;
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -166,21 +209,37 @@ export function createGame(args: CreateGameArgs): GameState {
       camera.resize(gl.clientWidth, gl.clientHeight);
     }
 
-    const mouse = input.consumeMouseDelta();
+    const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
     camera.rotate(mouse.dx, mouse.dy);
-    const walk = camera.walkDir(input.walkKeys());
+    const walk = inputEnabled()
+      ? camera.walkDir(input.walkKeys())
+      : {
+          x: 0,
+          y: 0,
+          z: 0,
+        };
     const yaw = camera.yaw();
     const pitch = camera.pitch();
-    if (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch) {
-      lastYaw = yaw;
-      lastPitch = pitch;
+    if (inputEnabled()) {
       const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
       room().replicated()?.predict(next);
-      unsent.push(next);
+      pendingPacket = {
+        sequence: nextPacketSequence++,
+        x: player.state.x,
+        y: player.state.y,
+        z: player.state.z,
+        yaw: player.state.yaw,
+        pitch: player.state.pitch,
+      };
     }
     camera.setPosition(player.position);
 
     chunks.update(player.position.x, player.position.z);
+
+    const viewMatrix = camera.viewMatrix();
+    const projMatrix = camera.projMatrix();
+    chunks.cull(viewMatrix, projMatrix);
+
     const placedObjects = chunks.getVisiblePlacedObjects();
     const movedForObjectRepack =
       Number.isNaN(lastRenderCenterX) ||
@@ -192,15 +251,10 @@ export function createGame(args: CreateGameArgs): GameState {
         player.position.x,
         player.position.z,
       );
-      renderedPlacedObjectCount = renderablePlacedObjects.length;
       const foliageObjects = renderablePlacedObjects.filter((object) => object.type !== PlacedObjectType.Rock);
       const rockObjects = renderablePlacedObjects.filter((object) => object.type === PlacedObjectType.Rock);
       renderedFoliageCount = packPlacedObjects(foliageObjects, placedObjectBuffers);
       renderedRockCount = packPlacedRocks(rockObjects, placedRockBuffers);
-      renderedPlacedObjectCounts = emptyPlacedObjectCounts();
-      for (const object of renderablePlacedObjects) {
-        renderedPlacedObjectCounts[object.type]++;
-      }
       lastPlacedObjects = placedObjects;
       lastRenderCenterX = player.position.x;
       lastRenderCenterZ = player.position.z;
@@ -214,6 +268,8 @@ export function createGame(args: CreateGameArgs): GameState {
       msptHistory.push(snap.tickTimeMs);
     }
 
+    computeDayNight(now);
+
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [
       { key: "players", buffers, count },
@@ -221,20 +277,24 @@ export function createGame(args: CreateGameArgs): GameState {
       { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
     ];
     renderer.render({
-      viewMatrix: camera.viewMatrix(),
-      projMatrix: camera.projMatrix(),
+      viewMatrix,
+      projMatrix,
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
       numCubes: chunks.count,
-      lightPosition: LIGHT_POSITION,
-      backgroundColor: BACKGROUND_COLOR,
+      lightPosition: _lightPos,
+      backgroundColor: _bgColor,
+      ambientColor: _ambient,
+      sunColor: _sunColor,
       entities,
     });
 
     frame++;
     const computeTimeMs = performance.now() - tickStart;
+    const gpuTimeMs = renderer.gpuTimer.lastTimeMs;
     fpsMeter.sample(dt, 1);
     computeHistory.push(computeTimeMs);
+    gpuHistory.push(gpuTimeMs);
     tpsMeter.sample(dt, tickDelta);
     tickDelta = 0;
     const currentSnapCount = room().snapCount();
@@ -247,9 +307,8 @@ export function createGame(args: CreateGameArgs): GameState {
       frameCount: frame,
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
-      placedObjectCount: renderedPlacedObjectCount,
-      generatedPlacedObjectCount: chunks.getVisiblePlacedObjectCount(),
-      placedObjectCounts: { ...chunks.getVisiblePlacedObjectCounts() },
+      gpuTimeMs,
+      gpuTimeHistory: gpuHistory.ordered(),
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {

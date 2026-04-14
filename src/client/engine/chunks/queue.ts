@@ -1,7 +1,7 @@
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "@/game/chunk";
-import { emptyPlacedObjectCounts, type PlacedObject, PlacedObjectType } from "@/game/object-placement";
-import type { ChunkOrigin, ChunkQueueArgs, ChunkRenderData } from "./client";
+import type { PlacedObject, PlacedObjectType } from "@/game/object-placement";
+import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 
 interface ChunkLike {
   renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void;
@@ -32,7 +32,7 @@ export class ChunkGenerationQueue {
   ) {}
 
   /** Replaces the desired visible set and returns a render from already-cached chunks. */
-  setVisibleChunks(args: ChunkQueueArgs): ChunkRenderData {
+  setVisibleChunks(args: ChunkQueueArgs): ChunkBatchData {
     this.ensureSeed(args.seed);
     this.activeGenerationId = args.generationId;
     this.queuedChunks = this.buildQueue(args.chunkOrigins);
@@ -40,7 +40,7 @@ export class ChunkGenerationQueue {
   }
 
   /** Generates one queued chunk and returns an updated render, or `null` if done or stale. */
-  generateNext(args: ChunkQueueArgs): ChunkRenderData | null {
+  generateNext(args: ChunkQueueArgs): ChunkBatchData | null {
     this.ensureSeed(args.seed);
     if (args.generationId !== this.activeGenerationId) return null;
 
@@ -77,8 +77,8 @@ export class ChunkGenerationQueue {
     return queue;
   }
 
-  private renderVisible({ originX, originZ, renderDistance }: ChunkQueueArgs) {
-    const visibleChunks = [];
+  private renderVisible({ originX, originZ, renderDistance }: ChunkQueueArgs): ChunkBatchData {
+    const entries: { chunkX: number; chunkZ: number; chunk: ChunkLike }[] = [];
 
     for (let cx = -renderDistance; cx <= renderDistance; cx++) {
       for (let cz = -renderDistance; cz <= renderDistance; cz++) {
@@ -86,7 +86,7 @@ export class ChunkGenerationQueue {
         const chunkZ = originZ + cz * CHUNK_SIZE;
         const chunk = this.chunkMap.get(chunkKey(chunkX, chunkZ));
         if (!chunk) continue;
-        visibleChunks.push(chunk);
+        entries.push({ chunkX, chunkZ, chunk });
       }
     }
 
@@ -97,47 +97,23 @@ export class ChunkGenerationQueue {
       return chunk.getBlockWorld(wx, wy, wz);
     };
 
-    for (const chunk of visibleChunks) chunk.renderChunk(worldGetBlock);
+    for (const { chunk } of entries) chunk.renderChunk(worldGetBlock);
 
-    let totalPositionCount = 0;
-    let totalColorCount = 0;
-    let totalCubes = 0;
-    const placedObjects: PlacedObject[] = [];
-    const placedObjectCounts: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
-    for (const chunk of visibleChunks) {
-      totalPositionCount += chunk.cubePositions().length;
-      totalColorCount += chunk.cubeColors().length;
-      totalCubes += chunk.numCubes();
-      for (const object of chunk.placedObjects()) {
-        placedObjects.push(object);
-      }
-      const chunkCounts = chunk.placedObjectCounts();
-      for (const type of Object.values(PlacedObjectType)) {
-        placedObjectCounts[type] += chunkCounts[type];
-      }
+    const chunks: SingleChunkData[] = [];
+    for (const { chunkX, chunkZ, chunk } of entries) {
+      const numCubes = chunk.numCubes();
+      if (numCubes === 0) continue;
+      chunks.push({
+        originX: chunkX,
+        originZ: chunkZ,
+        cubePositions: chunk.cubePositions(),
+        cubeColors: chunk.cubeColors(),
+        numCubes,
+        placedObjects: chunk.placedObjects(),
+        placedObjectCounts: chunk.placedObjectCounts(),
+      });
     }
 
-    const cubePositions = new Float32Array(totalPositionCount);
-    const cubeColors = new Float32Array(totalColorCount);
-    let positionOffset = 0;
-    let colorOffset = 0;
-
-    for (const chunk of visibleChunks) {
-      const positions = chunk.cubePositions();
-      cubePositions.set(positions, positionOffset);
-      positionOffset += positions.length;
-
-      const colors = chunk.cubeColors();
-      cubeColors.set(colors, colorOffset);
-      colorOffset += colors.length;
-    }
-
-    return {
-      cubePositions,
-      cubeColors,
-      numCubes: totalCubes,
-      placedObjects,
-      placedObjectCounts,
-    };
+    return { chunks };
   }
 }
