@@ -1,4 +1,4 @@
-import type { Mat4, Vec4 } from "gl-matrix";
+import type { Mat4 } from "gl-matrix";
 import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
@@ -12,8 +12,12 @@ export interface RenderView {
   cubePositions: Float32Array;
   cubeColors: Float32Array;
   numCubes: number;
-  lightPosition: Vec4;
-  backgroundColor: Vec4;
+  lightPosition: Float32Array;
+  backgroundColor: Float32Array;
+  /** RGB ambient light color (changes with time of day). */
+  ambientColor: Float32Array;
+  /** RGB sun/moon light color (changes with time of day). */
+  sunColor: Float32Array;
   entities: EntityDrawData[];
 }
 
@@ -60,7 +64,7 @@ export class Renderer {
 
     const gl = this.ctx;
     const bg = view.backgroundColor;
-    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
+    gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
@@ -182,6 +186,12 @@ export class Renderer {
     });
     pass.addUniform("uView", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
+    });
+    pass.addUniform("uAmbient", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.ambientColor);
+    });
+    pass.addUniform("uSunColor", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.sunColor);
     });
   }
 }
