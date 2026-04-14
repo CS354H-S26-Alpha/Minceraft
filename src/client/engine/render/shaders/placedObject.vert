@@ -6,7 +6,7 @@ uniform mat4 uProj;
 
 attribute vec4 aNorm;
 attribute vec4 aVertPos;
-attribute vec4 aOffset; // xyz = base position, w = random yaw
+attribute vec4 aOffset; // xyz = base position
 attribute float aScale;
 attribute vec2 aMeta; // x = render type, y = random yaw
 attribute vec2 aUV;

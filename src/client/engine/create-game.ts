@@ -13,7 +13,9 @@ import {
   type EntityDrawData,
   type GpuBuffers,
   packPlacedObjects,
+  packPlacedRocks,
   placedObjectPassDef,
+  placedRockPassDef,
   playerPassDef,
   playerPipelineConfig,
 } from "./entities";
@@ -75,7 +77,7 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 const MAX_INPUT_DT_MS = 100;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef]);
+  const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef, placedRockPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -121,6 +123,7 @@ export function createGame(args: CreateGameArgs): GameState {
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const placedObjectBuffers: GpuBuffers = {};
+  const placedRockBuffers: GpuBuffers = {};
   let frame = 0;
   let lastYaw = 0;
   let lastPitch = 0;
@@ -131,6 +134,8 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastRenderCenterX = NaN;
   let lastRenderCenterZ = NaN;
   let renderedPlacedObjectCount = 0;
+  let renderedFoliageCount = 0;
+  let renderedRockCount = 0;
   let renderedPlacedObjectCounts: Record<PlacedObjectType, number> = {
     [PlacedObjectType.Grass]: 0,
     [PlacedObjectType.Shrub]: 0,
@@ -201,7 +206,11 @@ export function createGame(args: CreateGameArgs): GameState {
         player.position.x,
         player.position.z,
       );
-      renderedPlacedObjectCount = packPlacedObjects(renderablePlacedObjects, placedObjectBuffers);
+      renderedPlacedObjectCount = renderablePlacedObjects.length;
+      const foliageObjects = renderablePlacedObjects.filter((object) => object.type !== PlacedObjectType.Rock);
+      const rockObjects = renderablePlacedObjects.filter((object) => object.type === PlacedObjectType.Rock);
+      renderedFoliageCount = packPlacedObjects(foliageObjects, placedObjectBuffers);
+      renderedRockCount = packPlacedRocks(rockObjects, placedRockBuffers);
       renderedPlacedObjectCounts = {
         [PlacedObjectType.Grass]: 0,
         [PlacedObjectType.Shrub]: 0,
@@ -233,7 +242,12 @@ export function createGame(args: CreateGameArgs): GameState {
       {
         key: "placed-objects",
         buffers: placedObjectBuffers,
-        count: renderedPlacedObjectCount,
+        count: renderedFoliageCount,
+      },
+      {
+        key: "placed-rocks",
+        buffers: placedRockBuffers,
+        count: renderedRockCount,
       },
     ];
     renderer.render({

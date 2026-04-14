@@ -236,6 +236,17 @@ function placementScale(seed: number, type: PlacedObjectType, x: number, z: numb
   }
 }
 
+function placementBaseHeight(type: PlacedObjectType): number {
+  switch (type) {
+    case PlacedObjectType.Rock:
+      return 0.42;
+    case PlacedObjectType.Grass:
+      return 0.48;
+    default:
+      return 0.5;
+  }
+}
+
 function violatesSpacing(rule: ObjectPlacementRule, objects: readonly PlacedObject[], x: number, z: number): boolean {
   const minSpacingSq = rule.minSpacing * rule.minSpacing;
   return objects.some((object) => {
@@ -274,7 +285,7 @@ export function generatePlacedObjectsForChunk(args: GeneratePlacedObjectsArgs): 
           type,
           category: rule.category,
           x: placedX,
-          y: sample.surfaceY + 1,
+          y: sample.surfaceY + placementBaseHeight(type),
           z: placedZ,
           rotationY: placementRotation(args.seed, type, worldX, worldZ),
           scale: placementScale(args.seed, type, worldX, worldZ),

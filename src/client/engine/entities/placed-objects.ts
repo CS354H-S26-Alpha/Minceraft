@@ -19,7 +19,7 @@ export function packPlacedObjects(objects: readonly PlacedObject[], buffers: Gpu
     offsets[i * 4] = object.x;
     offsets[i * 4 + 1] = object.y;
     offsets[i * 4 + 2] = object.z;
-    offsets[i * 4 + 3] = object.rotationY;
+    offsets[i * 4 + 3] = 0;
     scales[i] = object.scale;
     metas[i * 2] = object.renderTypeIndex;
     metas[i * 2 + 1] = object.rotationY;

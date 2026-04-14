@@ -74,7 +74,8 @@ describe("per-chunk object placement generation", () => {
       };
 
       expect(supportsObjectPlacement(OBJECT_PLACEMENT_RULES[object.type], sample)).toBe(true);
-      expect(object.y).toBe(surfaceY + 1);
+      expect(object.y).toBeGreaterThanOrEqual(surfaceY + 0.4);
+      expect(object.y).toBeLessThanOrEqual(surfaceY + 0.5);
       expect(object.chunkOriginX).toBe(-32);
       expect(object.chunkOriginZ).toBe(-32);
       expect(object.renderTypeIndex).toBe(placedObjectTypeIndex(object.type));
