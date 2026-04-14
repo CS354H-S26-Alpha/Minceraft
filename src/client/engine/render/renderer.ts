@@ -3,6 +3,7 @@ import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
 import { Cube } from "./cube";
+import { BLOCK_ATLAS_TEXTURE_URLS } from "./cube-types";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
 
@@ -11,6 +12,8 @@ export interface RenderView {
   projMatrix: Mat4;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  cubeFaceTiles0: Float32Array;
+  cubeFaceTiles1: Float32Array;
   numCubes: number;
   lightPosition: Vec4;
   backgroundColor: Vec4;
@@ -23,15 +26,24 @@ interface EntityPass {
   instancedAttributes: { name: string; size: number }[];
 }
 
+interface BlockAtlasTextureInfo {
+  texture: WebGLTexture;
+  tileCount: number;
+}
+
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: WebGLRenderingContext;
   private readonly blankCubeRenderPass: RenderPass;
+  private readonly blockAtlasTexture: WebGLTexture;
+  private readonly blockAtlasTileCount: number;
   private readonly entityPasses: Map<string, EntityPass>;
 
   private currentView!: RenderView;
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
+  private lastCubeFaceTiles0: Float32Array | null = null;
+  private lastCubeFaceTiles1: Float32Array | null = null;
 
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
@@ -40,6 +52,9 @@ export class Renderer {
     const extVAO = WebGLUtilities.requestVAOExt(this.ctx);
 
     const cubeGeometry = new Cube();
+    const blockAtlas = createBlockAtlasTexture(this.ctx);
+    this.blockAtlasTexture = blockAtlas.texture;
+    this.blockAtlasTileCount = blockAtlas.tileCount;
     this.blankCubeRenderPass = new RenderPass(extVAO, this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
@@ -76,6 +91,14 @@ export class Renderer {
     if (view.cubeColors !== this.lastCubeColors) {
       this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
       this.lastCubeColors = view.cubeColors;
+    }
+    if (view.cubeFaceTiles0 !== this.lastCubeFaceTiles0) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aFaceTiles0", view.cubeFaceTiles0);
+      this.lastCubeFaceTiles0 = view.cubeFaceTiles0;
+    }
+    if (view.cubeFaceTiles1 !== this.lastCubeFaceTiles1) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aFaceTiles1", view.cubeFaceTiles1);
+      this.lastCubeFaceTiles1 = view.cubeFaceTiles1;
     }
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
 
@@ -167,6 +190,27 @@ export class Renderer {
       undefined,
       new Float32Array(0),
     );
+    pass.addInstancedAttribute(
+      "aFaceTiles0",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aFaceTiles1",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addTexture(this.blockAtlasTexture);
 
     this.addSharedUniforms(pass);
     pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
@@ -183,5 +227,75 @@ export class Renderer {
     pass.addUniform("uView", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
     });
+    pass.addUniform("uBlockAtlas", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(loc, 0);
+    });
+    pass.addUniform("uBlockAtlasTileCount", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1f(loc, this.blockAtlasTileCount);
+    });
   }
+}
+
+function createBlockAtlasTexture(gl: WebGLRenderingContext): BlockAtlasTextureInfo {
+  const texture = gl.createTexture();
+  if (!texture) {
+    throw new Error("Failed to create block atlas texture");
+  }
+
+  const tileCount = Math.max(1, BLOCK_ATLAS_TEXTURE_URLS.length);
+
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([64, 64, 64, 255]));
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+  if (BLOCK_ATLAS_TEXTURE_URLS.length === 0) {
+    return { texture, tileCount };
+  }
+
+  void loadBlockAtlasCanvas(BLOCK_ATLAS_TEXTURE_URLS)
+    .then((atlas) => {
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    })
+    .catch((error: unknown) => {
+      console.error("Failed to load block atlas texture", error);
+    });
+
+  return { texture, tileCount };
+}
+
+async function loadBlockAtlasCanvas(textureUrls: string[]): Promise<HTMLCanvasElement> {
+  const images = await Promise.all(textureUrls.map((src) => loadImage(src)));
+  const tileWidth = images[0]?.naturalWidth ?? 1;
+  const tileHeight = images[0]?.naturalHeight ?? 1;
+  const atlas = document.createElement("canvas");
+  atlas.width = tileWidth * images.length;
+  atlas.height = tileHeight;
+
+  const ctx = atlas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Failed to create 2D context for block atlas");
+  }
+
+  ctx.imageSmoothingEnabled = false;
+  images.forEach((image, index) => {
+    ctx.drawImage(image, index * tileWidth, 0, tileWidth, tileHeight);
+  });
+
+  return atlas;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    image.src = src;
+  });
 }

@@ -16,6 +16,8 @@ export class ChunkManager {
 
   positions = new Float32Array(0);
   colors = new Float32Array(0);
+  faceTiles0 = new Float32Array(0);
+  faceTiles1 = new Float32Array(0);
   count = 0;
 
   constructor(spawnX: number, spawnZ: number, seed: number) {
@@ -56,6 +58,8 @@ export class ChunkManager {
     if (generationId !== this.activeGeneration) return;
     this.positions = data.cubePositions as Float32Array<ArrayBuffer>;
     this.colors = data.cubeColors as Float32Array<ArrayBuffer>;
+    this.faceTiles0 = data.cubeFaceTiles0 as Float32Array<ArrayBuffer>;
+    this.faceTiles1 = data.cubeFaceTiles1 as Float32Array<ArrayBuffer>;
     this.count = data.numCubes;
   }
 

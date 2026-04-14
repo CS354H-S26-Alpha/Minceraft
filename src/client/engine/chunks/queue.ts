@@ -7,6 +7,8 @@ interface ChunkLike {
   getBlockWorld(wx: number, wy: number, wz: number): CubeType;
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
+  cubeFaceTiles0(): Float32Array;
+  cubeFaceTiles1(): Float32Array;
   numCubes(): number;
 }
 
@@ -98,17 +100,25 @@ export class ChunkGenerationQueue {
 
     let totalPositionCount = 0;
     let totalColorCount = 0;
+    let totalFaceTileCount0 = 0;
+    let totalFaceTileCount1 = 0;
     let totalCubes = 0;
     for (const chunk of visibleChunks) {
       totalPositionCount += chunk.cubePositions().length;
       totalColorCount += chunk.cubeColors().length;
+      totalFaceTileCount0 += chunk.cubeFaceTiles0().length;
+      totalFaceTileCount1 += chunk.cubeFaceTiles1().length;
       totalCubes += chunk.numCubes();
     }
 
     const cubePositions = new Float32Array(totalPositionCount);
     const cubeColors = new Float32Array(totalColorCount);
+    const cubeFaceTiles0 = new Float32Array(totalFaceTileCount0);
+    const cubeFaceTiles1 = new Float32Array(totalFaceTileCount1);
     let positionOffset = 0;
     let colorOffset = 0;
+    let faceTileOffset0 = 0;
+    let faceTileOffset1 = 0;
 
     for (const chunk of visibleChunks) {
       const positions = chunk.cubePositions();
@@ -118,8 +128,16 @@ export class ChunkGenerationQueue {
       const colors = chunk.cubeColors();
       cubeColors.set(colors, colorOffset);
       colorOffset += colors.length;
+
+      const faceTiles0 = chunk.cubeFaceTiles0();
+      cubeFaceTiles0.set(faceTiles0, faceTileOffset0);
+      faceTileOffset0 += faceTiles0.length;
+
+      const faceTiles1 = chunk.cubeFaceTiles1();
+      cubeFaceTiles1.set(faceTiles1, faceTileOffset1);
+      faceTileOffset1 += faceTiles1.length;
     }
 
-    return { cubePositions, cubeColors, numCubes: totalCubes };
+    return { cubePositions, cubeColors, cubeFaceTiles0, cubeFaceTiles1, numCubes: totalCubes };
   }
 }
