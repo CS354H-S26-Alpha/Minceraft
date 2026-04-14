@@ -10,14 +10,15 @@ const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 export interface ChunkClient {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  clearCache(): Promise<void>;
   dispose(): void;
 }
 
-export interface ChunkClient {
-  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
-  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
-  dispose(): void;
-}
+// export interface ChunkClient {
+//   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
+//   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+//   dispose(): void;
+// }
 
 /**
  * Main-thread coordinator that keeps the renderer fed with terrain data
