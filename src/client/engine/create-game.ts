@@ -63,6 +63,9 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 
+const SPAWN_X = 0.0;
+const SPAWN_Z = 0.0;
+
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
@@ -79,7 +82,7 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
  */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
-
+ 
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
     diagnostics: {
@@ -98,8 +101,8 @@ export function createGame(args: CreateGameArgs): GameState {
       },
     },
   });
-
-  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED);
+ 
+  const chunks = new ChunkManager(SPAWN_X, SPAWN_Z, TEMP_START_SEED);
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -113,7 +116,12 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastTick = 0;
   let tickDelta = 0;
 
-  const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+  const handleReset = () => {
+    ctx?.camera.reset();
+    chunks.reset(SPAWN_X, SPAWN_Z);
+  };
+ 
+  const input = createInput(args.glCanvas, { onReset: handleReset });
 
   // TODO: refactor to be general packet handling rather than only inputs
   let unsent: PlayerInput[] = [];

@@ -1,7 +1,10 @@
 import { CHUNK_SIZE, chunkOrigin } from "@/game/chunk";
 import { type ChunkOrigin, type ChunkQueueArgs, type ChunkRenderData, ChunkWorkerClient } from "./client";
 
-const RENDER_DISTANCE = 4;
+const RENDER_DISTANCE = 1;
+const LOAD_DISTANCE = RENDER_DISTANCE + 2;
+const EVICT_DISTANCE = LOAD_DISTANCE + 2;
+
 
 /**
  * Main-thread coordinator that keeps the renderer fed with terrain data
@@ -24,23 +27,43 @@ export class ChunkManager {
     this.update(spawnX, spawnZ);
   }
 
-  /** Starts a new chunk generation when the player enters a different chunk. */
-  update(wx: number, wz: number): void {
-    const [originX, originZ] = chunkOrigin(wx, wz);
-    if (originX === this.lastOriginX && originZ === this.lastOriginZ) return;
-
-    this.lastOriginX = originX;
-    this.lastOriginZ = originZ;
-    const generationId = ++this.activeGeneration;
-    const args: ChunkQueueArgs = {
+  private buildArgs(
+    generationId: number,
+    originX: number,
+    originZ: number,
+  ): ChunkQueueArgs {
+    return {
       generationId,
       originX,
       originZ,
       renderDistance: RENDER_DISTANCE,
+      loadDistance: LOAD_DISTANCE,
+      evictDistance: EVICT_DISTANCE,
       seed: this.seed,
-      chunkOrigins: buildGenerationOrder(originX, originZ, RENDER_DISTANCE),
+      chunkOrigins: buildGenerationOrder(originX, originZ, LOAD_DISTANCE),
     };
+  }
+
+  /** Starts a new chunk generation when the player enters a different chunk. */
+  update(wx: number, wz: number): void {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    if (originX === this.lastOriginX && originZ === this.lastOriginZ) return;
+ 
+    this.lastOriginX = originX;
+    this.lastOriginZ = originZ;
+    const generationId = ++this.activeGeneration;
+ 
+    const args = this.buildArgs(generationId, originX, originZ);
     void this.load(args);
+  }
+
+  reset(wx: number, wz: number): void {
+    // Invalidate origin so update() will always trigger a new generation
+    this.lastOriginX = NaN;
+    this.lastOriginZ = NaN;
+    // Tell the worker to clear its chunk cache
+    void this.client.clearCache();
+    this.update(wx, wz);
   }
 
   private async load(args: ChunkQueueArgs): Promise<void> {
@@ -52,7 +75,7 @@ export class ChunkManager {
     }
   }
 
-  private apply(data: ChunkRenderData, generationId: number) {
+  private apply(data: ChunkRenderData, generationId: number): void {
     if (generationId !== this.activeGeneration) return;
     this.positions = data.cubePositions as Float32Array<ArrayBuffer>;
     this.colors = data.cubeColors as Float32Array<ArrayBuffer>;
@@ -64,10 +87,14 @@ export class ChunkManager {
   }
 }
 
-function buildGenerationOrder(originX: number, originZ: number, renderDistance: number) {
+function buildGenerationOrder(
+  originX: number,
+  originZ: number,
+  loadDistance: number,
+): ChunkOrigin[] {
   const origins: ChunkOrigin[] = [{ originX, originZ }];
-
-  for (let radius = 1; radius <= renderDistance; radius++) {
+ 
+  for (let radius = 1; radius <= loadDistance; radius++) {
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dz = -radius; dz <= radius; dz++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
@@ -78,6 +105,6 @@ function buildGenerationOrder(originX: number, originZ: number, renderDistance: 
       }
     }
   }
-
+ 
   return origins;
 }
