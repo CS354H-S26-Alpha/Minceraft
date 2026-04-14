@@ -82,7 +82,7 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
  */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
- 
+
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
     diagnostics: {
@@ -101,7 +101,7 @@ export function createGame(args: CreateGameArgs): GameState {
       },
     },
   });
- 
+
   const chunks = new ChunkManager(SPAWN_X, SPAWN_Z, TEMP_START_SEED);
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -120,7 +120,7 @@ export function createGame(args: CreateGameArgs): GameState {
     ctx?.camera.reset();
     chunks.reset(SPAWN_X, SPAWN_Z);
   };
- 
+
   const input = createInput(args.glCanvas, { onReset: handleReset });
 
   // TODO: refactor to be general packet handling rather than only inputs

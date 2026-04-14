@@ -9,9 +9,9 @@ interface ChunkLike {
   cubeColors(): Float32Array;
   numCubes(): number;
 }
- 
+
 type ChunkFactory = (centerX: number, centerZ: number, size: number, seed: number) => ChunkLike;
- 
+
 interface QueuedChunk extends ChunkOrigin {
   key: string;
 }
@@ -22,66 +22,68 @@ interface LRUNode {
   prev: LRUNode | null;
   next: LRUNode | null;
 }
- 
+
 class LRUCache {
   private readonly map = new Map<string, LRUNode>();
   private head: LRUNode | null = null;
   private tail: LRUNode | null = null;
   private readonly capacity: number;
- 
+
   constructor(capacity: number) {
     this.capacity = Math.max(1, capacity);
   }
- 
+
   has(key: string): boolean {
     return this.map.has(key);
   }
- 
+
   get(key: string): ChunkLike | undefined {
     const node = this.map.get(key);
     if (!node) return undefined;
     this.moveToHead(node);
     return node.chunk;
   }
- 
+
   set(key: string, chunk: ChunkLike): void {
     if (this.map.has(key)) {
-      const node = this.map.get(key)!;
-      node.chunk = chunk;
-      this.moveToHead(node);
-      return;
+      const node = this.map.get(key);
+      if (node) {
+        node.chunk = chunk;
+        this.moveToHead(node);
+        return;
+      }
     }
- 
+
     const node: LRUNode = { key, chunk, prev: null, next: this.head };
     if (this.head) this.head.prev = node;
     this.head = node;
     if (!this.tail) this.tail = node;
     this.map.set(key, node);
- 
+
     if (this.map.size > this.capacity) this.evictTail();
   }
- 
+
   delete(key: string): void {
     const node = this.map.get(key);
     if (!node) return;
     this.unlink(node);
     this.map.delete(key);
   }
- 
+
   clear(): void {
     this.map.clear();
     this.head = null;
     this.tail = null;
   }
- 
+
   keys(): IterableIterator<string> {
     return this.map.keys();
   }
- 
+
   get size(): number {
     return this.map.size;
   }
- 
+
   private moveToHead(node: LRUNode): void {
     if (node === this.head) return;
     this.unlink(node);
@@ -91,14 +93,14 @@ class LRUCache {
     this.head = node;
     if (!this.tail) this.tail = node;
   }
- 
+
   private evictTail(): void {
     if (!this.tail) return;
     const key = this.tail.key;
     this.unlink(this.tail);
     this.map.delete(key);
   }
- 
+
   private unlink(node: LRUNode): void {
     if (node.prev) node.prev.next = node.next;
     else this.head = node.next;
@@ -115,15 +117,14 @@ export class ChunkGenerationQueue {
   private activeSeed: number | undefined;
   private activeGenerationId = -1;
   private queuedChunks: QueuedChunk[] = [];
- 
+
   constructor(
-    private readonly chunkFactory: ChunkFactory = (cx, cz, size, seed) =>
-      new Chunk(cx, cz, size, seed),
+    private readonly chunkFactory: ChunkFactory = (cx, cz, size, seed) => new Chunk(cx, cz, size, seed),
     cacheCapacity = 512,
   ) {
     this.cache = new LRUCache(cacheCapacity);
   }
- 
+
   /** Replaces the desired visible set and returns a render from already-cached chunks. */
   setVisibleChunks(args: ChunkQueueArgs): ChunkRenderData {
     this.ensureSeed(args.seed);
@@ -137,16 +138,15 @@ export class ChunkGenerationQueue {
   generateNext(args: ChunkQueueArgs): ChunkRenderData | null {
     this.ensureSeed(args.seed);
     if (args.generationId !== this.activeGenerationId) return null;
- 
+
     while (this.queuedChunks.length > 0) {
       const next = this.queuedChunks.shift();
       if (!next) return null;
       if (this.cache.has(next.key)) continue;
-      this.cache.set(next.key, this.chunkFactory(next.originX, next.originZ, CHUNK_SIZE, args.seed),
-      );
+      this.cache.set(next.key, this.chunkFactory(next.originX, next.originZ, CHUNK_SIZE, args.seed));
       return this.renderVisible(args);
     }
- 
+
     return null;
   }
 
@@ -167,7 +167,7 @@ export class ChunkGenerationQueue {
   private evictDistantChunks(args: ChunkQueueArgs): void {
     const evictDist = args.evictDistance ?? args.renderDistance + 3;
     const keysToDelete: string[] = [];
- 
+
     for (const key of this.cache.keys()) {
       const [ox, oz] = key.split(",").map(Number) as [number, number];
       const dx = Math.abs(ox - args.originX) / CHUNK_SIZE;
@@ -176,36 +176,31 @@ export class ChunkGenerationQueue {
         keysToDelete.push(key);
       }
     }
- 
+
     for (const key of keysToDelete) this.cache.delete(key);
   }
 
-   private buildQueue(chunkOrigins: ChunkOrigin[]): QueuedChunk[] {
+  private buildQueue(chunkOrigins: ChunkOrigin[]): QueuedChunk[] {
     const queue: QueuedChunk[] = [];
     const seenKeys = new Set<string>();
- 
+
     for (const origin of chunkOrigins) {
       const key = chunkKey(origin.originX, origin.originZ);
       if (seenKeys.has(key) || this.cache.has(key)) continue;
       seenKeys.add(key);
       queue.push({ ...origin, key });
     }
- 
+
     return queue;
   }
-
-
 
   private renderVisible(args: ChunkQueueArgs): ChunkRenderData {
     const { originX, originZ, renderDistance } = args;
     const visibleChunks: ChunkLike[] = [];
- 
+
     for (let cx = -renderDistance; cx <= renderDistance; cx++) {
       for (let cz = -renderDistance; cz <= renderDistance; cz++) {
-        const key = chunkKey(
-          originX + cx * CHUNK_SIZE,
-          originZ + cz * CHUNK_SIZE,
-        );
+        const key = chunkKey(originX + cx * CHUNK_SIZE, originZ + cz * CHUNK_SIZE);
         const chunk = this.cache.get(key);
         if (chunk) visibleChunks.push(chunk);
       }
@@ -216,9 +211,9 @@ export class ChunkGenerationQueue {
       const chunk = this.cache.get(chunkKey(ox, oz));
       return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone;
     };
- 
+
     for (const chunk of visibleChunks) chunk.renderChunk(worldGetBlock);
- 
+
     let totalPositionCount = 0;
     let totalColorCount = 0;
     let totalCubes = 0;
@@ -227,22 +222,22 @@ export class ChunkGenerationQueue {
       totalColorCount += chunk.cubeColors().length;
       totalCubes += chunk.numCubes();
     }
- 
+
     const cubePositions = new Float32Array(totalPositionCount);
     const cubeColors = new Float32Array(totalColorCount);
     let positionOffset = 0;
     let colorOffset = 0;
- 
+
     for (const chunk of visibleChunks) {
       const positions = chunk.cubePositions();
       cubePositions.set(positions, positionOffset);
       positionOffset += positions.length;
- 
+
       const colors = chunk.cubeColors();
       cubeColors.set(colors, colorOffset);
       colorOffset += colors.length;
     }
- 
+
     return { cubePositions, cubeColors, numCubes: totalCubes };
   }
 }

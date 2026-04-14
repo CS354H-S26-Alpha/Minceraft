@@ -38,7 +38,7 @@ export interface ChunkWorkerApi {
 export class ChunkWorkerClient {
   private readonly worker = new ChunkWorkerConstructor();
   private readonly remote = wrap<ChunkWorkerApi>(this.worker);
-  
+
   private nextId = 0;
   private pending = new Map<number, (value: void | PromiseLike<void>) => void>();
 

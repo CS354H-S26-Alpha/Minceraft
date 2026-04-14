@@ -5,7 +5,6 @@ const RENDER_DISTANCE = 1;
 const LOAD_DISTANCE = RENDER_DISTANCE + 2;
 const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 
-
 /**
  * Main-thread coordinator that keeps the renderer fed with terrain data
  * from the chunk generation worker.
@@ -27,11 +26,7 @@ export class ChunkManager {
     this.update(spawnX, spawnZ);
   }
 
-  private buildArgs(
-    generationId: number,
-    originX: number,
-    originZ: number,
-  ): ChunkQueueArgs {
+  private buildArgs(generationId: number, originX: number, originZ: number): ChunkQueueArgs {
     return {
       generationId,
       originX,
@@ -48,11 +43,11 @@ export class ChunkManager {
   update(wx: number, wz: number): void {
     const [originX, originZ] = chunkOrigin(wx, wz);
     if (originX === this.lastOriginX && originZ === this.lastOriginZ) return;
- 
+
     this.lastOriginX = originX;
     this.lastOriginZ = originZ;
     const generationId = ++this.activeGeneration;
- 
+
     const args = this.buildArgs(generationId, originX, originZ);
     void this.load(args);
   }
@@ -87,13 +82,9 @@ export class ChunkManager {
   }
 }
 
-function buildGenerationOrder(
-  originX: number,
-  originZ: number,
-  loadDistance: number,
-): ChunkOrigin[] {
+function buildGenerationOrder(originX: number, originZ: number, loadDistance: number): ChunkOrigin[] {
   const origins: ChunkOrigin[] = [{ originX, originZ }];
- 
+
   for (let radius = 1; radius <= loadDistance; radius++) {
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dz = -radius; dz <= radius; dz++) {
@@ -105,6 +96,6 @@ function buildGenerationOrder(
       }
     }
   }
- 
+
   return origins;
 }
