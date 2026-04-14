@@ -61,6 +61,24 @@ describe("object placement rules", () => {
     expect(supportsPlacedFootprint(args, PlacedObjectType.Shrub, 2.82, 2.5, 64, 1)).toBe(false);
   });
 
+  it("rejects a rock whose rendered footprint would extend onto a lower ledge", () => {
+    const args = {
+      seed: 1,
+      chunkOriginX: 0,
+      chunkOriginZ: 0,
+      chunkSize: 8,
+      sampleAt(localX: number, localZ: number): ObjectPlacementSample {
+        const dropped = localX >= 4 && localZ >= 2 && localZ <= 3;
+        return sample({
+          surfaceY: dropped ? 63 : 64,
+          distanceToChunkEdge: Math.min(localX, localZ, 7 - localX, 7 - localZ),
+        });
+      },
+    };
+
+    expect(supportsPlacedFootprint(args, PlacedObjectType.Rock, 3.5, 2.5, 64, 1)).toBe(false);
+  });
+
   it("accepts a valid forest tree placement sample", () => {
     const treeRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.Tree];
     expect(

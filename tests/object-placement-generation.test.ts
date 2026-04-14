@@ -8,6 +8,7 @@ import {
   type ObjectPlacementSample,
   placedObjectTypeIndex,
   supportsObjectPlacement,
+  supportsPlacedFootprint,
 } from "../src/game/object-placement";
 
 function flatForestSample(localX: number, localZ: number, chunkSize: number): ObjectPlacementSample {
@@ -56,11 +57,42 @@ describe("per-chunk object placement generation", () => {
 
   it("produces only valid object placements for a chunk", () => {
     const chunk = new Chunk(0, 0, 64, 12345);
+    const chunkOriginX = -32;
+    const chunkOriginZ = -32;
+    const chunkArgs = {
+      seed: 12345,
+      chunkOriginX,
+      chunkOriginZ,
+      chunkSize: 64,
+      sampleAt(localX: number, localZ: number): ObjectPlacementSample {
+        const idx = localZ * 64 + localX;
+        const surfaceY = chunk.heightMap[idx] as number;
+        const center = surfaceY;
+        return {
+          biome: chunk.biomeMap[idx] as Biome,
+          surfaceY,
+          surfaceBlock: chunk.getBlock(localX, surfaceY, localZ),
+          northY: localZ > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX] as number) : center,
+          southY: localZ + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX] as number) : center,
+          eastY: localX + 1 < 64 ? (chunk.heightMap[localZ * 64 + localX + 1] as number) : center,
+          westY: localX > 0 ? (chunk.heightMap[localZ * 64 + localX - 1] as number) : center,
+          northEastY:
+            localZ > 0 && localX + 1 < 64 ? (chunk.heightMap[(localZ - 1) * 64 + localX + 1] as number) : center,
+          northWestY: localZ > 0 && localX > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX - 1] as number) : center,
+          southEastY:
+            localZ + 1 < 64 && localX + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX + 1] as number) : center,
+          southWestY:
+            localZ + 1 < 64 && localX > 0 ? (chunk.heightMap[(localZ + 1) * 64 + localX - 1] as number) : center,
+          isSubmerged: false,
+          distanceToChunkEdge: Math.min(localX, localZ, 63 - localX, 63 - localZ),
+        };
+      },
+    };
 
     expect(chunk.placedObjects().length).toBeGreaterThan(0);
     for (const object of chunk.placedObjects()) {
-      const localX = Math.floor(object.x - (0 - 64 / 2));
-      const localZ = Math.floor(object.z - (0 - 64 / 2));
+      const localX = Math.floor(object.x - chunkOriginX);
+      const localZ = Math.floor(object.z - chunkOriginZ);
       const idx = localZ * 64 + localX;
       const surfaceY = chunk.heightMap[idx] as number;
       const center = surfaceY;
@@ -85,10 +117,11 @@ describe("per-chunk object placement generation", () => {
       };
 
       expect(supportsObjectPlacement(OBJECT_PLACEMENT_RULES[object.type], sample)).toBe(true);
+      expect(supportsPlacedFootprint(chunkArgs, object.type, object.x, object.z, surfaceY, object.scale)).toBe(true);
       expect(object.y).toBeGreaterThanOrEqual(surfaceY + 0.4);
       expect(object.y).toBeLessThanOrEqual(surfaceY + 0.5);
-      expect(object.chunkOriginX).toBe(-32);
-      expect(object.chunkOriginZ).toBe(-32);
+      expect(object.chunkOriginX).toBe(chunkOriginX);
+      expect(object.chunkOriginZ).toBe(chunkOriginZ);
       expect(object.renderTypeIndex).toBe(placedObjectTypeIndex(object.type));
     }
   });

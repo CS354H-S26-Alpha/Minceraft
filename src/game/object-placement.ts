@@ -136,11 +136,11 @@ export const OBJECT_PLACEMENT_RULES = {
     allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass, CubeType.Sand],
     minSurfaceY: 45,
     maxSurfaceY: 90,
-    maxLocalRelief: 2,
+    maxLocalRelief: 0,
     minSpacing: 5,
     noiseFrequency: 1 / 14,
     spawnThreshold: 0.75,
-    edgePadding: 1,
+    edgePadding: 2,
     requiresDrySurface: true,
     tags: ["low-profile"],
   },
@@ -155,7 +155,7 @@ export const OBJECT_PLACEMENT_RULES = {
     minSpacing: 6,
     noiseFrequency: 1 / 18,
     spawnThreshold: 0.8,
-    edgePadding: 2,
+    edgePadding: 3,
     requiresDrySurface: true,
     tags: ["scatter"],
   },
@@ -166,7 +166,7 @@ export const OBJECT_PLACEMENT_RULES = {
     allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass],
     minSurfaceY: 50,
     maxSurfaceY: 88,
-    maxLocalRelief: 1,
+    maxLocalRelief: 0,
     minSpacing: 7,
     noiseFrequency: 1 / 24,
     spawnThreshold: 0.84,
@@ -181,7 +181,7 @@ export const OBJECT_PLACEMENT_RULES = {
     allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass, CubeType.Sand, CubeType.Stone, CubeType.Snow],
     minSurfaceY: 40,
     maxSurfaceY: 110,
-    maxLocalRelief: 1,
+    maxLocalRelief: 0,
     minSpacing: 12,
     noiseFrequency: 1 / 26,
     spawnThreshold: 0.93,
@@ -222,13 +222,11 @@ function placementJitterRange(type: PlacedObjectType): number {
   switch (type) {
     case PlacedObjectType.Rock:
     case PlacedObjectType.Shrub:
-      return 0.18;
     case PlacedObjectType.Tree:
-      return 0.12;
     case PlacedObjectType.EnemySpawn:
-      return 0.08;
+      return 0.0;
     default:
-      return 0.2;
+      return 0.12;
   }
 }
 
@@ -262,8 +260,6 @@ function placementScale(seed: number, type: PlacedObjectType, x: number, z: numb
 function placementBaseHeight(type: PlacedObjectType): number {
   switch (type) {
     case PlacedObjectType.Rock:
-      return 0.42;
-    case PlacedObjectType.Grass:
       return 0.48;
     default:
       return 0.5;
@@ -273,15 +269,15 @@ function placementBaseHeight(type: PlacedObjectType): number {
 function placementFootprintRadius(type: PlacedObjectType, scale: number): number {
   switch (type) {
     case PlacedObjectType.Rock:
-      return 0.42 * scale;
+      return 0.68 * scale;
     case PlacedObjectType.Shrub:
-      return 0.28 * scale;
+      return 0.5 * scale;
     case PlacedObjectType.Tree:
-      return 0.16 * scale;
+      return 0.22 * scale;
     case PlacedObjectType.EnemySpawn:
       return 0.22 * scale;
     default:
-      return 0.12 * scale;
+      return 0.06 * scale;
   }
 }
 
