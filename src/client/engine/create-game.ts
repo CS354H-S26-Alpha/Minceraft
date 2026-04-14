@@ -197,6 +197,10 @@ export function createGame(args: CreateGameArgs): GameState {
 
     chunks.update(player.position.x, player.position.z);
 
+    const viewMatrix = camera.viewMatrix();
+    const projMatrix = camera.projMatrix();
+    chunks.cull(viewMatrix, projMatrix);
+
     // --- Remote entities ---
     const snap = room().snapshot;
     if (snap.tick !== lastTick) {
@@ -210,8 +214,8 @@ export function createGame(args: CreateGameArgs): GameState {
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
     renderer.render({
-      viewMatrix: camera.viewMatrix(),
-      projMatrix: camera.projMatrix(),
+      viewMatrix,
+      projMatrix,
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
       cubeFaceTiles0: chunks.faceTiles0,

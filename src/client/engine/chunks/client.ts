@@ -1,13 +1,20 @@
 import { releaseProxy, wrap } from "comlink";
 import ChunkWorkerConstructor from "./worker?worker";
 
-/** Flat render buffers for the chunks currently visible to the player. */
-export interface ChunkRenderData {
+/** Render data for a single chunk, tagged with its world-space origin. */
+export interface SingleChunkData {
+  originX: number;
+  originZ: number;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
   cubeFaceTiles0: Float32Array;
   cubeFaceTiles1: Float32Array;
   numCubes: number;
+}
+
+/** Per-chunk render data for all loaded chunks in a generation. */
+export interface ChunkBatchData {
+  chunks: SingleChunkData[];
 }
 
 export interface ChunkOrigin {
@@ -30,8 +37,8 @@ export interface ChunkQueueArgs {
 }
 
 export interface ChunkWorkerApi {
-  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkRenderData>;
-  generateNext(args: ChunkQueueArgs): Promise<ChunkRenderData | null>;
+  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
+  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
 }
 
 /** Comlink wrapper for the chunk generation web worker. */

@@ -1,29 +1,33 @@
 /// <reference lib="webworker" />
 
 import { expose, transfer } from "comlink";
-import type { ChunkRenderData, ChunkWorkerApi } from "./client";
+import type { ChunkBatchData, ChunkWorkerApi } from "./client";
 import { ChunkGenerationQueue } from "./queue";
 
-function transferRenderData(data: ChunkRenderData): ChunkRenderData {
-  return transfer(data, [
-    data.cubePositions.buffer,
-    data.cubeColors.buffer,
-    data.cubeFaceTiles0.buffer,
-    data.cubeFaceTiles1.buffer,
-  ]);
+function transferBatchData(data: ChunkBatchData): ChunkBatchData {
+  const transferables: ArrayBuffer[] = [];
+  for (const chunk of data.chunks) {
+    transferables.push(
+      chunk.cubePositions.buffer as ArrayBuffer,
+      chunk.cubeColors.buffer as ArrayBuffer,
+      chunk.cubeFaceTiles0.buffer as ArrayBuffer,
+      chunk.cubeFaceTiles1.buffer as ArrayBuffer,
+    );
+  }
+  return transfer(data, transferables);
 }
 
 const queue = new ChunkGenerationQueue();
 
 const api: ChunkWorkerApi = {
   async setVisibleChunks(args) {
-    return transferRenderData(queue.setVisibleChunks(args));
+    return transferBatchData(queue.setVisibleChunks(args));
   },
 
   async generateNext(args) {
     const data = queue.generateNext(args);
     if (!data) return null;
-    return transferRenderData(data);
+    return transferBatchData(data);
   },
 };
 

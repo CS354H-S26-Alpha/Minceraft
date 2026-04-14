@@ -22,6 +22,7 @@ import {
   type InventorySlot,
   MAX_COORDINATE,
   normalizeInventory,
+  PLAYER_SPEED,
   Player,
   type PlayerPositionPacket,
   type PlayerPublicState,
