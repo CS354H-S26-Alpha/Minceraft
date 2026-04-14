@@ -216,14 +216,30 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     const ny = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
     const nz = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
 
+    const currentX = this.state.x;
+    const currentY = this.state.y;
+    const currentZ = this.state.z;
+
+    let nextX = nx;
+    let nextY = ny;
+    let nextZ = nz;
+
     if (this.collisionQuery !== undefined) {
-      const minY = this.collisionQuery(nx, nz);
-      if (ny < minY) return;
+      // horizontal move checks
+      const minYAtNextXCurrentZ = this.collisionQuery(nextX, currentZ);
+      if (currentY < minYAtNextXCurrentZ) nextX = currentX;
+
+      const minYAtCurrentXNextZ = this.collisionQuery(currentX, nextZ);
+      if (currentY < minYAtCurrentXNextZ) nextZ = currentZ;
+
+      // vertical move check at the final horizontal position
+      const minYAtNextXZ = this.collisionQuery(nextX, nextZ);
+      if (nextY < minYAtNextXZ) nextY = currentY;
     }
 
-    this.state.x = nx;
-    this.state.y = ny;
-    this.state.z = nz;
+    this.state.x = nextX;
+    this.state.y = nextY;
+    this.state.z = nextZ;
   }
 }
 
