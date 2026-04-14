@@ -1,14 +1,14 @@
+import bedrockTextureUrl from "@/assets/textures/bedrock.png";
+import coalTextureUrl from "@/assets/textures/coal.png";
+import diamondTextureUrl from "@/assets/textures/diamond.png";
 import dirtBottomTextureUrl from "@/assets/textures/dirt_bottom.png";
 import dirtSideTextureUrl from "@/assets/textures/dirt_side.png";
 import dirtTopTextureUrl from "@/assets/textures/dirt_top.png";
-import sandTextureUrl from "@/assets/textures/sand.png";
-import stoneTextureUrl from "@/assets/textures/stone.png";
-import snowTextureUrl from "@/assets/textures/snow_top.png";
-import bedrockTextureUrl from "@/assets/textures/bedrock.png";
-import coalTextureUrl from "@/assets/textures/coal.png";
-import ironTextureUrl from "@/assets/textures/iron.png";
 import goldTextureUrl from "@/assets/textures/gold.png";
-import diamondTextureUrl from "@/assets/textures/diamond.png";
+import ironTextureUrl from "@/assets/textures/iron.png";
+import sandTextureUrl from "@/assets/textures/sand.png";
+import snowTextureUrl from "@/assets/textures/snow_top.png";
+import stoneTextureUrl from "@/assets/textures/stone.png";
 
 export enum CubeType {
   Air = 0,
