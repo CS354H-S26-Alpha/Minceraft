@@ -4,19 +4,24 @@ import {
   type ChunkBatchData,
   type ChunkOrigin,
   type ChunkQueueArgs,
-  ChunkWorkerClient,
   type SingleChunkData,
 } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
 const RENDER_DISTANCE = 4;
 
+export interface ChunkClient {
+  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
+  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  dispose(): void;
+}
+
 /**
  * Main-thread coordinator that keeps the renderer fed with terrain data
  * from the chunk generation worker, with per-frame frustum culling.
  */
 export class ChunkManager {
-  private readonly client: ChunkWorkerClient;
+  private readonly client: ChunkClient;
   private readonly seed: number;
   private lastOriginX = NaN;
   private lastOriginZ = NaN;
@@ -34,8 +39,8 @@ export class ChunkManager {
   faceTiles1 = new Float32Array(0);
   count = 0;
 
-  constructor(spawnX: number, spawnZ: number, seed: number) {
-    this.client = new ChunkWorkerClient();
+  constructor(spawnX: number, spawnZ: number, seed: number, client: ChunkClient) {
+    this.client = client;
     this.seed = seed;
     this.update(spawnX, spawnZ);
   }
