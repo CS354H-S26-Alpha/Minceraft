@@ -43,6 +43,8 @@ export function joinWorld(roomId: string) {
         setInventoryUi(reconcile(snap.inventoryUi));
       }
 
+      replicated()?.acknowledge(snap.acks[playerId] ?? 0);
+
       if (snap.self) {
         if (!player()) {
           setPlayer(new Player(snap.self));
@@ -50,8 +52,6 @@ export function joinWorld(roomId: string) {
           replicated()?.initialize(snap.self);
         }
       }
-
-      replicated()?.acknowledge(snap.acks[playerId] ?? 0);
     });
   }).then((s) => setSession(() => s));
 
