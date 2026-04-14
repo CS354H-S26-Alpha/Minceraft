@@ -100,4 +100,27 @@ describe("Chunk", () => {
       }
     }
   });
+
+  it("generates block-based vegetation without clipping past chunk bounds", () => {
+    const chunk = new Chunk(-128, -128, 64, 12345);
+    let vegetationBlocks = 0;
+
+    for (let z = 0; z < 64; z++) {
+      for (let x = 0; x < 64; x++) {
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+          const block = chunk.getBlock(x, y, z);
+          if (
+            block === CubeType.OakLog ||
+            block === CubeType.OakLeaf ||
+            block === CubeType.ShrubLeaf ||
+            block === CubeType.ShrubStem
+          ) {
+            vegetationBlocks++;
+          }
+        }
+      }
+    }
+
+    expect(vegetationBlocks).toBeGreaterThan(0);
+  });
 });

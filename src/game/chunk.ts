@@ -1,7 +1,12 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
-import { generatePlacedObjectsForChunk, type PlacedObject } from "@/game/object-placement";
+import { generatePlacedObjectsForChunk, type PlacedObject, PlacedObjectType } from "@/game/object-placement";
+import {
+  canPlaceVegetationTemplate,
+  pickVegetationTemplate,
+  placeVegetationTemplate,
+} from "@/game/vegetation-structures";
 import { perlin3D } from "@/utils/noise";
 
 export const CHUNK_SIZE = 64;
@@ -63,6 +68,54 @@ export class Chunk {
 
   private setBlock(lx: number, ly: number, lz: number, type: CubeType): void {
     this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = type;
+  }
+
+  private applyVegetationStructures(
+    anchors: readonly PlacedObject[],
+    chunkOriginX: number,
+    chunkOriginZ: number,
+  ): PlacedObject[] {
+    const renderableObjects: PlacedObject[] = [];
+
+    for (const anchor of anchors) {
+      if (anchor.type !== PlacedObjectType.Tree && anchor.type !== PlacedObjectType.Shrub) {
+        renderableObjects.push(anchor);
+        continue;
+      }
+
+      const anchorLocalX = Math.floor(anchor.x - chunkOriginX);
+      const anchorLocalZ = Math.floor(anchor.z - chunkOriginZ);
+      const groundY = Math.floor(anchor.y);
+      const template = pickVegetationTemplate(this.seed, anchor.type, Math.floor(anchor.x), Math.floor(anchor.z));
+
+      if (
+        !canPlaceVegetationTemplate(
+          {
+            chunkHeight: CHUNK_HEIGHT,
+            chunkSize: CHUNK_SIZE,
+            getBlock: (localX, y, localZ) => this.getBlock(localX, y, localZ),
+          },
+          anchorLocalX,
+          groundY,
+          anchorLocalZ,
+          template,
+        )
+      ) {
+        continue;
+      }
+
+      placeVegetationTemplate(
+        {
+          setBlock: (localX, y, localZ, type) => this.setBlock(localX, y, localZ, type),
+        },
+        anchorLocalX,
+        groundY,
+        anchorLocalZ,
+        template,
+      );
+    }
+
+    return renderableObjects;
   }
 
   // Ore definitions: [cubeType, seedOffset, frequency, threshold, minY, maxY]
@@ -144,7 +197,7 @@ export class Chunk {
     }
 
     // --- Pass 4: Deterministic non-cube object placement ---
-    this.placedObjectsData = generatePlacedObjectsForChunk({
+    const placedObjectAnchors = generatePlacedObjectsForChunk({
       seed: this.seed,
       chunkOriginX: topleftx,
       chunkOriginZ: topleftz,
@@ -189,6 +242,7 @@ export class Chunk {
         };
       },
     });
+    this.placedObjectsData = this.applyVegetationStructures(placedObjectAnchors, topleftx, topleftz);
   }
 
   // worldGet: optional cross-chunk block lookup for accurate edge culling.

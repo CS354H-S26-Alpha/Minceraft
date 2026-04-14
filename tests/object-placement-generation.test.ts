@@ -6,6 +6,7 @@ import {
   generatePlacedObjectsForChunk,
   OBJECT_PLACEMENT_RULES,
   type ObjectPlacementSample,
+  PlacedObjectType,
   placedObjectTypeIndex,
   supportsObjectPlacement,
   supportsPlacedFootprint,
@@ -123,7 +124,39 @@ describe("per-chunk object placement generation", () => {
       expect(object.chunkOriginX).toBe(chunkOriginX);
       expect(object.chunkOriginZ).toBe(chunkOriginZ);
       expect(object.renderTypeIndex).toBe(placedObjectTypeIndex(object.type));
+      expect(object.type).not.toBe(PlacedObjectType.Tree);
+      expect(object.type).not.toBe(PlacedObjectType.Shrub);
     }
+  });
+
+  it("builds tree and shrub anchors into chunk blocks instead of render props", () => {
+    let oakLogCount = 0;
+    let oakLeafCount = 0;
+    let shrubLeafCount = 0;
+    const renderableTypes = new Set<PlacedObjectType>();
+
+    for (const [centerX, centerZ] of [[-128, -128]]) {
+      const chunk = new Chunk(centerX, centerZ, 64, 12345);
+      for (let z = 0; z < 64; z++) {
+        for (let x = 0; x < 64; x++) {
+          for (let y = 1; y < 128; y++) {
+            const block = chunk.getBlock(x, y, z);
+            if (block === CubeType.OakLog) oakLogCount++;
+            if (block === CubeType.OakLeaf) oakLeafCount++;
+            if (block === CubeType.ShrubLeaf) shrubLeafCount++;
+          }
+        }
+      }
+      for (const object of chunk.placedObjects()) {
+        renderableTypes.add(object.type);
+      }
+    }
+
+    expect(oakLogCount).toBeGreaterThan(0);
+    expect(oakLeafCount).toBeGreaterThan(0);
+    expect(shrubLeafCount).toBeGreaterThan(0);
+    expect(renderableTypes.has(PlacedObjectType.Tree)).toBe(false);
+    expect(renderableTypes.has(PlacedObjectType.Shrub)).toBe(false);
   });
 
   it("keeps generated objects inside the chunk bounds", () => {

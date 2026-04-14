@@ -11,6 +11,10 @@ export enum CubeType {
   IronOre = 9,
   GoldOre = 10,
   DiamondOre = 11,
+  OakLog = 12,
+  OakLeaf = 13,
+  ShrubLeaf = 14,
+  ShrubStem = 15,
 }
 
 export interface CubeTypeInfo {
@@ -30,4 +34,8 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   [CubeType.IronOre]: { baseColor: [0.6, 0.5, 0.45] },
   [CubeType.GoldOre]: { baseColor: [0.85, 0.75, 0.2] },
   [CubeType.DiamondOre]: { baseColor: [0.3, 0.85, 0.85] },
+  [CubeType.OakLog]: { baseColor: [0.45, 0.3, 0.14] },
+  [CubeType.OakLeaf]: { baseColor: [0.2, 0.48, 0.12] },
+  [CubeType.ShrubLeaf]: { baseColor: [0.42, 0.56, 0.2] },
+  [CubeType.ShrubStem]: { baseColor: [0.36, 0.29, 0.16] },
 };
