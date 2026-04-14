@@ -240,4 +240,10 @@ export class ChunkGenerationQueue {
 
     return { cubePositions, cubeColors, numCubes: totalCubes };
   }
+
+  public getBlockWorld(wx: number, wy: number, wz: number): CubeType {
+    const [ox, oz] = chunkOrigin(wx, wz);
+    const chunk = this.cache.get(chunkKey(ox, oz));
+    return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone; // THIS LINE IS FINE
+  }
 }

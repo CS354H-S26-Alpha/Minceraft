@@ -24,8 +24,12 @@ export interface PlayerInput {
   pitch: number;
 }
 
+export type CollisionQuery = (x: number, z: number) => number;
+
 /** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
+  public collisionQuery: CollisionQuery | undefined = undefined;
+
   /** Unique player identifier (alias for `state.id`). */
   get id() {
     return this.state.id;
@@ -59,8 +63,17 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     const mag2 = dx * dx + dy * dy + dz * dz;
     if (mag2 === 0) return;
     const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
-    this.state.x = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.x + dx * inv));
-    this.state.y = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
-    this.state.z = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
+    const nx = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.x + dx * inv));
+    const ny = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
+    const nz = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
+
+    if (this.collisionQuery !== undefined) {
+      const minY = this.collisionQuery(nx, nz);
+      if (ny < minY) return;
+    }
+
+    this.state.x = nx;
+    this.state.y = ny;
+    this.state.z = nz;
   }
 }

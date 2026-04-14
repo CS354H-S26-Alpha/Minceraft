@@ -18,6 +18,9 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
 }
 
 export class Chunk {
+  public static readonly CYLINDER_RADIUS = 0.4;
+  public static readonly CYLINDER_HEIGHT = 2;
+
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
   public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
@@ -267,5 +270,35 @@ export class Chunk {
   /** Returns the number of cubes to render this frame. */
   public numCubes(): number {
     return this.cubes;
+  }
+
+  public static minYForCylinderWorld(
+    wx: number,
+    wz: number,
+    worldGet: (wx: number, wy: number, wz: number) => CubeType,
+  ): number {
+    const r = Chunk.CYLINDER_RADIUS;
+    const h = Chunk.CYLINDER_HEIGHT;
+    const x0 = Math.floor(wx - r);
+    const x1 = Math.floor(wx + r);
+    const z0 = Math.floor(wz - r);
+    const z1 = Math.floor(wz + r);
+
+    let minCameraY = 0;
+
+    for (let bx = x0; bx <= x1; bx++) {
+      for (let bz = z0; bz <= z1; bz++) {
+        for (let by = CHUNK_HEIGHT - 1; by >= 0; by--) {
+          if (worldGet(bx, by, bz) === CubeType.Air) continue;
+          // Block's top face is at by+1. Camera bottom = cameraY - h.
+          // So cameraY must be >= by+1+h.
+          const required = by + 1 + h;
+          if (required > minCameraY) minCameraY = required;
+          break;
+        }
+      }
+    }
+
+    return minCameraY;
   }
 }
