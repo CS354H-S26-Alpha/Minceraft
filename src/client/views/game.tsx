@@ -54,15 +54,9 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
-      <PlayerHud
-        hidden={inventoryOpen()}
-        onSelectHotbarSlot={room.selectHotbarSlot}
-        player={room.player}
-        playerVersion={room.selfStateVersion}
-      />
+      <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={room.selectHotbarSlot} player={room.player} />
       <InventoryPanel
         player={room.player}
-        playerVersion={room.selfStateVersion}
         inventoryUi={room.inventoryUi}
         open={inventoryOpen()}
         onClickSlot={room.clickInventory}

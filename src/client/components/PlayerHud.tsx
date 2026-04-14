@@ -5,7 +5,6 @@ import { InventorySlotButton } from "./InventorySlot";
 
 interface PlayerHudProps {
   player: () => Player | undefined;
-  playerVersion: () => number;
   onSelectHotbarSlot: (slotIndex: number) => void;
   hidden?: boolean;
 }
@@ -18,20 +17,9 @@ import fullHeartIcon from "@/assets/icons/full_heart.png";
 import halfHeartIcon from "@/assets/icons/half_heart.png";
 
 export function PlayerHud(props: PlayerHudProps) {
-  const inventory = createMemo(() => {
-    props.playerVersion();
-    return props.player()?.state.inventory ?? [];
-  });
-
-  const selectedHotbarSlot = createMemo(() => {
-    props.playerVersion();
-    return props.player()?.state.selectedHotbarSlot ?? 0;
-  });
-
-  const health = createMemo(() => {
-    props.playerVersion();
-    return props.player()?.state.health ?? PLAYER_MAX_HEALTH;
-  });
+  const inventory = createMemo(() => props.player()?.state.inventory ?? []);
+  const selectedHotbarSlot = createMemo(() => props.player()?.state.selectedHotbarSlot ?? 0);
+  const health = createMemo(() => props.player()?.state.health ?? PLAYER_MAX_HEALTH);
 
   const selectedHotbarItemName = createMemo(() => {
     const slot = inventory()[HOTBAR_START_INDEX + selectedHotbarSlot()];

@@ -12,7 +12,6 @@ import { InventorySlotButton, InventorySlotVisual } from "./InventorySlot";
 
 interface InventoryPanelProps {
   player: () => Player | undefined;
-  playerVersion: () => number;
   inventoryUi: InventoryUiState;
   open: boolean;
   onClickSlot: (target: InventoryClickTarget) => void;
@@ -29,15 +28,8 @@ export function InventoryPanel(props: InventoryPanelProps) {
   });
   const pointer = createMemo(() => getPositionToScreen(mouse.x, mouse.y));
 
-  const inventory = () => {
-    props.playerVersion();
-    return props.player()?.state.inventory ?? [];
-  };
-
-  const selectedHotbarSlot = () => {
-    props.playerVersion();
-    return props.player()?.state.selectedHotbarSlot ?? 0;
-  };
+  const inventory = () => props.player()?.state.inventory ?? [];
+  const selectedHotbarSlot = () => props.player()?.state.selectedHotbarSlot ?? 0;
 
   return (
     <>

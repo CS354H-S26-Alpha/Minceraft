@@ -3,7 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
 import { createInventoryUiState, type InventoryClickTarget } from "@/game/crafting";
-import { Player, type PlayerInput } from "@/game/player";
+import { Player } from "@/game/player";
 import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
 /**
@@ -17,7 +17,6 @@ export function joinWorld(roomId: string) {
   const { credentials, join } = useSession();
   const { playerId } = credentials;
   const [player, setPlayer] = createSignal<Player>();
-  const [selfStateVersion, setSelfStateVersion] = createSignal(0);
   const replicated = createMemo(() => {
     const p = player();
     return p ? new LocalPrediction(p) : undefined;
@@ -50,7 +49,6 @@ export function joinWorld(roomId: string) {
         } else {
           replicated()?.initialize(snap.self);
         }
-        setSelfStateVersion((version) => version + 1);
       }
 
       replicated()?.acknowledge(snap.acks[playerId] ?? 0);
@@ -70,9 +68,7 @@ export function joinWorld(roomId: string) {
   }
 
   function selectHotbarSlot(slotIndex: number) {
-    if (player()?.setSelectedHotbarSlot(slotIndex)) {
-      setSelfStateVersion((version) => version + 1);
-    }
+    player()?.setSelectedHotbarSlot(slotIndex);
     session()?.selectHotbarSlot(slotIndex);
   }
 
@@ -87,7 +83,6 @@ export function joinWorld(roomId: string) {
     snapCount,
     session,
     replicated,
-    selfStateVersion,
     inventoryUi,
     clickInventory,
     closeInventory,
