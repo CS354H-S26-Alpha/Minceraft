@@ -16,8 +16,10 @@ import { Player } from "@/game/player";
 import type { ChunkBatchData, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
-export const RENDER_DISTANCE = 4;
-const EVICT_DISTANCE = RENDER_DISTANCE + 2;
+export const DEFAULT_RENDER_DISTANCE = 4;
+export const MIN_RENDER_DISTANCE = 1;
+export const MAX_RENDER_DISTANCE = 4;
+const EVICT_PADDING = 2;
 const INGEST_PER_FRAME = 3;
 
 export interface ChunkClient {
@@ -34,6 +36,7 @@ export interface ChunkClient {
  */
 export class ChunkManager {
   private readonly client: ChunkClient;
+  private renderDistance: number;
   private lastOriginX = NaN;
   private lastOriginZ = NaN;
 
@@ -55,13 +58,15 @@ export class ChunkManager {
 
   constructor(
     client: ChunkClient,
+    renderDistance: number = DEFAULT_RENDER_DISTANCE,
     private readonly onChange?: () => void,
   ) {
     this.client = client;
+    this.renderDistance = clampRenderDistance(renderDistance);
   }
 
   get minimapRadiusBlocks(): number {
-    return RENDER_DISTANCE * CHUNK_SIZE;
+    return this.renderDistance * CHUNK_SIZE;
   }
 
   /** Queues server-pushed chunk data for incremental ingestion. */
@@ -92,6 +97,13 @@ export class ChunkManager {
     this.lastOriginX = originX;
     this.lastOriginZ = originZ;
     this.evictDistant(originX, originZ);
+  }
+
+  setRenderDistance(renderDistance: number): void {
+    const next = clampRenderDistance(renderDistance);
+    if (next === this.renderDistance) return;
+    this.renderDistance = next;
+    this.dirty = true;
   }
 
   reset(): void {
@@ -396,7 +408,7 @@ export class ChunkManager {
       // Distance cull: skip chunks beyond render distance
       const dx = Math.abs(chunk.originX - this.lastOriginX) / CHUNK_SIZE;
       const dz = Math.abs(chunk.originZ - this.lastOriginZ) / CHUNK_SIZE;
-      if (Math.max(dx, dz) > RENDER_DISTANCE) continue;
+      if (Math.max(dx, dz) > this.renderDistance) continue;
 
       const aabb = chunkAABB(chunk.originX, chunk.originZ);
       if (aabbInFrustum(aabb, planes)) {
@@ -500,6 +512,7 @@ export class ChunkManager {
   }
 
   private evictDistant(playerOriginX: number, playerOriginZ: number): void {
+    const evictDistance = this.renderDistance + EVICT_PADDING;
     const toDelete: string[] = [];
     for (const key of this.chunkDataMap.keys()) {
       const [oxStr, ozStr] = key.split(",");
@@ -507,7 +520,7 @@ export class ChunkManager {
       const oz = Number(ozStr);
       const dx = Math.abs(ox - playerOriginX) / CHUNK_SIZE;
       const dz = Math.abs(oz - playerOriginZ) / CHUNK_SIZE;
-      if (Math.max(dx, dz) > EVICT_DISTANCE) toDelete.push(key);
+      if (Math.max(dx, dz) > evictDistance) toDelete.push(key);
     }
     for (const key of toDelete) {
       this.chunkDataMap.delete(key);
@@ -535,4 +548,8 @@ export class ChunkManager {
     if (blockType === undefined || height === undefined) return undefined;
     return (blockType << 8) | height;
   }
+}
+
+function clampRenderDistance(value: number): number {
+  return Math.min(MAX_RENDER_DISTANCE, Math.max(MIN_RENDER_DISTANCE, Math.round(value)));
 }

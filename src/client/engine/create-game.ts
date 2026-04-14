@@ -11,7 +11,7 @@ import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
-import { ChunkManager, RENDER_DISTANCE } from "./chunks";
+import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput, type InputOptions } from "./input";
@@ -26,6 +26,11 @@ export interface CreateGameArgs {
   glCanvas: () => HTMLCanvasElement | undefined;
   /** Output of `joinWorld()` — provides player, remote players, tick info, input, etc. */
   room: ReturnType<typeof joinWorld>;
+  preferences: {
+    mouseSensitivity: () => number;
+    invertY: () => boolean;
+    renderDistance: () => number;
+  };
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
   shortcuts?: Omit<InputOptions, "onReset">;
@@ -133,7 +138,9 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   const [terrainVersion, setTerrainVersion] = createSignal(0);
-  const chunks = new ChunkManager(new ChunkWorkerClient(), () => setTerrainVersion((version) => version + 1));
+  const chunks = new ChunkManager(new ChunkWorkerClient(), args.preferences.renderDistance(), () =>
+    setTerrainVersion((version) => version + 1),
+  );
   const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -147,6 +154,7 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastTick = 0;
   let lastPacketCount = 0;
   let timeOffsetS = 0;
+  let lastRenderDistance = args.preferences.renderDistance();
   // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
@@ -264,8 +272,8 @@ export function createGame(args: CreateGameArgs): GameState {
   // Match Minecraft 1.21: fog starts at 92% of render distance and completes
   // at the hard chunk cutoff, so distant chunks fade into the sky instead of
   // popping as the player walks around.
-  const FOG_FAR = RENDER_DISTANCE * CHUNK_SIZE;
-  const FOG_NEAR = FOG_FAR * 0.92;
+  let fogFar = lastRenderDistance * CHUNK_SIZE;
+  let fogNear = fogFar * 0.92;
   const fogColor = new Float32Array(3);
 
   createRenderLoop((dt, now) => {
@@ -290,7 +298,9 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Input → server ---
     const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
-    camera.rotate(mouse.dx, mouse.dy);
+    const mouseSensitivity = args.preferences.mouseSensitivity();
+    const invertY = args.preferences.invertY() ? -1 : 1;
+    camera.rotate(mouse.dx * mouseSensitivity, mouse.dy * mouseSensitivity * invertY);
     const keys = input.walkKeys();
     const walk = inputEnabled() ? camera.walkDir(keys) : { x: 0, z: 0 };
     const jump = inputEnabled() && keys.space;
@@ -301,6 +311,14 @@ export function createGame(args: CreateGameArgs): GameState {
       room().replicated()?.predict(next);
     }
     camera.setPosition(player.position);
+
+    const renderDistance = args.preferences.renderDistance();
+    if (renderDistance !== lastRenderDistance) {
+      lastRenderDistance = renderDistance;
+      chunks.setRenderDistance(renderDistance);
+      fogFar = renderDistance * CHUNK_SIZE;
+      fogNear = fogFar * 0.92;
+    }
 
     chunks.update(player.position.x, player.position.z);
     chunks.processIncoming();
@@ -379,8 +397,8 @@ export function createGame(args: CreateGameArgs): GameState {
       timeS: now / 1000,
       cameraPos: eye,
       fogColor,
-      fogNear: FOG_NEAR,
-      fogFar: FOG_FAR,
+      fogNear,
+      fogFar,
       entities,
       highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
     });
