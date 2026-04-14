@@ -29,6 +29,23 @@ describe("placed object render filtering", () => {
     expect(filterRenderablePlacedObjects([nearGrass, farGrass], 0, 0)).toEqual([nearGrass]);
   });
 
+  it("keeps nearby flowers but culls distant ones aggressively", () => {
+    const nearFlower = object({
+      type: PlacedObjectType.FlowerPoppy,
+      renderTypeIndex: 3,
+      x: 12,
+      z: 0,
+    });
+    const farFlower = object({
+      type: PlacedObjectType.FlowerDandelion,
+      renderTypeIndex: 2,
+      x: 44,
+      z: 0,
+    });
+
+    expect(filterRenderablePlacedObjects([nearFlower, farFlower], 0, 0)).toEqual([nearFlower]);
+  });
+
   it("keeps sparse landmark objects visible farther away", () => {
     const tree = object({
       type: PlacedObjectType.Tree,

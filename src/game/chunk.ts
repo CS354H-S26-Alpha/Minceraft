@@ -1,7 +1,12 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
-import { generatePlacedObjectsForChunk, type PlacedObject, PlacedObjectType } from "@/game/object-placement";
+import {
+  emptyPlacedObjectCounts,
+  generatePlacedObjectsForChunk,
+  type PlacedObject,
+  PlacedObjectType,
+} from "@/game/object-placement";
 import {
   canPlaceVegetationTemplate,
   pickVegetationTemplate,
@@ -34,13 +39,7 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private seed: number; // Seed for terrain generation
   private placedObjectsData: PlacedObject[] = [];
-  private placedObjectCountsData: Record<PlacedObjectType, number> = {
-    [PlacedObjectType.Grass]: 0,
-    [PlacedObjectType.Shrub]: 0,
-    [PlacedObjectType.Rock]: 0,
-    [PlacedObjectType.Tree]: 0,
-    [PlacedObjectType.EnemySpawn]: 0,
-  };
+  private placedObjectCountsData: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
 
   // types to update for Rendering
   private cubes: number = 0;
@@ -83,13 +82,7 @@ export class Chunk {
     chunkOriginZ: number,
   ): PlacedObject[] {
     const renderableObjects: PlacedObject[] = [];
-    const counts: Record<PlacedObjectType, number> = {
-      [PlacedObjectType.Grass]: 0,
-      [PlacedObjectType.Shrub]: 0,
-      [PlacedObjectType.Rock]: 0,
-      [PlacedObjectType.Tree]: 0,
-      [PlacedObjectType.EnemySpawn]: 0,
-    };
+    const counts: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
 
     for (const anchor of anchors) {
       if (anchor.type !== PlacedObjectType.Tree && anchor.type !== PlacedObjectType.Shrub) {

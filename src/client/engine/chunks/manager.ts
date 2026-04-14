@@ -1,5 +1,5 @@
 import { CHUNK_SIZE, chunkOrigin } from "@/game/chunk";
-import { type PlacedObject, PlacedObjectType } from "@/game/object-placement";
+import { emptyPlacedObjectCounts, type PlacedObject, type PlacedObjectType } from "@/game/object-placement";
 import {
   type ChunkOrigin,
   type ChunkQueueArgs,
@@ -25,13 +25,7 @@ export class ChunkManager {
   colors = new Float32Array(0);
   count = 0;
   placedObjects: readonly PlacedObject[] = [];
-  placedObjectCounts: Readonly<Record<PlacedObjectType, number>> = {
-    [PlacedObjectType.Grass]: 0,
-    [PlacedObjectType.Shrub]: 0,
-    [PlacedObjectType.Rock]: 0,
-    [PlacedObjectType.Tree]: 0,
-    [PlacedObjectType.EnemySpawn]: 0,
-  };
+  placedObjectCounts: Readonly<Record<PlacedObjectType, number>> = emptyPlacedObjectCounts();
 
   constructor(spawnX: number, spawnZ: number, seed: number, client: ChunkWorkerClientApi = new ChunkWorkerClient()) {
     this.client = client;

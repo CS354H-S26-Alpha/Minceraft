@@ -11,9 +11,13 @@ import { hash2D, valueNoise } from "@/utils/noise";
  */
 export enum PlacedObjectType {
   Grass = "grass",
+  TallGrass = "tall_grass",
+  FlowerDandelion = "flower_dandelion",
+  FlowerPoppy = "flower_poppy",
   Shrub = "shrub",
   Rock = "rock",
   Tree = "tree",
+  DeadBush = "dead_bush",
   EnemySpawn = "enemy_spawn",
 }
 
@@ -87,17 +91,39 @@ export interface GeneratePlacedObjectsArgs {
 
 export const PLACED_OBJECT_TYPES = [
   PlacedObjectType.Grass,
+  PlacedObjectType.TallGrass,
+  PlacedObjectType.FlowerDandelion,
+  PlacedObjectType.FlowerPoppy,
   PlacedObjectType.Shrub,
   PlacedObjectType.Rock,
   PlacedObjectType.Tree,
+  PlacedObjectType.DeadBush,
   PlacedObjectType.EnemySpawn,
 ] as const;
 
 export const RENDERABLE_PLACED_OBJECT_TYPES = [
   PlacedObjectType.Grass,
+  PlacedObjectType.TallGrass,
+  PlacedObjectType.FlowerDandelion,
+  PlacedObjectType.FlowerPoppy,
   PlacedObjectType.Rock,
+  PlacedObjectType.DeadBush,
   PlacedObjectType.EnemySpawn,
 ] as const;
+
+export function emptyPlacedObjectCounts(): Record<PlacedObjectType, number> {
+  return {
+    [PlacedObjectType.Grass]: 0,
+    [PlacedObjectType.TallGrass]: 0,
+    [PlacedObjectType.FlowerDandelion]: 0,
+    [PlacedObjectType.FlowerPoppy]: 0,
+    [PlacedObjectType.Shrub]: 0,
+    [PlacedObjectType.Rock]: 0,
+    [PlacedObjectType.Tree]: 0,
+    [PlacedObjectType.DeadBush]: 0,
+    [PlacedObjectType.EnemySpawn]: 0,
+  };
+}
 
 export function placedObjectTypeIndex(type: PlacedObjectType): number {
   return PLACED_OBJECT_TYPES.indexOf(type);
@@ -107,15 +133,23 @@ const OBJECT_PLACEMENT_GENERATION_ORDER = [
   PlacedObjectType.Tree,
   PlacedObjectType.Rock,
   PlacedObjectType.Shrub,
+  PlacedObjectType.DeadBush,
+  PlacedObjectType.FlowerDandelion,
+  PlacedObjectType.FlowerPoppy,
+  PlacedObjectType.TallGrass,
   PlacedObjectType.Grass,
   PlacedObjectType.EnemySpawn,
 ] as const;
 
 const OBJECT_PLACEMENT_SEED_OFFSETS = {
   [PlacedObjectType.Grass]: 1_001,
+  [PlacedObjectType.TallGrass]: 1_409,
+  [PlacedObjectType.FlowerDandelion]: 1_613,
+  [PlacedObjectType.FlowerPoppy]: 1_811,
   [PlacedObjectType.Shrub]: 2_003,
   [PlacedObjectType.Rock]: 3_007,
   [PlacedObjectType.Tree]: 4_009,
+  [PlacedObjectType.DeadBush]: 4_463,
   [PlacedObjectType.EnemySpawn]: 5_011,
 } satisfies Record<PlacedObjectType, number>;
 
@@ -134,6 +168,51 @@ export const OBJECT_PLACEMENT_RULES = {
     edgePadding: 1,
     requiresDrySurface: true,
     tags: ["ground-cover"],
+  },
+  [PlacedObjectType.TallGrass]: {
+    type: PlacedObjectType.TallGrass,
+    category: PlacedObjectCategory.Decorative,
+    allowedBiomes: [Biome.Forest],
+    allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass],
+    minSurfaceY: 48,
+    maxSurfaceY: 96,
+    maxLocalRelief: 1,
+    minSpacing: 2,
+    noiseFrequency: 1 / 10,
+    spawnThreshold: 0.79,
+    edgePadding: 1,
+    requiresDrySurface: true,
+    tags: ["ground-cover", "tall"],
+  },
+  [PlacedObjectType.FlowerDandelion]: {
+    type: PlacedObjectType.FlowerDandelion,
+    category: PlacedObjectCategory.Decorative,
+    allowedBiomes: [Biome.Forest],
+    allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass],
+    minSurfaceY: 48,
+    maxSurfaceY: 94,
+    maxLocalRelief: 1,
+    minSpacing: 3,
+    noiseFrequency: 1 / 13,
+    spawnThreshold: 0.875,
+    edgePadding: 1,
+    requiresDrySurface: true,
+    tags: ["flower", "yellow"],
+  },
+  [PlacedObjectType.FlowerPoppy]: {
+    type: PlacedObjectType.FlowerPoppy,
+    category: PlacedObjectCategory.Decorative,
+    allowedBiomes: [Biome.Forest],
+    allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass],
+    minSurfaceY: 48,
+    maxSurfaceY: 94,
+    maxLocalRelief: 1,
+    minSpacing: 3,
+    noiseFrequency: 1 / 15,
+    spawnThreshold: 0.89,
+    edgePadding: 1,
+    requiresDrySurface: true,
+    tags: ["flower", "red"],
   },
   [PlacedObjectType.Shrub]: {
     type: PlacedObjectType.Shrub,
@@ -179,6 +258,21 @@ export const OBJECT_PLACEMENT_RULES = {
     edgePadding: 2,
     requiresDrySurface: true,
     tags: ["tall", "blocks-visibility"],
+  },
+  [PlacedObjectType.DeadBush]: {
+    type: PlacedObjectType.DeadBush,
+    category: PlacedObjectCategory.Decorative,
+    allowedBiomes: [Biome.Desert, Biome.Mountain],
+    allowedSurfaceBlocks: [CubeType.Sand, CubeType.Stone],
+    minSurfaceY: 42,
+    maxSurfaceY: 104,
+    maxLocalRelief: 1,
+    minSpacing: 4,
+    noiseFrequency: 1 / 14,
+    spawnThreshold: 0.87,
+    edgePadding: 2,
+    requiresDrySurface: true,
+    tags: ["desert", "dry"],
   },
   [PlacedObjectType.EnemySpawn]: {
     type: PlacedObjectType.EnemySpawn,
@@ -236,6 +330,7 @@ function placementJitterRange(type: PlacedObjectType): number {
     case PlacedObjectType.Rock:
     case PlacedObjectType.Shrub:
     case PlacedObjectType.Tree:
+    case PlacedObjectType.DeadBush:
     case PlacedObjectType.EnemySpawn:
       return 0.0;
     default:
@@ -263,6 +358,13 @@ function placementScale(seed: number, type: PlacedObjectType, x: number, z: numb
       return lerp(0.95, 1.25, raw);
     case PlacedObjectType.Rock:
       return lerp(0.8, 1.2, raw);
+    case PlacedObjectType.TallGrass:
+      return lerp(0.95, 1.2, raw);
+    case PlacedObjectType.FlowerDandelion:
+    case PlacedObjectType.FlowerPoppy:
+      return lerp(0.9, 1.08, raw);
+    case PlacedObjectType.DeadBush:
+      return lerp(0.85, 1.05, raw);
     case PlacedObjectType.EnemySpawn:
       return 1;
     default:
@@ -274,6 +376,9 @@ function placementBaseHeight(type: PlacedObjectType): number {
   switch (type) {
     case PlacedObjectType.Rock:
       return 0.48;
+    case PlacedObjectType.FlowerDandelion:
+    case PlacedObjectType.FlowerPoppy:
+      return 0.52;
     default:
       return 0.5;
   }
@@ -287,6 +392,8 @@ function placementFootprintRadius(type: PlacedObjectType, scale: number): number
       return 0.5 * scale;
     case PlacedObjectType.Tree:
       return 0.22 * scale;
+    case PlacedObjectType.DeadBush:
+      return 0.18 * scale;
     case PlacedObjectType.EnemySpawn:
       return 0.22 * scale;
     default:

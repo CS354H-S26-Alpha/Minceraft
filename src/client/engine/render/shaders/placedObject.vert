@@ -19,9 +19,13 @@ varying vec3 localPos;
 
 vec2 sizeForType(float typeIndex) {
   if (typeIndex < 0.5) return vec2(0.45, 0.85);
-  if (typeIndex < 1.5) return vec2(1.1, 1.35);
-  if (typeIndex < 2.5) return vec2(1.15, 1.05);
-  if (typeIndex < 3.5) return vec2(2.2, 3.8);
+  if (typeIndex < 1.5) return vec2(0.38, 1.2);
+  if (typeIndex < 2.5) return vec2(0.42, 0.72);
+  if (typeIndex < 3.5) return vec2(0.42, 0.78);
+  if (typeIndex < 4.5) return vec2(1.1, 1.35);
+  if (typeIndex < 5.5) return vec2(1.15, 1.05);
+  if (typeIndex < 6.5) return vec2(2.2, 3.8);
+  if (typeIndex < 7.5) return vec2(0.62, 0.8);
   return vec2(1.35, 2.3);
 }
 

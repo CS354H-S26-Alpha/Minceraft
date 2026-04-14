@@ -39,7 +39,11 @@ describe("object placement rules", () => {
   it("limits renderable placed object types to non-block props", () => {
     expect(RENDERABLE_PLACED_OBJECT_TYPES).toEqual([
       PlacedObjectType.Grass,
+      PlacedObjectType.TallGrass,
+      PlacedObjectType.FlowerDandelion,
+      PlacedObjectType.FlowerPoppy,
       PlacedObjectType.Rock,
+      PlacedObjectType.DeadBush,
       PlacedObjectType.EnemySpawn,
     ]);
   });
@@ -117,6 +121,16 @@ describe("object placement rules", () => {
   it("rejects placement on unsupported surface blocks", () => {
     const grassRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.Grass];
     expect(supportsObjectPlacement(grassRule, sample({ surfaceBlock: CubeType.Stone }))).toBe(false);
+  });
+
+  it("accepts dandelions on flat forest grass", () => {
+    const flowerRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.FlowerDandelion];
+    expect(supportsObjectPlacement(flowerRule, sample({ distanceToChunkEdge: 2 }))).toBe(true);
+  });
+
+  it("rejects dead bushes on grassy forest terrain", () => {
+    const deadBushRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.DeadBush];
+    expect(supportsObjectPlacement(deadBushRule, sample())).toBe(false);
   });
 
   it("rejects placement on steep local terrain", () => {

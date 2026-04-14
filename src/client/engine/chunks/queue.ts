@@ -1,6 +1,6 @@
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "@/game/chunk";
-import { type PlacedObject, PlacedObjectType } from "@/game/object-placement";
+import { emptyPlacedObjectCounts, type PlacedObject, PlacedObjectType } from "@/game/object-placement";
 import type { ChunkOrigin, ChunkQueueArgs, ChunkRenderData } from "./client";
 
 interface ChunkLike {
@@ -103,13 +103,7 @@ export class ChunkGenerationQueue {
     let totalColorCount = 0;
     let totalCubes = 0;
     const placedObjects: PlacedObject[] = [];
-    const placedObjectCounts: Record<PlacedObjectType, number> = {
-      [PlacedObjectType.Grass]: 0,
-      [PlacedObjectType.Shrub]: 0,
-      [PlacedObjectType.Rock]: 0,
-      [PlacedObjectType.Tree]: 0,
-      [PlacedObjectType.EnemySpawn]: 0,
-    };
+    const placedObjectCounts: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
     for (const chunk of visibleChunks) {
       totalPositionCount += chunk.cubePositions().length;
       totalColorCount += chunk.cubeColors().length;

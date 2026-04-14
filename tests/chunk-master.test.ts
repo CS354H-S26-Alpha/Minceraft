@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { ChunkQueueArgs, ChunkRenderData, ChunkWorkerClientApi } from "../src/client/engine/chunks/client";
 import { ChunkManager } from "../src/client/engine/chunks/manager";
 import { Biome } from "../src/game/biome";
-import { type PlacedObject, PlacedObjectCategory, PlacedObjectType } from "../src/game/object-placement";
+import {
+  emptyPlacedObjectCounts,
+  type PlacedObject,
+  PlacedObjectCategory,
+  PlacedObjectType,
+} from "../src/game/object-placement";
 
 function flushPromises(): Promise<void> {
   return Promise.resolve();
@@ -36,11 +41,7 @@ function renderData(
     numCubes: value,
     placedObjects: objects,
     placedObjectCounts: {
-      [PlacedObjectType.Grass]: 0,
-      [PlacedObjectType.Shrub]: 0,
-      [PlacedObjectType.Rock]: 0,
-      [PlacedObjectType.Tree]: 0,
-      [PlacedObjectType.EnemySpawn]: 0,
+      ...emptyPlacedObjectCounts(),
       ...counts,
     },
   };

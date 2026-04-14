@@ -3,7 +3,7 @@ import { makeTimer } from "@solid-primitives/timer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { PlacedObjectType } from "@/game/object-placement";
+import { emptyPlacedObjectCounts, PlacedObjectType } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import type { Player, PlayerInput } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
@@ -65,16 +65,6 @@ const FRAME_HISTORY_SIZE = 120;
 const TEMP_START_SEED = 123;
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
-
-function emptyPlacedObjectCounts(): Record<PlacedObjectType, number> {
-  return {
-    [PlacedObjectType.Grass]: 0,
-    [PlacedObjectType.Shrub]: 0,
-    [PlacedObjectType.Rock]: 0,
-    [PlacedObjectType.Tree]: 0,
-    [PlacedObjectType.EnemySpawn]: 0,
-  };
-}
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef, placedRockPassDef]);
