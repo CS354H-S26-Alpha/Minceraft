@@ -80,7 +80,7 @@ export class Renderer {
 
     const gl = this.ctx;
     const bg = view.backgroundColor;
-    gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
+    gl.clearColor(bg[0] ?? 0, bg[1] ?? 0, bg[2] ?? 0, bg[3] ?? 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
