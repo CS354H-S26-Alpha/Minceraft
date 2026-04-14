@@ -218,11 +218,26 @@ function placementNoise(rule: ObjectPlacementRule, seed: number, x: number, z: n
   return valueNoise(seed + OBJECT_PLACEMENT_SEED_OFFSETS[rule.type], x, z, rule.noiseFrequency);
 }
 
+function placementJitterRange(type: PlacedObjectType): number {
+  switch (type) {
+    case PlacedObjectType.Rock:
+    case PlacedObjectType.Shrub:
+      return 0.18;
+    case PlacedObjectType.Tree:
+      return 0.12;
+    case PlacedObjectType.EnemySpawn:
+      return 0.08;
+    default:
+      return 0.2;
+  }
+}
+
 function placementJitter(seed: number, type: PlacedObjectType, x: number, z: number): { dx: number; dz: number } {
   const seedBase = seed + OBJECT_PLACEMENT_SEED_OFFSETS[type];
+  const range = placementJitterRange(type);
   return {
-    dx: lerp(-0.3, 0.3, hash2D(seedBase + 17, x, z)),
-    dz: lerp(-0.3, 0.3, hash2D(seedBase + 31, x, z)),
+    dx: lerp(-range, range, hash2D(seedBase + 17, x, z)),
+    dz: lerp(-range, range, hash2D(seedBase + 31, x, z)),
   };
 }
 
@@ -253,6 +268,48 @@ function placementBaseHeight(type: PlacedObjectType): number {
     default:
       return 0.5;
   }
+}
+
+function placementFootprintRadius(type: PlacedObjectType, scale: number): number {
+  switch (type) {
+    case PlacedObjectType.Rock:
+      return 0.42 * scale;
+    case PlacedObjectType.Shrub:
+      return 0.28 * scale;
+    case PlacedObjectType.Tree:
+      return 0.16 * scale;
+    case PlacedObjectType.EnemySpawn:
+      return 0.22 * scale;
+    default:
+      return 0.12 * scale;
+  }
+}
+
+export function supportsPlacedFootprint(
+  args: GeneratePlacedObjectsArgs,
+  type: PlacedObjectType,
+  placedX: number,
+  placedZ: number,
+  baseSurfaceY: number,
+  scale: number,
+): boolean {
+  const radius = placementFootprintRadius(type, scale);
+  const minLocalX = Math.floor(placedX - radius - args.chunkOriginX);
+  const maxLocalX = Math.floor(placedX + radius - args.chunkOriginX);
+  const minLocalZ = Math.floor(placedZ - radius - args.chunkOriginZ);
+  const maxLocalZ = Math.floor(placedZ + radius - args.chunkOriginZ);
+
+  if (minLocalX < 0 || minLocalZ < 0 || maxLocalX >= args.chunkSize || maxLocalZ >= args.chunkSize) return false;
+
+  for (let localZ = minLocalZ; localZ <= maxLocalZ; localZ++) {
+    for (let localX = minLocalX; localX <= maxLocalX; localX++) {
+      const supportSample = args.sampleAt(localX, localZ);
+      if (supportSample.surfaceY !== baseSurfaceY) return false;
+      if (supportSample.isSubmerged) return false;
+    }
+  }
+
+  return true;
 }
 
 function violatesSpacing(rule: ObjectPlacementRule, objects: readonly PlacedObject[], x: number, z: number): boolean {
@@ -288,6 +345,8 @@ export function generatePlacedObjectsForChunk(args: GeneratePlacedObjectsArgs): 
         const placedX = worldX + 0.5 + jitter.dx;
         const placedZ = worldZ + 0.5 + jitter.dz;
         if (violatesSpacing(rule, objects, placedX, placedZ)) continue;
+        const scale = placementScale(args.seed, type, worldX, worldZ);
+        if (!supportsPlacedFootprint(args, type, placedX, placedZ, sample.surfaceY, scale)) continue;
 
         objects.push({
           type,
@@ -296,7 +355,7 @@ export function generatePlacedObjectsForChunk(args: GeneratePlacedObjectsArgs): 
           y: sample.surfaceY + placementBaseHeight(type),
           z: placedZ,
           rotationY: placementRotation(args.seed, type, worldX, worldZ),
-          scale: placementScale(args.seed, type, worldX, worldZ),
+          scale,
           biome: sample.biome,
           chunkOriginX: args.chunkOriginX,
           chunkOriginZ: args.chunkOriginZ,

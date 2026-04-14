@@ -8,6 +8,7 @@ import {
   PLACED_OBJECT_TYPES,
   PlacedObjectType,
   supportsObjectPlacement,
+  supportsPlacedFootprint,
 } from "../src/game/object-placement";
 
 function sample(overrides: Partial<ObjectPlacementSample> = {}): ObjectPlacementSample {
@@ -41,6 +42,23 @@ describe("object placement rules", () => {
   it("rejects rock placement when a diagonal support corner drops away", () => {
     const rockRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.Rock];
     expect(supportsObjectPlacement(rockRule, sample({ southEastY: 62, distanceToChunkEdge: 3 }))).toBe(false);
+  });
+
+  it("rejects a jittered shrub footprint that would extend onto a lower cell", () => {
+    const args = {
+      seed: 1,
+      chunkOriginX: 0,
+      chunkOriginZ: 0,
+      chunkSize: 8,
+      sampleAt(localX: number, localZ: number): ObjectPlacementSample {
+        return sample({
+          surfaceY: localX >= 3 ? 63 : 64,
+          distanceToChunkEdge: Math.min(localX, localZ, 7 - localX, 7 - localZ),
+        });
+      },
+    };
+
+    expect(supportsPlacedFootprint(args, PlacedObjectType.Shrub, 2.82, 2.5, 64, 1)).toBe(false);
   });
 
   it("accepts a valid forest tree placement sample", () => {
