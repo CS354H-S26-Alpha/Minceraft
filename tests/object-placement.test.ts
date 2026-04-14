@@ -19,6 +19,10 @@ function sample(overrides: Partial<ObjectPlacementSample> = {}): ObjectPlacement
     southY: 64,
     eastY: 64,
     westY: 64,
+    northEastY: 64,
+    northWestY: 64,
+    southEastY: 64,
+    southWestY: 64,
     isSubmerged: false,
     distanceToChunkEdge: 4,
     ...overrides,
@@ -34,12 +38,28 @@ describe("object placement rules", () => {
     expect(computeLocalRelief(sample({ northY: 66, southY: 63, eastY: 61, westY: 64 }))).toBe(3);
   });
 
+  it("rejects rock placement when a diagonal support corner drops away", () => {
+    const rockRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.Rock];
+    expect(supportsObjectPlacement(rockRule, sample({ southEastY: 62, distanceToChunkEdge: 3 }))).toBe(false);
+  });
+
   it("accepts a valid forest tree placement sample", () => {
     const treeRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.Tree];
     expect(
       supportsObjectPlacement(
         treeRule,
-        sample({ surfaceY: 72, northY: 72, southY: 72, eastY: 72, westY: 72, distanceToChunkEdge: 3 }),
+        sample({
+          surfaceY: 72,
+          northY: 72,
+          southY: 72,
+          eastY: 72,
+          westY: 72,
+          northEastY: 72,
+          northWestY: 72,
+          southEastY: 72,
+          southWestY: 72,
+          distanceToChunkEdge: 3,
+        }),
       ),
     ).toBe(true);
   });

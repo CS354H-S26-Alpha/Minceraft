@@ -19,6 +19,10 @@ function flatForestSample(localX: number, localZ: number, chunkSize: number): Ob
     southY: 64,
     eastY: 64,
     westY: 64,
+    northEastY: 64,
+    northWestY: 64,
+    southEastY: 64,
+    southWestY: 64,
     isSubmerged: false,
     distanceToChunkEdge: Math.min(localX, localZ, chunkSize - 1 - localX, chunkSize - 1 - localZ),
   };
@@ -69,6 +73,13 @@ describe("per-chunk object placement generation", () => {
         southY: localZ + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX] as number) : center,
         eastY: localX + 1 < 64 ? (chunk.heightMap[localZ * 64 + localX + 1] as number) : center,
         westY: localX > 0 ? (chunk.heightMap[localZ * 64 + localX - 1] as number) : center,
+        northEastY:
+          localZ > 0 && localX + 1 < 64 ? (chunk.heightMap[(localZ - 1) * 64 + localX + 1] as number) : center,
+        northWestY: localZ > 0 && localX > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX - 1] as number) : center,
+        southEastY:
+          localZ + 1 < 64 && localX + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX + 1] as number) : center,
+        southWestY:
+          localZ + 1 < 64 && localX > 0 ? (chunk.heightMap[(localZ + 1) * 64 + localX - 1] as number) : center,
         isSubmerged: false,
         distanceToChunkEdge: Math.min(localX, localZ, 63 - localX, 63 - localZ),
       };

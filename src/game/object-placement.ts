@@ -49,6 +49,10 @@ export interface ObjectPlacementSample {
   southY: number;
   eastY: number;
   westY: number;
+  northEastY: number;
+  northWestY: number;
+  southEastY: number;
+  southWestY: number;
   isSubmerged: boolean;
   distanceToChunkEdge: number;
 }
@@ -147,11 +151,11 @@ export const OBJECT_PLACEMENT_RULES = {
     allowedSurfaceBlocks: [CubeType.ForestGrass, CubeType.Grass, CubeType.Sand, CubeType.Stone, CubeType.Snow],
     minSurfaceY: 40,
     maxSurfaceY: 110,
-    maxLocalRelief: 3,
+    maxLocalRelief: 1,
     minSpacing: 6,
     noiseFrequency: 1 / 18,
     spawnThreshold: 0.8,
-    edgePadding: 1,
+    edgePadding: 2,
     requiresDrySurface: true,
     tags: ["scatter"],
   },
@@ -194,6 +198,10 @@ export function computeLocalRelief(sample: ObjectPlacementSample): number {
     Math.abs(sample.southY - center),
     Math.abs(sample.eastY - center),
     Math.abs(sample.westY - center),
+    Math.abs(sample.northEastY - center),
+    Math.abs(sample.northWestY - center),
+    Math.abs(sample.southEastY - center),
+    Math.abs(sample.southWestY - center),
   );
 }
 
