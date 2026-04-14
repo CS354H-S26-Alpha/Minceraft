@@ -15,6 +15,7 @@ varying vec4 wsPos;
 varying vec2 uv;
 varying vec3 color;
 varying float cubeType;
+varying vec3 cubeOrigin; // integer cube position — constant across all vertices of an instance
 
 void main() {
   gl_Position = uProj * uView * (aVertPos + vec4(aOffset.xyz, 1.0));
@@ -23,4 +24,5 @@ void main() {
   uv = aUV;
   color = aColor;
   cubeType = aOffset.w;
+  cubeOrigin = aOffset.xyz;
 }

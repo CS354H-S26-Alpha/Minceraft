@@ -7,6 +7,7 @@ varying vec4 wsPos;
 varying vec2 uv;
 varying vec3 color;
 varying float cubeType;
+varying vec3 cubeOrigin;
 
 // CubeType enum values — must stay in sync with cube-types.ts
 const int CUBE_AIR         = 0;
@@ -17,6 +18,10 @@ const int CUBE_SAND        = 4;
 const int CUBE_SNOW        = 5;
 const int CUBE_BEDROCK     = 6;
 const int CUBE_FORESTGRASS = 7;
+const int CUBE_COALORE     = 8;
+const int CUBE_IRONORE     = 9;
+const int CUBE_GOLDORE     = 10;
+const int CUBE_DIAMONDORE  = 11;
 
 // ============================================================
 // Gradient (Perlin) noise
@@ -32,7 +37,7 @@ vec3 hash3(vec3 p) {
 }
 
 // 3D Perlin noise, returns [-1, 1]
-// Uses linear interpolation (no smoothstep) for harder, less smooth edges.
+// Uses linear interpolation for harder, less smooth edges.
 float perlin3D(vec3 p) {
   vec3 i = floor(p);
   vec3 f = fract(p);
@@ -54,13 +59,44 @@ float perlin3D(vec3 p) {
   );
 }
 
-// 4-octave fBm with high persistence (0.6) so fine detail is prominent.
-// Returns [0, 1].
-float fbm(vec3 p) {
-  float n   = 0.0;
-  float amp = 0.5;
+// ============================================================
+// Per-cube seed + UV-based noise
+//
+// Spec: "a shader function which computes a color given uv
+// coordinates and a random seed."
+//
+// seed  — scalar in [0, 1] derived from the cube's integer
+//         world-space position; unique per cube, stable per face.
+// nCoord(freq) — builds the 3D noise input from uv (the
+//         within-face coordinate) and the seed (the between-cube
+//         randomiser), so pattern shape comes from UV and
+//         per-cube uniqueness comes from the seed.
+// ============================================================
+
+// Hash cube integer coords to a scalar seed in [0, 1].
+float cubeSeed(vec3 cubeCoord) {
+  vec3 h = vec3(
+    dot(cubeCoord, vec3(127.1, 311.7,  74.7)),
+    dot(cubeCoord, vec3(269.5, 183.3, 246.1)),
+    dot(cubeCoord, vec3(113.5, 271.9, 124.6))
+  );
+  return fract(sin(dot(h, vec3(1.0, 57.0, 113.0))) * 43758.5453);
+}
+
+// Build a 3D noise coordinate from UV + seed.
+// uv  → determines the texture pattern shape on this face
+// seed → shifts the pattern so each cube looks different
+vec3 nCoord(float freq, float seed) {
+  return vec3(uv * freq + vec2(seed * 31.7, seed * 19.3), seed * 5.0);
+}
+
+// 4-octave fBm over nCoord, returns [0, 1].
+float fbm(float freq, float seed) {
+  vec3 p     = nCoord(freq, seed);
+  float n    = 0.0;
+  float amp  = 0.5;
   float total = 0.0;
-  n += amp * perlin3D(p);                              total += amp; amp *= 0.6;
+  n += amp * perlin3D(p);                               total += amp; amp *= 0.6;
   n += amp * perlin3D(p * 2.1 + vec3(5.2,  1.3, 2.8)); total += amp; amp *= 0.6;
   n += amp * perlin3D(p * 4.3 + vec3(1.7,  9.2, 3.5)); total += amp; amp *= 0.6;
   n += amp * perlin3D(p * 8.7 + vec3(8.3,  2.8, 6.1)); total += amp;
@@ -69,72 +105,91 @@ float fbm(vec3 p) {
 
 // ============================================================
 // Texture categories
-// To add a new block type: pick a category below and add one
-// line to the dispatch table in main(). Only write a new
-// category function if the block needs genuinely new behavior.
+// To add a new block type: pick a category and add one line
+// to the dispatch table in main().
 // ============================================================
 
-// GRASS-LIKE — top face uses surface color; side faces show subsurface
-// dirt with a thin green strip at the very top; bottom is pure dirt.
-// top  : surface color  |  dirt : subsurface color  |  freq : noise scale
-vec3 textureGrassLike(vec3 pos, vec3 top, vec3 dirt, float freq) {
-  float n = fbm(pos * freq);
+// GRASS-LIKE — green top, dirt sides with green strip, dirt bottom.
+vec3 textureGrassLike(vec3 top, vec3 dirt, float freq, float seed) {
+  float n = fbm(freq, seed);
+  // sharpen: push noise away from mid-grey toward extremes
+  n = smoothstep(0.2, 0.8, n);
   if (normal.y > 0.5) {
-    return top * (0.75 + 0.5 * n);
+    return top * (0.55 + 0.9 * n);
   } else if (normal.y < -0.5) {
-    return dirt * (0.75 + 0.5 * fbm(pos * (freq * 0.6)));
+    float nb = smoothstep(0.2, 0.8, fbm(freq * 0.6, seed));
+    return dirt * (0.55 + 0.9 * nb);
   } else {
-    // uv.y == 0 at the top of a side face, 1 at the bottom
-    float sideN     = fbm(pos * (freq * 0.6));
-    float greenStrip = 1.0 - smoothstep(0.0, 0.25, uv.y);
-    return mix(dirt * (0.75 + 0.5 * sideN), top * (0.75 + 0.5 * sideN), greenStrip);
+    float sideN      = smoothstep(0.2, 0.8, fbm(freq * 0.6, seed));
+    float greenStrip = 1.0 - smoothstep(0.0, 0.18, uv.y);
+    return mix(dirt * (0.55 + 0.9 * sideN), top * (0.55 + 0.9 * sideN), greenStrip);
   }
 }
 
-// SIMPLE — smooth noise blend between a shadow color and the base color.
-// Works for any block with uniform surface variation (dirt, snow, …).
-// shadowColor : dark/tinted end of the blend  |  freq : noise scale
-vec3 textureSimple(vec3 pos, vec3 base, vec3 shadowColor, float freq) {
-  return mix(shadowColor, base, fbm(pos * freq));
+// SIMPLE — noise blend between shadow and base, contrast-boosted.
+vec3 textureSimple(vec3 base, vec3 shadowColor, float freq, float seed) {
+  float n = smoothstep(0.15, 0.85, fbm(freq, seed));
+  return mix(shadowColor, base * 1.2, n);
 }
 
-// CRACKED — coarse base noise crossed with sharp, inward-folded veins.
-// Good for stone, bedrock, and other hard rocky materials.
-// coarseFreq : large-scale variation  |  crackFreq : vein density
-vec3 textureCracked(vec3 pos, vec3 base, float coarseFreq, float crackFreq) {
-  float coarse = fbm(pos * coarseFreq);
-  float crack  = 1.0 - abs(perlin3D(pos * crackFreq));
+// CRACKED — coarse base with deep, sharp veins.
+vec3 textureCracked(vec3 base, float coarseFreq, float crackFreq, float seed) {
+  float coarse = smoothstep(0.2, 0.8, fbm(coarseFreq, seed));
+  // sharp cracks: raw perlin near zero = dark vein
+  float crack  = abs(perlin3D(nCoord(crackFreq, seed)));
+  crack = 1.0 - smoothstep(0.0, 0.25, crack); // thin bright lines → thin dark cracks
+  crack = crack * crack;
+  return base * (0.35 + 1.1 * mix(coarse, 1.0 - crack, 0.5));
+}
+
+// RIPPLED — bold sine bands with strong grain overlay.
+vec3 textureRippled(vec3 base, float rippleFreq, float grainFreq, float seed) {
+  vec3 rc      = nCoord(1.5, seed);
+  float ripple = 0.5 + 0.5 * sin((uv.x + uv.y) * rippleFreq + perlin3D(rc) * 5.5);
+  ripple = smoothstep(0.15, 0.85, ripple);
+  float grain  = smoothstep(0.2, 0.8, fbm(grainFreq, seed));
+  return base * (0.6 + 0.8 * mix(ripple, grain, 0.4));
+}
+
+// ORE — stone base with embedded mineral patches.
+vec3 textureOre(vec3 oreColor, float spotFreq, float spotCutoff, float seed) {
+  vec3 stone = vec3(0.5, 0.5, 0.5);
+  float coarse = fbm(1.5, seed);
+  float crack  = 1.0 - abs(perlin3D(nCoord(4.5, seed)));
   crack = crack * crack * crack;
-  return base * (0.55 + 0.9 * mix(coarse, crack, 0.4));
-}
+  vec3 stoneBase = stone * (0.55 + 0.9 * mix(coarse, crack, 0.4));
 
-// RIPPLED — sine bands distorted by low-freq noise, blended with fine grain.
-// Good for sand, gravel, and other granular/stratified materials.
-// rippleFreq : band spacing  |  grainFreq : fine surface grain scale
-vec3 textureRippled(vec3 pos, vec3 base, float rippleFreq, float grainFreq) {
-  float ripple = 0.5 + 0.5 * sin((pos.x + pos.z) * rippleFreq + perlin3D(pos * 1.5) * 4.0);
-  float grain  = fbm(pos * grainFreq);
-  return base * (0.82 + 0.36 * mix(ripple, grain, 0.35));
+  float spot1  = perlin3D(nCoord(spotFreq, seed));
+  float spot2  = perlin3D(nCoord(spotFreq, seed + 0.37));
+  float oreMask = smoothstep(spotCutoff, spotCutoff + 0.15, (spot1 + spot2) * 0.5);
+
+  float oreSheen = fbm(spotFreq * 2.0, seed + 0.61);
+  vec3 oreBase   = oreColor * (0.8 + 0.4 * oreSheen);
+
+  return mix(stoneBase, oreBase, oreMask);
 }
 
 // ============================================================
 // Dispatch — one line per block type.
-// New type? Add its constant above and one else-if here.
 // ============================================================
 
 void main() {
-  vec3 pos  = wsPos.xyz;
-  int  type = int(cubeType + 0.5);
+  int   type = int(cubeType + 0.5);
+  float seed = cubeSeed(cubeOrigin); // cubeOrigin is constant per instance — no mid-face seed split
 
   vec3 kd;
-  if      (type == CUBE_GRASS)       kd = textureGrassLike(pos, color, vec3(0.55, 0.36, 0.18), 5.0);
-  else if (type == CUBE_FORESTGRASS) kd = textureGrassLike(pos, color, vec3(0.45, 0.30, 0.15), 6.0);
-  else if (type == CUBE_DIRT)        kd = textureSimple(pos, color, color * 0.55, 3.0);
-  else if (type == CUBE_SNOW)        kd = textureSimple(pos, color, vec3(0.80, 0.90, 1.0),  4.5);
-  else if (type == CUBE_STONE)       kd = textureCracked(pos, color, 1.5, 4.5);
-  else if (type == CUBE_BEDROCK)     kd = textureCracked(pos, vec3(0.06, 0.06, 0.07), 2.5, 6.0);
-  else if (type == CUBE_SAND)        kd = textureRippled(pos, color, 2.5, 9.0);
-  else                               kd = textureSimple(pos, color, color * 0.6, 3.0);
+  if      (type == CUBE_GRASS)       kd = textureGrassLike(color, vec3(0.55, 0.36, 0.18), 5.0, seed);
+  else if (type == CUBE_FORESTGRASS) kd = textureGrassLike(color, vec3(0.45, 0.30, 0.15), 6.0, seed);
+  else if (type == CUBE_DIRT)        kd = textureSimple(color, color * 0.55, 3.0, seed);
+  else if (type == CUBE_SNOW)        kd = textureSimple(color, vec3(0.80, 0.90, 1.0), 4.5, seed);
+  else if (type == CUBE_STONE)       kd = textureCracked(color, 1.5, 4.5, seed);
+  else if (type == CUBE_BEDROCK)     kd = textureCracked(vec3(0.06, 0.06, 0.07), 2.5, 6.0, seed);
+  else if (type == CUBE_SAND)        kd = textureRippled(color, 2.5, 9.0, seed);
+  else if (type == CUBE_COALORE)     kd = textureOre(vec3(0.12, 0.12, 0.13), 3.5, 0.20, seed);
+  else if (type == CUBE_IRONORE)     kd = textureOre(vec3(0.72, 0.46, 0.30), 3.0, 0.25, seed);
+  else if (type == CUBE_GOLDORE)     kd = textureOre(vec3(0.94, 0.82, 0.08), 2.5, 0.30, seed);
+  else if (type == CUBE_DIAMONDORE)  kd = textureOre(vec3(0.25, 0.88, 0.92), 2.0, 0.35, seed);
+  else                               kd = textureSimple(color, color * 0.6, 3.0, seed);
 
   // Phong lighting
   vec3 ka = vec3(0.1, 0.1, 0.1);
