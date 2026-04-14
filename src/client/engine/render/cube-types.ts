@@ -1,6 +1,8 @@
 import dirtBottomTextureUrl from "@/assets/textures/dirt_bottom.png";
 import dirtSideTextureUrl from "@/assets/textures/dirt_side.png";
 import dirtTopTextureUrl from "@/assets/textures/dirt_top.png";
+import sandTextureUrl from "@/assets/textures/sand.png";
+import stoneTextureUrl from "@/assets/textures/stone.png";
 
 export enum CubeType {
   Air = 0,
@@ -82,11 +84,25 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   },
   [CubeType.Stone]: {
     baseColor: [0.5, 0.5, 0.5],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: stoneTextureUrl,
+      left: stoneTextureUrl,
+      right: stoneTextureUrl,
+      front: stoneTextureUrl,
+      back: stoneTextureUrl,
+      bottom: stoneTextureUrl,
+    }),
   },
   [CubeType.Sand]: {
     baseColor: [0.93, 0.86, 0.51],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: sandTextureUrl,
+      left: sandTextureUrl,
+      right: sandTextureUrl,
+      front: sandTextureUrl,
+      back: sandTextureUrl,
+      bottom: sandTextureUrl,
+    }),
   },
   [CubeType.Snow]: {
     baseColor: [0.95, 0.97, 1.0],
