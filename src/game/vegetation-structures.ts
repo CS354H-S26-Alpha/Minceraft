@@ -149,18 +149,47 @@ const SHRUB_TEMPLATES: readonly VegetationStructureTemplate[] = [
   },
 ] as const;
 
-export function vegetationTemplatesFor(type: PlacedObjectType.Tree | PlacedObjectType.Shrub) {
-  return type === PlacedObjectType.Tree ? TREE_TEMPLATES : SHRUB_TEMPLATES;
+const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
+  {
+    id: "cactus-short",
+    blocks: [
+      { dx: 0, dy: 1, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+    ],
+  },
+  {
+    id: "cactus-medium",
+    blocks: [
+      { dx: 0, dy: 1, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
+    ],
+  },
+  {
+    id: "cactus-tall",
+    blocks: [
+      { dx: 0, dy: 1, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 4, dz: 0, cubeType: CubeType.Cactus },
+    ],
+  },
+] as const;
+
+export function vegetationTemplatesFor(type: PlacedObjectType.Tree | PlacedObjectType.Shrub | PlacedObjectType.Cactus) {
+  if (type === PlacedObjectType.Tree) return TREE_TEMPLATES;
+  if (type === PlacedObjectType.Cactus) return CACTUS_TEMPLATES;
+  return SHRUB_TEMPLATES;
 }
 
 export function pickVegetationTemplate(
   seed: number,
-  type: PlacedObjectType.Tree | PlacedObjectType.Shrub,
+  type: PlacedObjectType.Tree | PlacedObjectType.Shrub | PlacedObjectType.Cactus,
   worldX: number,
   worldZ: number,
 ): VegetationStructureTemplate {
   const templates = vegetationTemplatesFor(type);
-  const offset = type === PlacedObjectType.Tree ? 91_117 : 73_301;
+  const offset = type === PlacedObjectType.Tree ? 91_117 : type === PlacedObjectType.Cactus ? 88_907 : 73_301;
   const index = Math.floor(hash2D(seed + offset, worldX, worldZ) * templates.length) % templates.length;
   const selected = templates[index] ?? templates[0];
   if (!selected) {
@@ -183,6 +212,12 @@ export function canPlaceVegetationTemplate(
     if (localX < 0 || localX >= access.chunkSize || localZ < 0 || localZ >= access.chunkSize) return false;
     if (y <= 0 || y >= access.chunkHeight) return false;
     if (access.getBlock(localX, y, localZ) !== CubeType.Air) return false;
+    if (block.cubeType === CubeType.Cactus) {
+      if (access.getBlock(localX + 1, y, localZ) !== CubeType.Air) return false;
+      if (access.getBlock(localX - 1, y, localZ) !== CubeType.Air) return false;
+      if (access.getBlock(localX, y, localZ + 1) !== CubeType.Air) return false;
+      if (access.getBlock(localX, y, localZ - 1) !== CubeType.Air) return false;
+    }
   }
 
   return true;

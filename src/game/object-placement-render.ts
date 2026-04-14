@@ -9,6 +9,7 @@ const RENDER_RADIUS_BY_TYPE: Record<PlacedObjectType, number> = {
   [PlacedObjectType.Rock]: 72,
   [PlacedObjectType.Tree]: 96,
   [PlacedObjectType.DeadBush]: 42,
+  [PlacedObjectType.Cactus]: 64,
   [PlacedObjectType.EnemySpawn]: 88,
 };
 
@@ -28,6 +29,8 @@ function farDistanceStride(object: PlacedObject, distanceSq: number): number {
       return 1;
     case PlacedObjectType.DeadBush:
       if (distanceSq > 30 * 30) return 2;
+      return 1;
+    case PlacedObjectType.Cactus:
       return 1;
     default:
       return 1;

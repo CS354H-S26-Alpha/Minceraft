@@ -15,6 +15,7 @@ export enum CubeType {
   OakLeaf = 13,
   ShrubLeaf = 14,
   ShrubStem = 15,
+  Cactus = 16,
 }
 
 export interface CubeTypeInfo {
@@ -38,4 +39,5 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   [CubeType.OakLeaf]: { baseColor: [0.2, 0.48, 0.12] },
   [CubeType.ShrubLeaf]: { baseColor: [0.42, 0.56, 0.2] },
   [CubeType.ShrubStem]: { baseColor: [0.36, 0.29, 0.16] },
+  [CubeType.Cactus]: { baseColor: [0.16, 0.48, 0.2] },
 };

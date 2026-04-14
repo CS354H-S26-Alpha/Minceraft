@@ -65,4 +65,17 @@ describe("vegetation structures", () => {
     expect(access.placed.get("20,65,20")).toBe(CubeType.ShrubStem);
     expect(access.placed.get("20,66,20")).toBe(CubeType.ShrubLeaf);
   });
+
+  it("places cactus columns into the chunk grid", () => {
+    const access = makeAccess();
+    const template = vegetationTemplatesFor(PlacedObjectType.Cactus)[1];
+    expect(template).toBeDefined();
+    if (!template) throw new Error("missing cactus template");
+
+    expect(canPlaceVegetationTemplate(access, 22, 64, 22, template)).toBe(true);
+    placeVegetationTemplate(access, 22, 64, 22, template);
+
+    expect(access.placed.get("22,65,22")).toBe(CubeType.Cactus);
+    expect(access.placed.get("22,67,22")).toBe(CubeType.Cactus);
+  });
 });

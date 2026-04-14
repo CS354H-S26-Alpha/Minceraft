@@ -133,6 +133,20 @@ describe("object placement rules", () => {
     expect(supportsObjectPlacement(deadBushRule, sample())).toBe(false);
   });
 
+  it("accepts cactus anchors on flat desert sand", () => {
+    const cactusRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.Cactus];
+    expect(
+      supportsObjectPlacement(
+        cactusRule,
+        sample({
+          biome: Biome.Desert,
+          surfaceBlock: CubeType.Sand,
+          distanceToChunkEdge: 2,
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("rejects placement on steep local terrain", () => {
     const enemyRule = OBJECT_PLACEMENT_RULES[PlacedObjectType.EnemySpawn];
     expect(supportsObjectPlacement(enemyRule, sample({ northY: 67 }))).toBe(false);

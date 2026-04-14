@@ -167,6 +167,23 @@ describe("per-chunk object placement generation", () => {
     expect(chunk.placedObjects().some((object) => object.type === PlacedObjectType.DeadBush)).toBe(true);
   });
 
+  it("builds cactus anchors into cactus blocks instead of render props", () => {
+    const chunk = new Chunk(224, 32, 64, 123);
+    let cactusBlocks = 0;
+
+    for (let z = 0; z < 64; z++) {
+      for (let x = 0; x < 64; x++) {
+        for (let y = 1; y < 128; y++) {
+          if (chunk.getBlock(x, y, z) === CubeType.Cactus) cactusBlocks++;
+        }
+      }
+    }
+
+    expect(cactusBlocks).toBeGreaterThan(0);
+    expect(chunk.placedObjects().some((object) => object.type === PlacedObjectType.Cactus)).toBe(false);
+    expect(chunk.placedObjectCounts()[PlacedObjectType.Cactus]).toBeGreaterThan(0);
+  });
+
   it("keeps generated objects inside the chunk bounds", () => {
     const chunk = new Chunk(0, 0, 64, 12345);
 

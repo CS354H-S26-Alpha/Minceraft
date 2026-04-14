@@ -85,7 +85,11 @@ export class Chunk {
     const counts: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
 
     for (const anchor of anchors) {
-      if (anchor.type !== PlacedObjectType.Tree && anchor.type !== PlacedObjectType.Shrub) {
+      if (
+        anchor.type !== PlacedObjectType.Tree &&
+        anchor.type !== PlacedObjectType.Shrub &&
+        anchor.type !== PlacedObjectType.Cactus
+      ) {
         renderableObjects.push(anchor);
         counts[anchor.type]++;
         continue;

@@ -18,6 +18,7 @@ export enum PlacedObjectType {
   Rock = "rock",
   Tree = "tree",
   DeadBush = "dead_bush",
+  Cactus = "cactus",
   EnemySpawn = "enemy_spawn",
 }
 
@@ -98,6 +99,7 @@ export const PLACED_OBJECT_TYPES = [
   PlacedObjectType.Rock,
   PlacedObjectType.Tree,
   PlacedObjectType.DeadBush,
+  PlacedObjectType.Cactus,
   PlacedObjectType.EnemySpawn,
 ] as const;
 
@@ -121,6 +123,7 @@ export function emptyPlacedObjectCounts(): Record<PlacedObjectType, number> {
     [PlacedObjectType.Rock]: 0,
     [PlacedObjectType.Tree]: 0,
     [PlacedObjectType.DeadBush]: 0,
+    [PlacedObjectType.Cactus]: 0,
     [PlacedObjectType.EnemySpawn]: 0,
   };
 }
@@ -133,6 +136,7 @@ const OBJECT_PLACEMENT_GENERATION_ORDER = [
   PlacedObjectType.Tree,
   PlacedObjectType.Rock,
   PlacedObjectType.Shrub,
+  PlacedObjectType.Cactus,
   PlacedObjectType.DeadBush,
   PlacedObjectType.FlowerDandelion,
   PlacedObjectType.FlowerPoppy,
@@ -150,6 +154,7 @@ const OBJECT_PLACEMENT_SEED_OFFSETS = {
   [PlacedObjectType.Rock]: 3_007,
   [PlacedObjectType.Tree]: 4_009,
   [PlacedObjectType.DeadBush]: 4_463,
+  [PlacedObjectType.Cactus]: 4_781,
   [PlacedObjectType.EnemySpawn]: 5_011,
 } satisfies Record<PlacedObjectType, number>;
 
@@ -274,6 +279,21 @@ export const OBJECT_PLACEMENT_RULES = {
     requiresDrySurface: true,
     tags: ["desert", "dry"],
   },
+  [PlacedObjectType.Cactus]: {
+    type: PlacedObjectType.Cactus,
+    category: PlacedObjectCategory.Decorative,
+    allowedBiomes: [Biome.Desert],
+    allowedSurfaceBlocks: [CubeType.Sand],
+    minSurfaceY: 42,
+    maxSurfaceY: 100,
+    maxLocalRelief: 0,
+    minSpacing: 6,
+    noiseFrequency: 1 / 22,
+    spawnThreshold: 0.9,
+    edgePadding: 1,
+    requiresDrySurface: true,
+    tags: ["desert", "block-structure"],
+  },
   [PlacedObjectType.EnemySpawn]: {
     type: PlacedObjectType.EnemySpawn,
     category: PlacedObjectCategory.Gameplay,
@@ -327,6 +347,10 @@ function placementNoise(rule: ObjectPlacementRule, seed: number, x: number, z: n
     const duneNoise = valueNoise(seed + 8_533, x, z, 1 / 42);
     return Math.min(1, noise * 0.65 + clusterNoise * 0.25 + duneNoise * 0.18);
   }
+  if (rule.type === PlacedObjectType.Cactus) {
+    const clusterNoise = valueNoise(seed + 9_103, x, z, 1 / 36);
+    return Math.min(1, noise * 0.75 + clusterNoise * 0.22);
+  }
   return noise;
 }
 
@@ -335,6 +359,7 @@ function placementJitterRange(type: PlacedObjectType): number {
     case PlacedObjectType.Rock:
     case PlacedObjectType.Shrub:
     case PlacedObjectType.Tree:
+    case PlacedObjectType.Cactus:
     case PlacedObjectType.DeadBush:
     case PlacedObjectType.EnemySpawn:
       return 0.0;
