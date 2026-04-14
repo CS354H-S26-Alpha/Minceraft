@@ -155,6 +155,7 @@ const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
     blocks: [
       { dx: 0, dy: 1, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
     ],
   },
   {
@@ -163,6 +164,7 @@ const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 0, dy: 1, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 4, dz: 0, cubeType: CubeType.Cactus },
     ],
   },
   {
@@ -172,6 +174,7 @@ const CACTUS_TEMPLATES: readonly VegetationStructureTemplate[] = [
       { dx: 0, dy: 2, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 3, dz: 0, cubeType: CubeType.Cactus },
       { dx: 0, dy: 4, dz: 0, cubeType: CubeType.Cactus },
+      { dx: 0, dy: 5, dz: 0, cubeType: CubeType.Cactus },
     ],
   },
 ] as const;

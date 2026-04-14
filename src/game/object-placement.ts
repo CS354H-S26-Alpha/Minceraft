@@ -287,9 +287,9 @@ export const OBJECT_PLACEMENT_RULES = {
     minSurfaceY: 42,
     maxSurfaceY: 100,
     maxLocalRelief: 0,
-    minSpacing: 6,
-    noiseFrequency: 1 / 22,
-    spawnThreshold: 0.9,
+    minSpacing: 5,
+    noiseFrequency: 1 / 18,
+    spawnThreshold: 0.84,
     edgePadding: 1,
     requiresDrySurface: true,
     tags: ["desert", "block-structure"],
@@ -349,7 +349,9 @@ function placementNoise(rule: ObjectPlacementRule, seed: number, x: number, z: n
   }
   if (rule.type === PlacedObjectType.Cactus) {
     const clusterNoise = valueNoise(seed + 9_103, x, z, 1 / 36);
-    return Math.min(1, noise * 0.75 + clusterNoise * 0.22);
+    const distanceSq = x * x + z * z;
+    const originBoost = distanceSq <= 256 * 256 ? 0.12 : 0.0;
+    return Math.min(1, noise * 0.72 + clusterNoise * 0.24 + originBoost);
   }
   return noise;
 }

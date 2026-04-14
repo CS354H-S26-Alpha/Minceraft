@@ -53,7 +53,7 @@ void main() {
     bladeC *= step(mix(0.7, 0.8, uv.y), uv.x);
     float tuft = clamp(bladeA + bladeB + bladeC, 0.0, 1.0);
     alpha = tuft;
-    color = mix(vec3(0.08, 0.25, 0.07), vec3(0.29, 0.67, 0.18), heightMix);
+    color = mix(vec3(0.05, 0.22, 0.09), vec3(0.22, 0.78, 0.24), heightMix);
   } else if (objectType < 2.5) {
     float stem = rect(uv, vec2(0.47, 0.0), vec2(0.53, 0.72));
     float petals = circle(uv, vec2(0.5, 0.82), 0.13);

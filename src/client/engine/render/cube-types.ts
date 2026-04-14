@@ -39,5 +39,5 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   [CubeType.OakLeaf]: { baseColor: [0.2, 0.48, 0.12] },
   [CubeType.ShrubLeaf]: { baseColor: [0.42, 0.56, 0.2] },
   [CubeType.ShrubStem]: { baseColor: [0.36, 0.29, 0.16] },
-  [CubeType.Cactus]: { baseColor: [0.16, 0.48, 0.2] },
+  [CubeType.Cactus]: { baseColor: [0.08, 0.56, 0.18] },
 };
