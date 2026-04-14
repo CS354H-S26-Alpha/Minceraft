@@ -28,8 +28,8 @@ export function InventoryPanel(props: InventoryPanelProps) {
   });
   const pointer = createMemo(() => getPositionToScreen(mouse.x, mouse.y));
 
-  const inventory = () => props.player()?.state.inventory ?? [];
-  const selectedHotbarSlot = () => props.player()?.state.selectedHotbarSlot ?? 0;
+  const inventory = createMemo(() => props.player()?.state.inventory ?? []);
+  const selectedHotbarSlot = createMemo(() => props.player()?.state.selectedHotbarSlot ?? 0);
 
   return (
     <>

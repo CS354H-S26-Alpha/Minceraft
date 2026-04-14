@@ -13,6 +13,7 @@ import {
 import type { EntityCollection } from "./entity-collection";
 import { ITEM_DEFINITIONS_BY_ID } from "./items";
 import {
+  cloneInventorySlot,
   clonePlayerState,
   createPlayerState,
   createStarterInventory,
@@ -257,33 +258,11 @@ export class PlayerCollection implements EntityCollection {
     for (const id of this.dirty) {
       const player = this.players.get(id);
       if (player) {
+        const { id: playerId, ...state } = player.state;
+        const row = { ...state, inventory: JSON.stringify(state.inventory) };
         db.insert(playerSchema.players)
-          .values({
-            id: player.state.id,
-            name: player.state.name,
-            x: player.state.x,
-            y: player.state.y,
-            z: player.state.z,
-            yaw: player.state.yaw,
-            pitch: player.state.pitch,
-            health: player.state.health,
-            inventory: JSON.stringify(player.state.inventory),
-            selectedHotbarSlot: player.state.selectedHotbarSlot,
-          })
-          .onConflictDoUpdate({
-            target: playerSchema.players.id,
-            set: {
-              name: player.state.name,
-              x: player.state.x,
-              y: player.state.y,
-              z: player.state.z,
-              yaw: player.state.yaw,
-              pitch: player.state.pitch,
-              health: player.state.health,
-              inventory: JSON.stringify(player.state.inventory),
-              selectedHotbarSlot: player.state.selectedHotbarSlot,
-            },
-          })
+          .values({ id: playerId, ...row })
+          .onConflictDoUpdate({ target: playerSchema.players.id, set: row })
           .run();
       } else {
         db.delete(playerSchema.players).where(eq(playerSchema.players.id, id)).run();
@@ -359,13 +338,13 @@ function clickSlot(
   if (!slot && !cursor) return false;
 
   if (!cursor) {
-    ui.cursor = cloneSlot(slot);
+    ui.cursor = cloneInventorySlot(slot);
     setSlot(null);
     return true;
   }
 
   if (!slot) {
-    setSlot(cloneSlot(cursor));
+    setSlot(cloneInventorySlot(cursor));
     ui.cursor = null;
     return true;
   }
@@ -393,13 +372,9 @@ function clickSlot(
     return true;
   }
 
-  setSlot(cloneSlot(cursor));
-  ui.cursor = cloneSlot(slot);
+  setSlot(cloneInventorySlot(cursor));
+  ui.cursor = cloneInventorySlot(slot);
   return true;
-}
-
-function cloneSlot(slot: InventorySlot): InventorySlot {
-  return slot ? { ...slot } : null;
 }
 
 function isValidInventoryIndex(index: number): boolean {

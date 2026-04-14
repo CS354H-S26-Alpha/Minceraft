@@ -326,7 +326,6 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
   }
 
-
   /** Leaves the room (idempotent; subsequent calls are no-ops). */
   leave() {
     if (this.#left) return;
