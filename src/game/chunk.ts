@@ -2,6 +2,7 @@
 import { CUBE_TYPE_FACE_TILES, CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
 import { perlin3D } from "@/utils/noise";
+import { Player } from "./player";
 
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
@@ -18,9 +19,6 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
 }
 
 export class Chunk {
-  public static readonly CYLINDER_RADIUS = 0.4;
-  public static readonly CYLINDER_HEIGHT = 2;
-
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
   public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
@@ -291,8 +289,8 @@ export class Chunk {
     wz: number,
     worldGet: (wx: number, wy: number, wz: number) => CubeType,
   ): number {
-    const r = Chunk.CYLINDER_RADIUS;
-    const h = Chunk.CYLINDER_HEIGHT;
+    const r = Player.CYLINDER_RADIUS;
+    const h = Player.CYLINDER_HEIGHT;
     const x0 = Math.floor(wx - r);
     const x1 = Math.floor(wx + r);
     const z0 = Math.floor(wz - r);
