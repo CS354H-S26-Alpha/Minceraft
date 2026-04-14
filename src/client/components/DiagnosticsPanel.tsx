@@ -14,6 +14,7 @@ interface DiagnosticsPanelProps {
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
   placedObjectCount: number;
+  generatedPlacedObjectCount: number;
   placedObjectCounts: readonly { type: PlacedObjectType; count: number }[];
   tps: number;
   mspt: number;
@@ -146,7 +147,9 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         />
       </div>
       <div class="border-t border-white/20 pt-2">
-        <div class="text-gray-400">placed objects ({props.placedObjectCount})</div>
+        <div class="text-gray-400">
+          placed objects ({props.placedObjectCount} rendered / {props.generatedPlacedObjectCount} generated)
+        </div>
         <ul class="mt-1">
           {props.placedObjectCounts.map((entry) => (
             <li>

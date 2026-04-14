@@ -2,7 +2,8 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
 import { ChunkMaster } from "@/game/chunk-master";
-import type { PlacedObjectType } from "@/game/object-placement";
+import { PlacedObjectType } from "@/game/object-placement";
+import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import type { Player } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -36,6 +37,7 @@ export interface ClientDiagnostics {
   /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
   placedObjectCount: number;
+  generatedPlacedObjectCount: number;
   placedObjectCounts: Record<PlacedObjectType, number>;
   pointerLocked: boolean;
 }
@@ -98,7 +100,8 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
-        placedObjectCount: chunkMaster.getNearPlacedObjectCount(),
+        placedObjectCount: 0,
+        generatedPlacedObjectCount: chunkMaster.getNearPlacedObjectCount(),
         placedObjectCounts: chunkMaster.getNearPlacedObjectCounts(),
         pointerLocked: false,
       },
@@ -125,6 +128,16 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastTick = 0;
   let tickDelta = 0;
   let lastPlacedObjects: readonly unknown[] | undefined;
+  let lastRenderCenterX = NaN;
+  let lastRenderCenterZ = NaN;
+  let renderedPlacedObjectCount = 0;
+  let renderedPlacedObjectCounts: Record<PlacedObjectType, number> = {
+    [PlacedObjectType.Grass]: 0,
+    [PlacedObjectType.Shrub]: 0,
+    [PlacedObjectType.Rock]: 0,
+    [PlacedObjectType.Tree]: 0,
+    [PlacedObjectType.EnemySpawn]: 0,
+  };
 
   const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
   let needsResize = true;
@@ -178,9 +191,30 @@ export function createGame(args: CreateGameArgs): GameState {
     // update chunks around player
     chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
     const placedObjects = chunkMaster.getNearPlacedObjects();
-    if (placedObjects !== lastPlacedObjects) {
-      packPlacedObjects(placedObjects, placedObjectBuffers);
+    const movedForObjectRepack =
+      Number.isNaN(lastRenderCenterX) ||
+      Math.abs(player.position.x - lastRenderCenterX) >= 4 ||
+      Math.abs(player.position.z - lastRenderCenterZ) >= 4;
+    if (placedObjects !== lastPlacedObjects || movedForObjectRepack) {
+      const renderablePlacedObjects = filterRenderablePlacedObjects(
+        placedObjects,
+        player.position.x,
+        player.position.z,
+      );
+      renderedPlacedObjectCount = packPlacedObjects(renderablePlacedObjects, placedObjectBuffers);
+      renderedPlacedObjectCounts = {
+        [PlacedObjectType.Grass]: 0,
+        [PlacedObjectType.Shrub]: 0,
+        [PlacedObjectType.Rock]: 0,
+        [PlacedObjectType.Tree]: 0,
+        [PlacedObjectType.EnemySpawn]: 0,
+      };
+      for (const object of renderablePlacedObjects) {
+        renderedPlacedObjectCounts[object.type]++;
+      }
       lastPlacedObjects = placedObjects;
+      lastRenderCenterX = player.position.x;
+      lastRenderCenterZ = player.position.z;
     }
 
     // --- Remote entities ---
@@ -199,7 +233,7 @@ export function createGame(args: CreateGameArgs): GameState {
       {
         key: "placed-objects",
         buffers: placedObjectBuffers,
-        count: chunkMaster.getNearPlacedObjectCount(),
+        count: renderedPlacedObjectCount,
       },
     ];
     renderer.render({
@@ -230,8 +264,9 @@ export function createGame(args: CreateGameArgs): GameState {
       frameCount: frame,
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
-      placedObjectCount: chunkMaster.getNearPlacedObjectCount(),
-      placedObjectCounts: chunkMaster.getNearPlacedObjectCounts(),
+      placedObjectCount: renderedPlacedObjectCount,
+      generatedPlacedObjectCount: chunkMaster.getNearPlacedObjectCount(),
+      placedObjectCounts: renderedPlacedObjectCounts,
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {

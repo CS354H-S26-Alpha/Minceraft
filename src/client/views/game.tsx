@@ -23,6 +23,7 @@ export default function GameView() {
         computeTimeMs={game.diagnostics.client.computeTimeMs}
         computeTimeHistory={game.diagnostics.client.computeTimeHistory}
         placedObjectCount={game.diagnostics.client.placedObjectCount}
+        generatedPlacedObjectCount={game.diagnostics.client.generatedPlacedObjectCount}
         placedObjectCounts={PLACED_OBJECT_TYPES.map((type) => ({
           type,
           count: game.diagnostics.client.placedObjectCounts[type],
