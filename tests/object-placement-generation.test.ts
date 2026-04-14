@@ -159,6 +159,14 @@ describe("per-chunk object placement generation", () => {
     expect(renderableTypes.has(PlacedObjectType.Shrub)).toBe(false);
   });
 
+  it("generates dead bushes as renderable props in desert chunks", () => {
+    const chunk = new Chunk(288, 96, 64, 123);
+    const counts = chunk.placedObjectCounts();
+
+    expect(counts[PlacedObjectType.DeadBush]).toBeGreaterThan(0);
+    expect(chunk.placedObjects().some((object) => object.type === PlacedObjectType.DeadBush)).toBe(true);
+  });
+
   it("keeps generated objects inside the chunk bounds", () => {
     const chunk = new Chunk(0, 0, 64, 12345);
 

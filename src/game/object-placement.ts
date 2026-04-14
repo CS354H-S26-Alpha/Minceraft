@@ -322,6 +322,11 @@ function placementNoise(rule: ObjectPlacementRule, seed: number, x: number, z: n
       return Math.min(1, noise + 0.08);
     }
   }
+  if (rule.type === PlacedObjectType.DeadBush) {
+    const clusterNoise = valueNoise(seed + 8_311, x, z, 1 / 26);
+    const duneNoise = valueNoise(seed + 8_533, x, z, 1 / 42);
+    return Math.min(1, noise * 0.65 + clusterNoise * 0.25 + duneNoise * 0.18);
+  }
   return noise;
 }
 

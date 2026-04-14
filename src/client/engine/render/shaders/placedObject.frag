@@ -103,12 +103,14 @@ void main() {
     color = canopy > 0.0 ? leaf : bark;
     color *= branchShadow > 0.0 ? 0.86 : 1.0;
   } else if (objectType < 7.5) {
-    float twigA = rect(uv, vec2(0.46, 0.0), vec2(0.54, 0.58));
-    float twigB = rect(uv, vec2(0.28, 0.22), vec2(0.36, 0.68));
-    float twigC = rect(uv, vec2(0.64, 0.2), vec2(0.72, 0.64));
-    float twigD = rect(uv, vec2(0.38, 0.34), vec2(0.62, 0.44));
-    alpha = clamp(twigA + twigB + twigC + twigD, 0.0, 1.0);
-    color = mix(vec3(0.35, 0.24, 0.11), vec3(0.6, 0.49, 0.25), heightMix * 0.7);
+    float stem = rect(uv, vec2(0.47, 0.0), vec2(0.53, 0.52));
+    float branchLeft = rect(uv, vec2(0.26, 0.2), vec2(0.34, 0.62));
+    float branchRight = rect(uv, vec2(0.66, 0.18), vec2(0.74, 0.58));
+    float branchTop = rect(uv, vec2(0.4, 0.42), vec2(0.6, 0.5));
+    float twigLeft = rect(uv, vec2(0.18, 0.46), vec2(0.28, 0.54));
+    float twigRight = rect(uv, vec2(0.72, 0.4), vec2(0.82, 0.48));
+    alpha = clamp(stem + branchLeft + branchRight + branchTop + twigLeft + twigRight, 0.0, 1.0);
+    color = mix(vec3(0.34, 0.22, 0.1), vec3(0.62, 0.5, 0.24), heightMix * 0.72);
   } else {
     float obelisk = rect(uv, vec2(0.42, 0.05), vec2(0.58, 0.88));
     float outerRune = circle(uv, vec2(0.5, 0.72), 0.15);
