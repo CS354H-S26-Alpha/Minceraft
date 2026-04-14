@@ -45,8 +45,24 @@ export class ChunkGenerationQueue {
       const next = this.queuedChunks.shift();
       if (!next) return null;
       if (this.chunkMap.has(next.key)) continue;
+
+      const worldGet = this.makeWorldGet();
       this.chunkMap.set(next.key, this.chunkFactory(next.originX, next.originZ, CHUNK_SIZE, args.seed));
-      return this.renderVisible(args);
+
+      // Re-render only the new chunk + its cardinal neighbors (shared edge faces may change).
+      // Avoids the O(n²) cost of re-rendering all visible chunks after every generation step.
+      const toRerender = [
+        next.key,
+        chunkKey(next.originX + CHUNK_SIZE, next.originZ),
+        chunkKey(next.originX - CHUNK_SIZE, next.originZ),
+        chunkKey(next.originX, next.originZ + CHUNK_SIZE),
+        chunkKey(next.originX, next.originZ - CHUNK_SIZE),
+      ];
+      for (const key of toRerender) {
+        this.chunkMap.get(key)?.renderChunk(worldGet);
+      }
+
+      return this.assembleRenderData(args);
     }
 
     return null;
@@ -74,30 +90,26 @@ export class ChunkGenerationQueue {
     return queue;
   }
 
-  private renderVisible({ originX, originZ, renderDistance }: ChunkQueueArgs): ChunkBatchData {
-    const entries: { chunkX: number; chunkZ: number; chunk: ChunkLike }[] = [];
-
-    for (let cx = -renderDistance; cx <= renderDistance; cx++) {
-      for (let cz = -renderDistance; cz <= renderDistance; cz++) {
-        const chunkX = originX + cx * CHUNK_SIZE;
-        const chunkZ = originZ + cz * CHUNK_SIZE;
-        const chunk = this.chunkMap.get(chunkKey(chunkX, chunkZ));
-        if (!chunk) continue;
-        entries.push({ chunkX, chunkZ, chunk });
-      }
-    }
-
-    const worldGetBlock = (wx: number, wy: number, wz: number): CubeType => {
+  private makeWorldGet(): (wx: number, wy: number, wz: number) => CubeType {
+    return (wx, wy, wz) => {
       const [ox, oz] = chunkOrigin(wx, wz);
       const chunk = this.chunkMap.get(chunkKey(ox, oz));
       if (!chunk) return CubeType.Stone;
       return chunk.getBlockWorld(wx, wy, wz);
     };
+  }
 
-    for (const { chunk } of entries) chunk.renderChunk(worldGetBlock);
+  /** Re-renders all visible chunks then assembles render data. Used on full resets. */
+  private renderVisible(args: ChunkQueueArgs): ChunkBatchData {
+    const worldGet = this.makeWorldGet();
+    for (const chunk of this.visibleChunks(args)) chunk.chunk.renderChunk(worldGet);
+    return this.assembleRenderData(args);
+  }
 
+  /** Assembles render data from already-rendered chunks without calling renderChunk. */
+  private assembleRenderData(args: ChunkQueueArgs): ChunkBatchData {
     const chunks: SingleChunkData[] = [];
-    for (const { chunkX, chunkZ, chunk } of entries) {
+    for (const { chunkX, chunkZ, chunk } of this.visibleChunks(args)) {
       const numCubes = chunk.numCubes();
       if (numCubes === 0) continue;
       chunks.push({
@@ -108,7 +120,19 @@ export class ChunkGenerationQueue {
         numCubes,
       });
     }
-
     return { chunks };
+  }
+
+  private visibleChunks({ originX, originZ, renderDistance }: ChunkQueueArgs) {
+    const entries: { chunkX: number; chunkZ: number; chunk: ChunkLike }[] = [];
+    for (let cx = -renderDistance; cx <= renderDistance; cx++) {
+      for (let cz = -renderDistance; cz <= renderDistance; cz++) {
+        const chunkX = originX + cx * CHUNK_SIZE;
+        const chunkZ = originZ + cz * CHUNK_SIZE;
+        const chunk = this.chunkMap.get(chunkKey(chunkX, chunkZ));
+        if (chunk) entries.push({ chunkX, chunkZ, chunk });
+      }
+    }
+    return entries;
   }
 }
