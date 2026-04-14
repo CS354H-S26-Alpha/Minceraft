@@ -1,11 +1,14 @@
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "./chunk";
 
-const CHUNK_RENDER_DISTANCE = 4; // TODO: move into settings
+const DEFAULT_CHUNK_RENDER_DISTANCE = 4;
+const MIN_CHUNK_RENDER_DISTANCE = 1;
+const MAX_CHUNK_RENDER_DISTANCE = 4;
 
 export class ChunkMaster {
   private chunkMap = new Map<string, Chunk>();
   private seed: number;
+  private renderDistance: number;
   private lastOriginX = NaN;
   private lastOriginZ = NaN;
 
@@ -13,8 +16,9 @@ export class ChunkMaster {
   private cachedColors = new Float32Array(0);
   private cachedCubeCount = 0;
 
-  constructor(spawnX: number, spawnZ: number, seed: number) {
+  constructor(spawnX: number, spawnZ: number, seed: number, renderDistance: number = DEFAULT_CHUNK_RENDER_DISTANCE) {
     this.seed = seed;
+    this.renderDistance = clampRenderDistance(renderDistance);
     this.updateChunksAroundPos(spawnX, spawnZ);
   }
 
@@ -36,8 +40,8 @@ export class ChunkMaster {
     const chunks: Chunk[] = [];
     let anyNew = false;
 
-    for (let cx = -CHUNK_RENDER_DISTANCE; cx <= CHUNK_RENDER_DISTANCE; cx++) {
-      for (let cz = -CHUNK_RENDER_DISTANCE; cz <= CHUNK_RENDER_DISTANCE; cz++) {
+    for (let cx = -this.renderDistance; cx <= this.renderDistance; cx++) {
+      for (let cz = -this.renderDistance; cz <= this.renderDistance; cz++) {
         const chunkX = originX + cx * CHUNK_SIZE;
         const chunkZ = originZ + cz * CHUNK_SIZE;
         const key = chunkKey(chunkX, chunkZ);
@@ -58,6 +62,15 @@ export class ChunkMaster {
     }
 
     this.rebuildCache(chunks);
+  }
+
+  public setRenderDistance(renderDistance: number, wx: number, wz: number): void {
+    const nextRenderDistance = clampRenderDistance(renderDistance);
+    if (nextRenderDistance === this.renderDistance) return;
+    this.renderDistance = nextRenderDistance;
+    this.lastOriginX = NaN;
+    this.lastOriginZ = NaN;
+    this.updateChunksAroundPos(wx, wz);
   }
 
   private rebuildCache(chunks: Chunk[]): void {
@@ -99,4 +112,8 @@ export class ChunkMaster {
   public getNearCubeSize(): number {
     return this.cachedCubeCount;
   }
+}
+
+function clampRenderDistance(renderDistance: number): number {
+  return Math.min(MAX_CHUNK_RENDER_DISTANCE, Math.max(MIN_CHUNK_RENDER_DISTANCE, Math.round(renderDistance)));
 }

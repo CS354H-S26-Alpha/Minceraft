@@ -17,6 +17,11 @@ export interface CreateGameArgs {
   glCanvas: () => HTMLCanvasElement | undefined;
   /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
   room: ReturnType<typeof joinWorld>;
+  preferences?: {
+    mouseSensitivity: () => number;
+    invertY: () => boolean;
+    renderDistance: () => number;
+  };
 }
 
 /** Client-side rendering metrics exposed to the diagnostics panel. */
@@ -99,7 +104,8 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED);
+  const initialRenderDistance = args.preferences?.renderDistance?.() ?? 4;
+  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED, initialRenderDistance);
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -112,6 +118,7 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
+  let lastRenderDistance = initialRenderDistance;
 
   const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
 
@@ -158,7 +165,9 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Input → server ---
     const mouse = input.consumeMouseDelta();
-    camera.rotate(mouse.dx, mouse.dy);
+    const mouseSensitivity = args.preferences?.mouseSensitivity?.() ?? 1;
+    const invertY = args.preferences?.invertY?.() ? -1 : 1;
+    camera.rotate(mouse.dx * mouseSensitivity, mouse.dy * mouseSensitivity * invertY);
     const walk = camera.walkDir(input.walkKeys());
     const yaw = camera.yaw();
     const pitch = camera.pitch();
@@ -170,6 +179,12 @@ export function createGame(args: CreateGameArgs): GameState {
       unsent.push(next);
     }
     camera.setPosition(player.position);
+
+    const renderDistance = args.preferences?.renderDistance?.() ?? lastRenderDistance;
+    if (renderDistance !== lastRenderDistance) {
+      lastRenderDistance = renderDistance;
+      chunkMaster.setRenderDistance(renderDistance, player.position.x, player.position.z);
+    }
 
     // update chunks around player
     chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
