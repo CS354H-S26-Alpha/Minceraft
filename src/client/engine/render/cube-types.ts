@@ -3,6 +3,11 @@ import dirtSideTextureUrl from "@/assets/textures/dirt_side.png";
 import dirtTopTextureUrl from "@/assets/textures/dirt_top.png";
 import sandTextureUrl from "@/assets/textures/sand.png";
 import stoneTextureUrl from "@/assets/textures/stone.png";
+import snowTextureUrl from "@/assets/textures/snow_top.png";
+import coalTextureUrl from "@/assets/textures/coal.png";
+import ironTextureUrl from "@/assets/textures/iron.png";
+import goldTextureUrl from "@/assets/textures/gold.png";
+import diamondTextureUrl from "@/assets/textures/diamond.png";
 
 export enum CubeType {
   Air = 0,
@@ -106,7 +111,14 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   },
   [CubeType.Snow]: {
     baseColor: [0.95, 0.97, 1.0],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: snowTextureUrl,
+      left: snowTextureUrl,
+      right: snowTextureUrl,
+      front: snowTextureUrl,
+      back: snowTextureUrl,
+      bottom: snowTextureUrl,
+    }),
   },
   [CubeType.Bedrock]: {
     baseColor: [0.0, 0.0, 0.0],
@@ -125,19 +137,47 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   },
   [CubeType.CoalOre]: {
     baseColor: [0.2, 0.2, 0.2],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: coalTextureUrl,
+      left: coalTextureUrl,
+      right: coalTextureUrl,
+      front: coalTextureUrl,
+      back: coalTextureUrl,
+      bottom: coalTextureUrl,
+    }),
   },
   [CubeType.IronOre]: {
     baseColor: [0.6, 0.5, 0.45],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: ironTextureUrl,
+      left: ironTextureUrl,
+      right: ironTextureUrl,
+      front: ironTextureUrl,
+      back: ironTextureUrl,
+      bottom: ironTextureUrl,
+    }),
   },
   [CubeType.GoldOre]: {
     baseColor: [0.85, 0.75, 0.2],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: goldTextureUrl,
+      left: goldTextureUrl,
+      right: goldTextureUrl,
+      front: goldTextureUrl,
+      back: goldTextureUrl,
+      bottom: goldTextureUrl,
+    }),
   },
   [CubeType.DiamondOre]: {
     baseColor: [0.3, 0.85, 0.85],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: diamondTextureUrl,
+      left: diamondTextureUrl,
+      right: diamondTextureUrl,
+      front: diamondTextureUrl,
+      back: diamondTextureUrl,
+      bottom: diamondTextureUrl,
+    }),
   },
 };
 
