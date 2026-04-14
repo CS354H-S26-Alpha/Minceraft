@@ -68,6 +68,28 @@ export class PlayerCollection implements EntityCollection {
   }
 
   /**
+   * Teleports a player to the given coordinates. Clears pending inputs
+   * and bumps the ack counter so the client trims its prediction history.
+   */
+  teleportTo(playerId: string, x: number, y: number, z: number): boolean {
+    const player = this.players.get(playerId);
+    if (!player) return false;
+
+    player.state.x = x;
+    player.state.y = y;
+    player.state.z = z;
+
+    const queue = this.inputQueues.get(playerId);
+    if (queue) {
+      this.acks.set(playerId, (this.acks.get(playerId) ?? 0) + queue.length);
+      queue.length = 0;
+    }
+
+    this.dirty.add(playerId);
+    return true;
+  }
+
+  /**
    * Drains all input queues, steps each player, increments ack counters, and
    * marks changed players as dirty. Returns `true` if any player moved.
    */

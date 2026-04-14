@@ -1,4 +1,6 @@
+import { For } from "solid-js";
 import type { PlacedObjectType } from "@/game/object-placement";
+import type { PlayerState } from "@/game/player";
 
 const FRAME_GRAPH_WIDTH = 240;
 const FRAME_GRAPH_HEIGHT = 80;
@@ -7,9 +9,13 @@ const FRAME_GRAPH_MAX_MS = 16.67;
 const TICK_GRAPH_HEIGHT = 60;
 const TICK_GRAPH_MAX_MS = 50;
 
+interface OnlinePlayer {
+  id: string;
+  name: string;
+}
+
 interface DiagnosticsPanelProps {
-  // TODO: reorganize these props
-  playerName: string;
+  playerState: PlayerState;
   fps: number;
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
@@ -20,7 +26,8 @@ interface DiagnosticsPanelProps {
   mspt: number;
   msptHistory: readonly number[];
   snapsPerSec: number;
-  onlinePlayers: readonly string[];
+  onlinePlayers: readonly OnlinePlayer[];
+  onTeleportTo: (playerId: string) => void;
   pointerLocked: boolean;
 }
 
@@ -69,38 +76,40 @@ function Graph(props: {
       role="img"
     >
       <title>{props.title}</title>
-      {props.guides.map((g) => {
-        const y = guideY(props.height, props.maxMs, g.ms);
-        return (
-          <>
-            <line
-              x1="0"
-              x2={FRAME_GRAPH_WIDTH.toString()}
-              y1={y}
-              y2={y}
-              stroke={g.stroke}
-              stroke-dasharray="4 3"
-              stroke-width="1"
-            />
-            <rect
-              x={(FRAME_GRAPH_WIDTH - 46).toString()}
-              y={(Number(y) - 7).toString()}
-              width="46"
-              height="12"
-              fill="rgb(0 0 0 / 0.55)"
-              rx="2"
-            />
-            <text
-              x={(FRAME_GRAPH_WIDTH - 42).toString()}
-              y={(Number(y) + 2.5).toString()}
-              fill={g.stroke}
-              font-size="8"
-            >
-              {g.label}
-            </text>
-          </>
-        );
-      })}
+      <For each={props.guides}>
+        {(g) => {
+          const y = guideY(props.height, props.maxMs, g.ms);
+          return (
+            <>
+              <line
+                x1="0"
+                x2={FRAME_GRAPH_WIDTH.toString()}
+                y1={y}
+                y2={y}
+                stroke={g.stroke}
+                stroke-dasharray="4 3"
+                stroke-width="1"
+              />
+              <rect
+                x={(FRAME_GRAPH_WIDTH - 46).toString()}
+                y={(Number(y) - 7).toString()}
+                width="46"
+                height="12"
+                fill="rgb(0 0 0 / 0.55)"
+                rx="2"
+              />
+              <text
+                x={(FRAME_GRAPH_WIDTH - 42).toString()}
+                y={(Number(y) + 2.5).toString()}
+                fill={g.stroke}
+                font-size="8"
+              >
+                {g.label}
+              </text>
+            </>
+          );
+        }}
+      </For>
       <polyline
         fill="none"
         points={polyline(FRAME_GRAPH_WIDTH, props.height, props.maxMs, props.history)}
@@ -114,11 +123,16 @@ function Graph(props: {
 }
 
 export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
+  const player = () => props.playerState;
+
   return (
     <div class="absolute top-2 right-2 z-20 w-80 rounded bg-black/60 p-3 font-mono text-sm text-white">
       <div class="flex items-center justify-between gap-3">
-        <div class="text-gray-400">{props.playerName}</div>
+        <div class="text-gray-400">{player().name}</div>
         <div class="text-gray-400">{props.pointerLocked ? "(locked)" : null}</div>
+      </div>
+      <div class="text-gray-400">
+        XYZ: {player().x.toFixed(2)} / {player().y.toFixed(2)} / {player().z.toFixed(2)}
       </div>
       <div>
         {props.fps} fps ({props.computeTimeMs.toFixed(2)}ms)
@@ -151,11 +165,13 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           placed objects ({props.placedObjectCount} rendered / {props.generatedPlacedObjectCount} generated)
         </div>
         <ul class="mt-1">
-          {props.placedObjectCounts.map((entry) => (
-            <li>
-              {entry.type}: {entry.count}
-            </li>
-          ))}
+          <For each={props.placedObjectCounts}>
+            {(entry) => (
+              <li>
+                {entry.type}: {entry.count}
+              </li>
+            )}
+          </For>
         </ul>
       </div>
       <div class="border-t border-white/20 pt-2">
@@ -166,9 +182,19 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
       <div class="border-t border-white/20 pt-2">
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
         <ul class="mt-1">
-          {props.onlinePlayers.map((name) => (
-            <li>{name}</li>
-          ))}
+          <For each={props.onlinePlayers}>
+            {(playerInfo) => (
+              <li>
+                <button
+                  type="button"
+                  class="text-left text-white hover:text-blue-400 hover:underline"
+                  onClick={() => props.onTeleportTo(playerInfo.id)}
+                >
+                  {playerInfo.name}
+                </button>
+              </li>
+            )}
+          </For>
         </ul>
       </div>
     </div>

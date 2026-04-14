@@ -1,13 +1,15 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
+import { makeTimer } from "@solid-primitives/timer";
 import { Vec3, Vec4 } from "gl-matrix";
+import { onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { ChunkMaster } from "@/game/chunk-master";
 import { PlacedObjectType } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
-import type { Player } from "@/game/player";
+import type { Player, PlayerInput } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
+import { ChunkManager } from "./chunks";
 import {
   createEntityPipeline,
   type EntityDrawData,
@@ -24,19 +26,14 @@ import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 
 export interface CreateGameArgs {
-  /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
-  /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
   room: ReturnType<typeof joinWorld>;
 }
 
-/** Client-side rendering metrics exposed to the diagnostics panel. */
 export interface ClientDiagnostics {
   fps: number;
   frameCount: number;
-  /** Client-measured wall-clock time for the tick function (ms). */
   computeTimeMs: number;
-  /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
   placedObjectCount: number;
   generatedPlacedObjectCount: number;
@@ -44,15 +41,10 @@ export interface ClientDiagnostics {
   pointerLocked: boolean;
 }
 
-/** Server-side performance metrics derived from room snapshots. */
 export interface ServerDiagnostics {
-  /** Server ticks per second, computed from snapshot tick deltas. */
   tps: number;
-  /** Milliseconds per server tick (from the snapshot). */
   mspt: number;
-  /** Rolling ring-buffer of recent mspt values. */
   msptHistory: number[];
-  /** How many snapshots we receive per second from the server. */
   snapsPerSec: number;
 }
 
@@ -68,13 +60,21 @@ export type GameState = Readonly<MutableGameState>;
 
 const LIGHT_POSITION = new Vec4([-1000, 1000, -1000, 1]);
 const BACKGROUND_COLOR = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
-/** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
-/** Number of samples kept in the compute-time and mspt ring buffers. */
 const FRAME_HISTORY_SIZE = 120;
-const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and send to client
-/** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
+const TEMP_START_SEED = 123;
 const MAX_INPUT_DT_MS = 100;
+const INPUT_SEND_INTERVAL_MS = 50;
+
+function emptyPlacedObjectCounts(): Record<PlacedObjectType, number> {
+  return {
+    [PlacedObjectType.Grass]: 0,
+    [PlacedObjectType.Shrub]: 0,
+    [PlacedObjectType.Rock]: 0,
+    [PlacedObjectType.Tree]: 0,
+    [PlacedObjectType.EnemySpawn]: 0,
+  };
+}
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef, placedRockPassDef]);
@@ -84,15 +84,13 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
   return { renderer, camera };
 }
 
-/**
- * Reactive game primitive.
- *
- * The store is the reactive boundary: the rAF callback (an event-handler context)
- * writes into it each frame, and SolidJS consumers track individual properties.
- */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
-  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED);
+  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED);
+
+  onCleanup(() => {
+    chunks.dispose();
+  });
 
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
@@ -103,8 +101,8 @@ export function createGame(args: CreateGameArgs): GameState {
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         placedObjectCount: 0,
-        generatedPlacedObjectCount: chunkMaster.getNearPlacedObjectCount(),
-        placedObjectCounts: chunkMaster.getNearPlacedObjectCounts(),
+        generatedPlacedObjectCount: chunks.getVisiblePlacedObjectCount(),
+        placedObjectCounts: chunks.getVisiblePlacedObjectCounts(),
         pointerLocked: false,
       },
       server: {
@@ -130,27 +128,33 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
-  let lastPlacedObjects: readonly unknown[] | undefined;
+  let lastPlacedObjects = chunks.getVisiblePlacedObjects();
   let lastRenderCenterX = NaN;
   let lastRenderCenterZ = NaN;
   let renderedPlacedObjectCount = 0;
   let renderedFoliageCount = 0;
   let renderedRockCount = 0;
-  let renderedPlacedObjectCounts: Record<PlacedObjectType, number> = {
-    [PlacedObjectType.Grass]: 0,
-    [PlacedObjectType.Shrub]: 0,
-    [PlacedObjectType.Rock]: 0,
-    [PlacedObjectType.Tree]: 0,
-    [PlacedObjectType.EnemySpawn]: 0,
-  };
+  let renderedPlacedObjectCounts = emptyPlacedObjectCounts();
 
   const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+
+  let unsent: PlayerInput[] = [];
+  makeTimer(
+    () => {
+      const session = room().session();
+      if (unsent.length === 0 || !session) return;
+      session.sendInputs(unsent);
+      unsent = [];
+    },
+    INPUT_SEND_INTERVAL_MS,
+    setInterval,
+  );
+
   let needsResize = true;
   createResizeObserver(args.glCanvas, () => {
     needsResize = true;
   });
 
-  // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
   createRenderLoop((dt, now) => {
@@ -164,7 +168,6 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickStart = performance.now();
     const inputDt = Math.min(dt, MAX_INPUT_DT_MS) / 1000;
 
-    // --- Resize ---
     if (needsResize) {
       needsResize = false;
       const dpr = window.devicePixelRatio || 1;
@@ -173,7 +176,6 @@ export function createGame(args: CreateGameArgs): GameState {
       camera.resize(gl.clientWidth, gl.clientHeight);
     }
 
-    // --- Input → server ---
     const mouse = input.consumeMouseDelta();
     camera.rotate(mouse.dx, mouse.dy);
     const walk = camera.walkDir(input.walkKeys());
@@ -182,20 +184,14 @@ export function createGame(args: CreateGameArgs): GameState {
     if (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch) {
       lastYaw = yaw;
       lastPitch = pitch;
-      room().input({
-        dx: walk.x,
-        dy: walk.y,
-        dz: walk.z,
-        dtSeconds: inputDt,
-        yaw,
-        pitch,
-      });
+      const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
+      room().replicated()?.predict(next);
+      unsent.push(next);
     }
     camera.setPosition(player.position);
 
-    // update chunks around player
-    chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
-    const placedObjects = chunkMaster.getNearPlacedObjects();
+    chunks.update(player.position.x, player.position.z);
+    const placedObjects = chunks.getVisiblePlacedObjects();
     const movedForObjectRepack =
       Number.isNaN(lastRenderCenterX) ||
       Math.abs(player.position.x - lastRenderCenterX) >= 4 ||
@@ -211,13 +207,7 @@ export function createGame(args: CreateGameArgs): GameState {
       const rockObjects = renderablePlacedObjects.filter((object) => object.type === PlacedObjectType.Rock);
       renderedFoliageCount = packPlacedObjects(foliageObjects, placedObjectBuffers);
       renderedRockCount = packPlacedRocks(rockObjects, placedRockBuffers);
-      renderedPlacedObjectCounts = {
-        [PlacedObjectType.Grass]: 0,
-        [PlacedObjectType.Shrub]: 0,
-        [PlacedObjectType.Rock]: 0,
-        [PlacedObjectType.Tree]: 0,
-        [PlacedObjectType.EnemySpawn]: 0,
-      };
+      renderedPlacedObjectCounts = emptyPlacedObjectCounts();
       for (const object of renderablePlacedObjects) {
         renderedPlacedObjectCounts[object.type]++;
       }
@@ -226,7 +216,6 @@ export function createGame(args: CreateGameArgs): GameState {
       lastRenderCenterZ = player.position.z;
     }
 
-    // --- Remote entities ---
     const snap = room().snapshot;
     if (snap.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(snap.players), now);
@@ -235,33 +224,23 @@ export function createGame(args: CreateGameArgs): GameState {
       msptHistory.push(snap.tickTimeMs);
     }
 
-    // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [
       { key: "players", buffers, count },
-      {
-        key: "placed-objects",
-        buffers: placedObjectBuffers,
-        count: renderedFoliageCount,
-      },
-      {
-        key: "placed-rocks",
-        buffers: placedRockBuffers,
-        count: renderedRockCount,
-      },
+      { key: "placed-objects", buffers: placedObjectBuffers, count: renderedFoliageCount },
+      { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
     ];
     renderer.render({
       viewMatrix: camera.viewMatrix(),
       projMatrix: camera.projMatrix(),
-      cubePositions: chunkMaster.getNearCubePositionsFlattened(),
-      cubeColors: chunkMaster.getNearCubeColorsFlattened(),
-      numCubes: chunkMaster.getNearCubeSize(),
+      cubePositions: chunks.positions,
+      cubeColors: chunks.colors,
+      numCubes: chunks.count,
       lightPosition: LIGHT_POSITION,
       backgroundColor: BACKGROUND_COLOR,
       entities,
     });
 
-    // --- Diagnostics (producers → store) ---
     frame++;
     const computeTimeMs = performance.now() - tickStart;
     fpsMeter.sample(dt, 1);
@@ -279,7 +258,7 @@ export function createGame(args: CreateGameArgs): GameState {
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
       placedObjectCount: renderedPlacedObjectCount,
-      generatedPlacedObjectCount: chunkMaster.getNearPlacedObjectCount(),
+      generatedPlacedObjectCount: chunks.getVisiblePlacedObjectCount(),
       placedObjectCounts: renderedPlacedObjectCounts,
       pointerLocked: input.pointerLocked(),
     });

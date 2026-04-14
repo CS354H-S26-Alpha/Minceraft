@@ -29,6 +29,8 @@ export interface RoomSessionApi {
   sendInputs(inputs: PlayerInput[]): void;
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState(): void;
+  /** Teleports this player to the given coordinates. */
+  teleportTo(x: number, y: number, z: number): void;
   /** Leaves the room and disposes the session. */
   leave(): void;
 }
