@@ -15,8 +15,6 @@ function renderData(value: number): ChunkBatchData {
         originZ: 0,
         cubePositions: new Float32Array([value, 0, 0, 0]),
         cubeColors: new Float32Array([value, 0, 0]),
-        cubeFaceTiles0: new Float32Array(3),
-        cubeFaceTiles1: new Float32Array(3),
         numCubes: 1,
       },
     ],

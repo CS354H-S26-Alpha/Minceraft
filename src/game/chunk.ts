@@ -1,5 +1,5 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
-import { CUBE_TYPE_FACE_TILES, CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
+import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
 import { perlin3D } from "@/utils/noise";
 
@@ -31,8 +31,6 @@ export class Chunk {
   private cubes: number = 0;
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
-  private cubeFaceTiles0F32: Float32Array = new Float32Array(0);
-  private cubeFaceTiles1F32: Float32Array = new Float32Array(0);
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -197,13 +195,10 @@ export class Chunk {
 
     const positions = new Float32Array(4 * total);
     const colors = new Float32Array(3 * total);
-    const faceTiles0 = new Float32Array(3 * total);
-    const faceTiles1 = new Float32Array(3 * total);
     let count = 0;
 
     const writeCube = (blockType: CubeType, wx: number, y: number, wz: number): void => {
       const info = CUBE_TYPE_INFO[blockType];
-      const faceTiles = CUBE_TYPE_FACE_TILES[blockType];
       const c = info.baseColor;
 
       positions[4 * count] = wx;
@@ -214,13 +209,6 @@ export class Chunk {
       colors[3 * count] = c[0];
       colors[3 * count + 1] = c[1];
       colors[3 * count + 2] = c[2];
-
-      faceTiles0[3 * count] = faceTiles.top;
-      faceTiles0[3 * count + 1] = faceTiles.left;
-      faceTiles0[3 * count + 2] = faceTiles.right;
-      faceTiles1[3 * count] = faceTiles.front;
-      faceTiles1[3 * count + 1] = faceTiles.back;
-      faceTiles1[3 * count + 2] = faceTiles.bottom;
 
       count++;
     };
@@ -257,8 +245,6 @@ export class Chunk {
     // Edge culling may reduce count below total; subarray trims to exact size
     this.cubePositionsF32 = positions.subarray(0, 4 * count);
     this.cubeColorsF32 = colors.subarray(0, 3 * count);
-    this.cubeFaceTiles0F32 = faceTiles0.subarray(0, 3 * count);
-    this.cubeFaceTiles1F32 = faceTiles1.subarray(0, 3 * count);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
@@ -268,14 +254,6 @@ export class Chunk {
 
   public cubeColors(): Float32Array {
     return this.cubeColorsF32;
-  }
-
-  public cubeFaceTiles0(): Float32Array {
-    return this.cubeFaceTiles0F32;
-  }
-
-  public cubeFaceTiles1(): Float32Array {
-    return this.cubeFaceTiles1F32;
   }
 
   /** Returns the number of cubes to render this frame. */

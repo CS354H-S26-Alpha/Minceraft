@@ -25,13 +25,9 @@ export class ChunkManager {
   private chunkDataMap = new Map<string, SingleChunkData>();
   private positionBuffer = new Float32Array(0);
   private colorBuffer = new Float32Array(0);
-  private faceTiles0Buffer = new Float32Array(0);
-  private faceTiles1Buffer = new Float32Array(0);
 
   positions = new Float32Array(0);
   colors = new Float32Array(0);
-  faceTiles0 = new Float32Array(0);
-  faceTiles1 = new Float32Array(0);
   count = 0;
 
   constructor(spawnX: number, spawnZ: number, seed: number, client: ChunkClient) {
@@ -81,32 +77,18 @@ export class ChunkManager {
     if (this.colorBuffer.length < totalCubes * 3) {
       this.colorBuffer = new Float32Array(totalCubes * 3);
     }
-    if (this.faceTiles0Buffer.length < totalCubes * 3) {
-      this.faceTiles0Buffer = new Float32Array(totalCubes * 3);
-    }
-    if (this.faceTiles1Buffer.length < totalCubes * 3) {
-      this.faceTiles1Buffer = new Float32Array(totalCubes * 3);
-    }
 
     let posOffset = 0;
     let colOffset = 0;
-    let ft0Offset = 0;
-    let ft1Offset = 0;
     for (const chunk of visible) {
       this.positionBuffer.set(chunk.cubePositions, posOffset);
       posOffset += chunk.cubePositions.length;
       this.colorBuffer.set(chunk.cubeColors, colOffset);
       colOffset += chunk.cubeColors.length;
-      this.faceTiles0Buffer.set(chunk.cubeFaceTiles0, ft0Offset);
-      ft0Offset += chunk.cubeFaceTiles0.length;
-      this.faceTiles1Buffer.set(chunk.cubeFaceTiles1, ft1Offset);
-      ft1Offset += chunk.cubeFaceTiles1.length;
     }
 
     this.positions = this.positionBuffer.subarray(0, totalCubes * 4);
     this.colors = this.colorBuffer.subarray(0, totalCubes * 3);
-    this.faceTiles0 = this.faceTiles0Buffer.subarray(0, totalCubes * 3);
-    this.faceTiles1 = this.faceTiles1Buffer.subarray(0, totalCubes * 3);
     this.count = totalCubes;
   }
 
