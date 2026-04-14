@@ -60,7 +60,7 @@ export function InventorySlotVisual(props: {
         ),
       }}
     >
-      <div class="pointer-events-none absolute inset-[3px] border border-white/10" />
+      <div class="pointer-events-none absolute inset-0.75 border border-white/10" />
 
       <Show when={props.hotbarNumber !== undefined}>
         <span class="pointer-events-none absolute top-1 left-1 font-mono text-[10px] font-bold text-[rgba(245,239,226,0.72)]">

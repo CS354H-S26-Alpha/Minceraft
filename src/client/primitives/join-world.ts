@@ -2,7 +2,7 @@ import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
-import { createInventoryUiState, type InventoryClickTarget } from "@/game/crafting";
+import { createInventoryUiState } from "@/game/crafting";
 import { Player } from "@/game/player";
 import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
 
@@ -55,38 +55,9 @@ export function joinWorld(roomId: string) {
     });
   }).then((s) => setSession(() => s));
 
-  function clickInventory(target: InventoryClickTarget) {
-    session()?.clickInventory(target);
-  }
-
-  function closeInventory() {
-    session()?.closeInventory();
-  }
-
-  function requestState() {
-    session()?.requestState();
-  }
-
-  function selectHotbarSlot(slotIndex: number) {
-    player()?.setSelectedHotbarSlot(slotIndex);
-    session()?.selectHotbarSlot(slotIndex);
-  }
-
   onCleanup(() => {
-    session()?.closeInventory();
     session()?.leave();
   });
 
-  return {
-    player,
-    snapshot,
-    snapCount,
-    session,
-    replicated,
-    inventoryUi,
-    clickInventory,
-    closeInventory,
-    requestState,
-    selectHotbarSlot,
-  } as const;
+  return { player, snapshot, snapCount, session, replicated, inventoryUi } as const;
 }

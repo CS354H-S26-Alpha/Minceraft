@@ -1,4 +1,5 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
+import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { PlayerHud } from "../components/PlayerHud";
@@ -15,14 +16,22 @@ export default function GameView() {
     glCanvas,
     room,
     inputEnabled: () => !inventoryOpen(),
-    gameplayShortcuts: {
-      inventoryOpen,
-      player: room.player,
+    shortcuts: {
       onToggleInventory: toggleInventory,
       onCloseInventory: closeInventory,
-      onSelectHotbarSlot: room.selectHotbarSlot,
+      onSelectHotbarSlot: selectHotbarSlot,
+      onCycleHotbar: (direction) => {
+        const player = room.player();
+        if (!player) return;
+        selectHotbarSlot(mod(player.state.selectedHotbarSlot + direction, HOTBAR_SLOT_COUNT));
+      },
     },
   });
+
+  function selectHotbarSlot(slotIndex: number) {
+    room.player()?.setSelectedHotbarSlot(slotIndex);
+    room.session()?.selectHotbarSlot(slotIndex);
+  }
 
   function openInventory() {
     if (inventoryOpen()) return;
@@ -33,7 +42,7 @@ export default function GameView() {
   function closeInventory() {
     if (!inventoryOpen()) return;
     setInventoryOpen(false);
-    room.closeInventory();
+    room.session()?.closeInventory();
     void requestPointerLock(glCanvas());
   }
 
@@ -45,21 +54,15 @@ export default function GameView() {
     }
   }
 
-  onCleanup(() => {
-    if (inventoryOpen()) {
-      room.closeInventory();
-    }
-  });
-
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
-      <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={room.selectHotbarSlot} player={room.player} />
+      <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
       <InventoryPanel
         player={room.player}
         inventoryUi={room.inventoryUi}
         open={inventoryOpen()}
-        onClickSlot={room.clickInventory}
+        onClickSlot={(target) => room.session()?.clickInventory(target)}
       />
       <Show when={room.player()?.state}>
         {(playerState) => (
@@ -86,4 +89,8 @@ export default function GameView() {
       </Show>
     </div>
   );
+}
+
+function mod(value: number, base: number) {
+  return ((value % base) + base) % base;
 }

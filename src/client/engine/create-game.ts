@@ -8,7 +8,7 @@ import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
-import { createInput, type GameplayShortcutsOptions } from "./input";
+import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 
@@ -19,7 +19,7 @@ export interface CreateGameArgs {
   room: ReturnType<typeof joinWorld>;
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
-  gameplayShortcuts?: GameplayShortcutsOptions;
+  shortcuts?: Omit<InputOptions, "onReset">;
 }
 
 /** Client-side rendering metrics exposed to the diagnostics panel. */
@@ -119,7 +119,7 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const input = createInput(args.glCanvas, {
     onReset: () => ctx?.camera.reset(),
-    gameplayShortcuts: args.gameplayShortcuts,
+    ...args.shortcuts,
   });
 
   // TODO: refactor to be general packet handling rather than only inputs

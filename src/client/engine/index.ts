@@ -4,7 +4,7 @@ export type { CreateGameArgs, GameState } from "./create-game";
 export { createGame } from "./create-game";
 export type { EntityDrawData, EntityPassDef, EntityPipelineConfig, GpuBuffers } from "./entities";
 export { createEntityPipeline } from "./entities";
-export type { GameplayShortcutsOptions, InputHandle, InputOptions, WalkKeys } from "./input";
+export type { InputHandle, InputOptions, WalkKeys } from "./input";
 export { createInput, requestPointerLock } from "./input";
 export type { RenderView } from "./render/renderer";
 export { Renderer } from "./render/renderer";

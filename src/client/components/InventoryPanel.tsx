@@ -22,7 +22,7 @@ const HOTBAR_SLOT_INDICES = Array.from({ length: HOTBAR_SLOT_COUNT }, (_, index)
 const CRAFTING_SLOT_INDICES = Array.from({ length: CRAFTING_GRID_SLOT_COUNT }, (_, index) => index);
 
 export function InventoryPanel(props: InventoryPanelProps) {
-  const mouse = createMousePosition(typeof window === "undefined" ? undefined : window, {
+  const mouse = createMousePosition(window, {
     touch: false,
     initialValue: defaultPointerPosition(),
   });
@@ -92,7 +92,7 @@ export function InventoryPanel(props: InventoryPanelProps) {
                 </For>
               </div>
 
-              <div class="my-4 h-[3px] bg-[rgba(36,27,18,0.35)]" />
+              <div class="my-4 h-0.75 bg-[rgba(36,27,18,0.35)]" />
 
               <div class="grid grid-cols-9 gap-2">
                 <For each={HOTBAR_SLOT_INDICES}>
