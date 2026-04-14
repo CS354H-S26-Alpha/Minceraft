@@ -156,6 +156,16 @@ export class Renderer {
       undefined,
       cube.normalsFlat(),
     );
+    pass.addAttribute(
+      "aUV",
+      2,
+      gl.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      cube.uvFlat(),
+    );
     pass.addInstancedAttribute(
       "aOffset",
       4,
