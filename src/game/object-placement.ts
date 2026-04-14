@@ -93,6 +93,12 @@ export const PLACED_OBJECT_TYPES = [
   PlacedObjectType.EnemySpawn,
 ] as const;
 
+export const RENDERABLE_PLACED_OBJECT_TYPES = [
+  PlacedObjectType.Grass,
+  PlacedObjectType.Rock,
+  PlacedObjectType.EnemySpawn,
+] as const;
+
 export function placedObjectTypeIndex(type: PlacedObjectType): number {
   return PLACED_OBJECT_TYPES.indexOf(type);
 }
