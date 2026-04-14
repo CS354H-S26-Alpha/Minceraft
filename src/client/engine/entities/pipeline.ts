@@ -45,10 +45,10 @@ export function createEntityPipeline<S>(config: EntityPipelineConfig<S>) {
     onSnapshot(entities: Record<string, S>, now: number) {
       store.update(structuredClone(entities), now);
     },
-    frame(now: number): { buffers: GpuBuffers; count: number } {
+    frame(now: number): { states: S[]; buffers: GpuBuffers; count: number } {
       const states = store.interpolated(now);
       const count = config.pack(states, buffers);
-      return { buffers, count };
+      return { states, buffers, count };
     },
   };
 }

@@ -6,6 +6,8 @@ import { InventorySlotButton } from "./InventorySlot";
 interface PlayerHudProps {
   player: () => Player | undefined;
   onSelectHotbarSlot: (slotIndex: number) => void;
+  onHoverHotbarSlot?: (slotIndex: number | null) => void;
+  hoveredHotbarSlot?: number | null;
   hidden?: boolean;
 }
 
@@ -20,9 +22,10 @@ export function PlayerHud(props: PlayerHudProps) {
   const inventory = createMemo(() => props.player()?.state.inventory ?? []);
   const selectedHotbarSlot = createMemo(() => props.player()?.state.selectedHotbarSlot ?? 0);
   const health = createMemo(() => props.player()?.state.health ?? PLAYER_MAX_HEALTH);
+  const focusedHotbarSlot = createMemo(() => props.hoveredHotbarSlot ?? selectedHotbarSlot());
 
   const selectedHotbarItemName = createMemo(() => {
-    const slot = inventory()[HOTBAR_START_INDEX + selectedHotbarSlot()];
+    const slot = inventory()[HOTBAR_START_INDEX + focusedHotbarSlot()];
     return slot ? ITEM_DEFINITIONS_BY_ID[slot.itemId].name : "Empty Hand";
   });
 
@@ -50,9 +53,11 @@ export function PlayerHud(props: PlayerHudProps) {
               <For each={HOTBAR_SLOT_INDICES}>
                 {(slotIndex) => (
                   <InventorySlotButton
+                    emphasized={props.hoveredHotbarSlot === slotIndex}
                     hotbarNumber={slotIndex + 1}
                     label={`Hotbar slot ${slotIndex + 1}`}
                     onClick={() => props.onSelectHotbarSlot(slotIndex)}
+                    onHoverChange={(hovered) => props.onHoverHotbarSlot?.(hovered ? slotIndex : null)}
                     selected={selectedHotbarSlot() === slotIndex}
                     slot={inventory()[HOTBAR_START_INDEX + slotIndex]}
                   />

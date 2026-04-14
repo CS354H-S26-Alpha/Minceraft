@@ -17,6 +17,7 @@ export const playerPipelineConfig: EntityPipelineConfig<PlayerPublicState> = {
     z: lerp(prev.z, curr.z, t),
     yaw: lerpAngle(prev.yaw, curr.yaw, t),
     pitch: lerp(prev.pitch, curr.pitch, t),
+    heldItemId: curr.heldItemId,
   }),
   pack: (players: PlayerPublicState[], buffers: GpuBuffers) => {
     const count = players.length;

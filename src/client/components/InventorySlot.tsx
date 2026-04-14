@@ -9,6 +9,7 @@ export function InventorySlotButton(props: {
   emphasized?: boolean;
   hotbarNumber?: number;
   onClick?: () => void;
+  onHoverChange?: (hovered: boolean) => void;
 }) {
   return (
     <button
@@ -23,6 +24,8 @@ export function InventorySlotButton(props: {
         event.stopPropagation();
         props.onClick?.();
       }}
+      onMouseEnter={() => props.onHoverChange?.(true)}
+      onMouseLeave={() => props.onHoverChange?.(false)}
       tabIndex={-1}
       title={slotTitle(props.slot, props.label)}
       type="button"

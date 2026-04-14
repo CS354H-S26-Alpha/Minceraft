@@ -1,5 +1,5 @@
 import { createSignal, Show } from "solid-js";
-import { HOTBAR_SLOT_COUNT } from "@/game/player";
+import { HOTBAR_SLOT_COUNT, HOTBAR_START_INDEX } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { PlayerHud } from "../components/PlayerHud";
@@ -8,12 +8,28 @@ import { joinWorld } from "../primitives/join-world";
 
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
+  const [heldItemCanvas, setHeldItemCanvas] = createSignal<HTMLCanvasElement>();
+  const [hoveredHotbarSlot, setHoveredHotbarSlot] = createSignal<number | null>(null);
   const [inventoryOpen, setInventoryOpen] = createSignal(false);
 
   const room = joinWorld("world-1");
 
   const game = createGame({
     glCanvas,
+    heldItemCanvas,
+    heldItemId: () => {
+      if (inventoryOpen()) return undefined;
+
+      const player = room.player();
+      if (!player) return undefined;
+
+      const hoveredSlot = hoveredHotbarSlot();
+      if (hoveredSlot !== null) {
+        return player.state.inventory[HOTBAR_START_INDEX + hoveredSlot]?.itemId;
+      }
+
+      return player.state.inventory[HOTBAR_START_INDEX + player.state.selectedHotbarSlot]?.itemId;
+    },
     room,
     inputEnabled: () => !inventoryOpen(),
     shortcuts: {
@@ -35,6 +51,7 @@ export default function GameView() {
 
   function openInventory() {
     if (inventoryOpen()) return;
+    setHoveredHotbarSlot(null);
     setInventoryOpen(true);
     void document.exitPointerLock?.();
   }
@@ -57,7 +74,14 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
-      <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
+      <canvas ref={setHeldItemCanvas} class="pointer-events-none absolute inset-0 z-10 h-full w-full" />
+      <PlayerHud
+        hidden={inventoryOpen()}
+        hoveredHotbarSlot={hoveredHotbarSlot()}
+        onHoverHotbarSlot={setHoveredHotbarSlot}
+        onSelectHotbarSlot={selectHotbarSlot}
+        player={room.player}
+      />
       <InventoryPanel
         player={room.player}
         inventoryUi={room.inventoryUi}
