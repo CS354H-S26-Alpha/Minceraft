@@ -5,6 +5,8 @@ import ChunkWorkerConstructor from "./worker?worker";
 export interface ChunkRenderData {
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  cubeFaceTiles0: Float32Array;
+  cubeFaceTiles1: Float32Array;
   numCubes: number;
 }
 
