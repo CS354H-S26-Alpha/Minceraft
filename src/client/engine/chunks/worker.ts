@@ -6,7 +6,7 @@ import { ChunkGenerationQueue } from "./queue";
 
 function transferBatchData(data: ChunkBatchData): ChunkBatchData {
   const transferables: ArrayBuffer[] = [];
-  const chunks = data.chunks.map(chunk => {
+  const chunks = data.chunks.map((chunk) => {
     // Copy before transferring — zero-copy transfer detaches the buffer on the worker
     // side, which would corrupt cached chunk data read by assembleRenderData later.
     const cubePositions = chunk.cubePositions.slice();
