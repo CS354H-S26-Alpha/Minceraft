@@ -64,10 +64,10 @@ const DAY_LENGTH_S = 60;
 const PHASE_MS = (DAY_LENGTH_S / 4) * 1000;
 
 // Pre-allocated buffers updated in-place each frame — no GC pressure.
-const _lightPos   = new Float32Array(4);
-const _bgColor    = new Float32Array(4);
-const _ambient    = new Float32Array(3);
-const _sunColor   = new Float32Array(3);
+const _lightPos = new Float32Array(4);
+const _bgColor = new Float32Array(4);
+const _ambient = new Float32Array(3);
+const _sunColor = new Float32Array(3);
 
 /** Accumulated time offset (ms) added by pressing P to skip phases. */
 let _timeOffset = 0;
@@ -83,10 +83,10 @@ let _timeOffset = 0;
  *   angle=3π/2   → midnight
  */
 function computeDayNight(nowMs: number): void {
-  const t       = ((nowMs + _timeOffset) / 1000) % DAY_LENGTH_S;
-  const angle   = (t / DAY_LENGTH_S) * Math.PI * 2;
-  const sinA    = Math.sin(angle);  // +1 = noon, -1 = midnight
-  const cosA    = Math.cos(angle);  // +1 = sunrise, -1 = sunset
+  const t = ((nowMs + _timeOffset) / 1000) % DAY_LENGTH_S;
+  const angle = (t / DAY_LENGTH_S) * Math.PI * 2;
+  const sinA = Math.sin(angle); // +1 = noon, -1 = midnight
+  const cosA = Math.cos(angle); // +1 = sunrise, -1 = sunset
 
   // Sun/moon position — orbits in the XY plane, offset in Z for angled light
   _lightPos[0] = cosA * 2000;
@@ -95,17 +95,17 @@ function computeDayNight(nowMs: number): void {
   _lightPos[3] = 1;
 
   // Smooth phase weights (all ≥ 0, don't need to sum to 1)
-  const day     = Math.max(0, sinA);                             // 0..1, peaks at noon
-  const night   = Math.max(0, -sinA);                           // 0..1, peaks at midnight
+  const day = Math.max(0, sinA); // 0..1, peaks at noon
+  const night = Math.max(0, -sinA); // 0..1, peaks at midnight
   const horizon = Math.max(0, 1 - Math.abs(sinA) / 0.35) * 0.35; // spike near sunrise/sunset
 
   // -- Sky / background color --
   // Day:     cornflower blue  (0.40, 0.62, 0.96)
   // Horizon: warm orange-red  (0.92, 0.42, 0.12)
   // Night:   deep space blue  (0.02, 0.02, 0.10)
-  _bgColor[0] = Math.min(1, day * 0.40 + horizon * 0.92 + night * 0.02);
+  _bgColor[0] = Math.min(1, day * 0.4 + horizon * 0.92 + night * 0.02);
   _bgColor[1] = Math.min(1, day * 0.62 + horizon * 0.42 + night * 0.02);
-  _bgColor[2] = Math.min(1, day * 0.96 + horizon * 0.12 + night * 0.10);
+  _bgColor[2] = Math.min(1, day * 0.96 + horizon * 0.12 + night * 0.1);
   _bgColor[3] = 1;
 
   // -- Ambient light (sky light bouncing onto all surfaces) --
@@ -114,15 +114,15 @@ function computeDayNight(nowMs: number): void {
   // Night:   moonlit blue     (0.04, 0.04, 0.10)
   _ambient[0] = day * 0.28 + horizon * 0.35 + night * 0.04;
   _ambient[1] = day * 0.28 + horizon * 0.18 + night * 0.04;
-  _ambient[2] = day * 0.32 + horizon * 0.06 + night * 0.10;
+  _ambient[2] = day * 0.32 + horizon * 0.06 + night * 0.1;
 
   // -- Directional sun/moon color --
   // Day:     bright warm white (1.00, 0.96, 0.82)
   // Horizon: deep orange-gold  (1.00, 0.52, 0.10)
   // Night:   cool moonlight    (0.30, 0.32, 0.50)
-  _sunColor[0] = day * 1.00 + horizon * 1.00 + night * 0.30;
+  _sunColor[0] = day * 1.0 + horizon * 1.0 + night * 0.3;
   _sunColor[1] = day * 0.96 + horizon * 0.52 + night * 0.32;
-  _sunColor[2] = day * 0.82 + horizon * 0.10 + night * 0.50;
+  _sunColor[2] = day * 0.82 + horizon * 0.1 + night * 0.5;
 }
 /** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
@@ -186,7 +186,9 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const input = createInput(args.glCanvas, {
     onReset: () => ctx?.camera.reset(),
-    onCycleDayPhase: () => { _timeOffset += PHASE_MS; },
+    onCycleDayPhase: () => {
+      _timeOffset += PHASE_MS;
+    },
     ...args.shortcuts,
   });
 
