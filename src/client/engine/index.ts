@@ -10,3 +10,4 @@ export type { RenderView } from "./render/renderer";
 export { Renderer } from "./render/renderer";
 export type { RenderLoopOptions } from "./render-loop";
 export { createRenderLoop } from "./render-loop";
+export { SceneLighting } from "./scene-lighting";
