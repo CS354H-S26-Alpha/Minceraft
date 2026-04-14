@@ -4,6 +4,7 @@ import dirtTopTextureUrl from "@/assets/textures/dirt_top.png";
 import sandTextureUrl from "@/assets/textures/sand.png";
 import stoneTextureUrl from "@/assets/textures/stone.png";
 import snowTextureUrl from "@/assets/textures/snow_top.png";
+import bedrockTextureUrl from "@/assets/textures/bedrock.png";
 import coalTextureUrl from "@/assets/textures/coal.png";
 import ironTextureUrl from "@/assets/textures/iron.png";
 import goldTextureUrl from "@/assets/textures/gold.png";
@@ -122,7 +123,14 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   },
   [CubeType.Bedrock]: {
     baseColor: [0.0, 0.0, 0.0],
-    faceTextures: cubeFaceTextures(),
+    faceTextures: cubeFaceTextures({
+      top: bedrockTextureUrl,
+      left: bedrockTextureUrl,
+      right: bedrockTextureUrl,
+      front: bedrockTextureUrl,
+      back: bedrockTextureUrl,
+      bottom: bedrockTextureUrl,
+    }),
   },
   [CubeType.ForestGrass]: {
     baseColor: [0.13, 0.42, 0.05],

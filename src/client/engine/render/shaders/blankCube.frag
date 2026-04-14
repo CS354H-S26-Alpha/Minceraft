@@ -30,5 +30,9 @@ void main() {
   float dot_nl = dot(normalize(lightDirection), normalize(normal));
   dot_nl = clamp(dot_nl, 0.0, 1.0);
 
+  float minDiffuse = 0.1;
+  dot_nl = minDiffuse + (1.0 - minDiffuse) * dot_nl;
+  dot_nl = clamp(dot_nl, 0.0, 1.0);
+
   gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0), 1.0);
 }
