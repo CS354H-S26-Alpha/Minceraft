@@ -107,7 +107,7 @@ export class Chunk {
         const gz = topleftz + i;
         const surfaceY = this.heightMap[this.size * i + j] as number;
 
-        for (let y = 1; y <= surfaceY - 2; y++) {
+        for (let y = 1; y <= surfaceY - 8; y++) {
           if (this.getBlock(j, y, i) === CubeType.Air) continue;
 
           const threshold = 0.12;
