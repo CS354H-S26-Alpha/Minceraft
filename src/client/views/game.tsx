@@ -71,6 +71,8 @@ export default function GameView() {
             fps={game.diagnostics.client.fps}
             computeTimeMs={game.diagnostics.client.computeTimeMs}
             computeTimeHistory={game.diagnostics.client.computeTimeHistory}
+            gpuTimeMs={game.diagnostics.client.gpuTimeMs}
+            gpuTimeHistory={game.diagnostics.client.gpuTimeHistory}
             tps={game.diagnostics.server.tps}
             mspt={game.diagnostics.server.mspt}
             msptHistory={game.diagnostics.server.msptHistory}

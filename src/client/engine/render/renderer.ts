@@ -4,6 +4,7 @@ import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
 import { Cube } from "./cube";
 import { BLOCK_ATLAS_TEXTURE_URLS } from "./cube-types";
+import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
 
@@ -38,6 +39,7 @@ export class Renderer {
   private readonly blockAtlasTexture: WebGLTexture;
   private readonly blockAtlasTileCount: number;
   private readonly entityPasses: Map<string, EntityPass>;
+  readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
   private lastCubePositions: Float32Array | null = null;
@@ -48,6 +50,7 @@ export class Renderer {
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
     this.ctx = WebGLUtilities.requestWebGLContext(canvas);
+    this.gpuTimer = new GpuTimer(this.ctx);
     WebGLUtilities.requestIntIndicesExt(this.ctx);
     const extVAO = WebGLUtilities.requestVAOExt(this.ctx);
 
@@ -84,6 +87,9 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
+    this.gpuTimer.poll();
+    this.gpuTimer.begin();
+
     if (view.cubePositions !== this.lastCubePositions) {
       this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
       this.lastCubePositions = view.cubePositions;
@@ -115,6 +121,8 @@ export class Renderer {
       ep.pass.drawInstanced(entity.count);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
+
+    this.gpuTimer.end();
   }
 
   private initEntityPass(pass: RenderPass, def: EntityPassDef): void {

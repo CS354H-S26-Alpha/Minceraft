@@ -30,6 +30,10 @@ export interface ClientDiagnostics {
   computeTimeMs: number;
   /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
+  /** GPU-measured draw time via EXT_disjoint_timer_query (ms). 0 if unsupported. */
+  gpuTimeMs: number;
+  /** Rolling ring-buffer of recent GPU times for sparkline display. */
+  gpuTimeHistory: number[];
   pointerLocked: boolean;
 }
 
@@ -92,6 +96,8 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
+        gpuTimeMs: 0,
+        gpuTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         pointerLocked: false,
       },
       server: {
@@ -109,6 +115,7 @@ export function createGame(args: CreateGameArgs): GameState {
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   let frame = 0;
   let lastSnapCount = 0;
@@ -218,8 +225,10 @@ export function createGame(args: CreateGameArgs): GameState {
     // --- Diagnostics (producers → store) ---
     frame++;
     const computeTimeMs = performance.now() - tickStart;
+    const gpuTimeMs = renderer.gpuTimer.lastTimeMs;
     fpsMeter.sample(dt, 1);
     computeHistory.push(computeTimeMs);
+    gpuHistory.push(gpuTimeMs);
     tpsMeter.sample(dt, tickDelta);
     tickDelta = 0;
     const currentSnapCount = room().snapCount();
@@ -232,6 +241,8 @@ export function createGame(args: CreateGameArgs): GameState {
       frameCount: frame,
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
+      gpuTimeMs,
+      gpuTimeHistory: gpuHistory.ordered(),
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {

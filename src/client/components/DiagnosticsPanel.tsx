@@ -18,6 +18,8 @@ interface DiagnosticsPanelProps {
   fps: number;
   computeTimeMs: number;
   computeTimeHistory: readonly number[];
+  gpuTimeMs: number;
+  gpuTimeHistory: readonly number[];
   tps: number;
   mspt: number;
   msptHistory: readonly number[];
@@ -62,6 +64,8 @@ function Graph(props: {
   history: readonly number[];
   stroke: string;
   title: string;
+  overlayHistory?: readonly number[];
+  overlayStroke?: string;
 }) {
   return (
     <svg
@@ -104,6 +108,17 @@ function Graph(props: {
           </>
         );
       })}
+      {props.overlayHistory && (
+        <polyline
+          fill="none"
+          points={polyline(FRAME_GRAPH_WIDTH, props.height, props.maxMs, props.overlayHistory)}
+          stroke={props.overlayStroke}
+          stroke-width="1.5"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+          opacity="0.7"
+        />
+      )}
       <polyline
         fill="none"
         points={polyline(FRAME_GRAPH_WIDTH, props.height, props.maxMs, props.history)}
@@ -129,7 +144,13 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         XYZ: {player().x.toFixed(2)} / {player().y.toFixed(2)} / {player().z.toFixed(2)}
       </div>
       <div>
-        {props.fps} fps ({props.computeTimeMs.toFixed(2)}ms)
+        {props.fps} fps · <span class="text-blue-400">{props.computeTimeMs.toFixed(2)}ms</span>
+        {props.gpuTimeMs > 0 && (
+          <span>
+            {" "}
+            · <span class="text-orange-400">gpu {props.gpuTimeMs.toFixed(2)}ms</span>
+          </span>
+        )}
       </div>
       <div class="my-2">
         <Graph
@@ -138,6 +159,8 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           guides={frameGuides}
           history={props.computeTimeHistory}
           stroke="rgb(96 165 250)"
+          overlayHistory={props.gpuTimeMs > 0 ? props.gpuTimeHistory : undefined}
+          overlayStroke="rgb(251 146 60)"
           title="Per-frame compute time graph"
         />
       </div>
