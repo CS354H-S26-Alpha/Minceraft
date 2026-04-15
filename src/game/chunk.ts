@@ -105,6 +105,10 @@ export class Chunk {
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
   private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
+  // Pre-allocated scratch buffers for renderChunk (sized after generation)
+  private scratchPositions: Float32Array = new Float32Array(0);
+  private scratchColors: Float32Array = new Float32Array(0);
+  private scratchAmbientOcclusion: Uint8Array = new Uint8Array(0);
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -117,7 +121,19 @@ export class Chunk {
     this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
+    this.allocateScratchBuffers();
     this.renderChunk(); // render on creation, might not be necessary
+  }
+
+  private allocateScratchBuffers(): void {
+    let total = 0;
+    const S = this.size;
+    for (let i = 0; i < S * S; i++) {
+      total += this.heightMap[i]! + 1;
+    }
+    this.scratchPositions = new Float32Array(4 * total);
+    this.scratchColors = new Float32Array(3 * total);
+    this.scratchAmbientOcclusion = new Uint8Array(24 * total);
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -174,22 +190,38 @@ export class Chunk {
     }
 
     // --- Pass 2: Spaghetti cave carving (tunnel-like, follows noise zero-crossings) ---
+    // Coarse Y-span skipping: sample n1 at span midpoints to eliminate regions
+    // where no cave can exist. Uses Lipschitz bound (K=2.0) on perlin3D for
+    // correctness: over half a CAVE_STEP span at freq 1/64, noise changes by
+    // at most CAVE_SKIP_MARGIN, so if |n1_mid| >= threshold + margin, the
+    // entire span is cave-free.
+    const CAVE_STEP = 8;
+    const CAVE_FREQ = 1 / 64;
+    const CAVE_THRESHOLD = 0.12;
+    const CAVE_SKIP_THRESHOLD = CAVE_THRESHOLD + 2.0 * Math.ceil(CAVE_STEP / 2) * CAVE_FREQ;
+
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
-        const surfaceY = this.heightMap[this.size * i + j] as number;
+        const caveTop = (this.heightMap[this.size * i + j] as number) - 2;
 
-        for (let y = 1; y <= surfaceY - 2; y++) {
-          if (this.getBlock(j, y, i) === CubeType.Air) continue;
+        for (let yBase = 1; yBase <= caveTop; yBase += CAVE_STEP) {
+          const yEnd = Math.min(yBase + CAVE_STEP, caveTop + 1);
+          const yMid = (yBase + yEnd - 1) >> 1;
 
-          const threshold = 0.12;
+          const n1Coarse = perlin3D(this.seed + 100, gx, yMid, gz, CAVE_FREQ);
+          if (Math.abs(n1Coarse) >= CAVE_SKIP_THRESHOLD) continue;
 
-          const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 64);
-          if (Math.abs(n1) >= threshold) continue;
-          const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 64);
-          if (Math.abs(n2) < threshold) {
-            this.setBlock(j, y, i, CubeType.Air);
+          for (let y = yBase; y < yEnd; y++) {
+            if (this.getBlock(j, y, i) === CubeType.Air) continue;
+
+            const n1 = perlin3D(this.seed + 100, gx, y, gz, CAVE_FREQ);
+            if (Math.abs(n1) >= CAVE_THRESHOLD) continue;
+            const n2 = perlin3D(this.seed + 200, gx, y, gz, CAVE_FREQ);
+            if (Math.abs(n2) < CAVE_THRESHOLD) {
+              this.setBlock(j, y, i, CubeType.Air);
+            }
           }
         }
       }
@@ -200,8 +232,9 @@ export class Chunk {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
+        const stoneTop = Math.max(1, this.heightMap[this.size * i + j]! - 3);
 
-        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+        for (let y = 1; y < stoneTop; y++) {
           if (this.getBlock(j, y, i) !== CubeType.Stone) continue;
 
           for (const [oreType, seedOff, freq, threshold, minY, maxY] of Chunk.ORES) {
@@ -244,17 +277,9 @@ export class Chunk {
       isAir(lx, ly, lz + 1) ||
       isAir(lx, ly, lz - 1);
 
-    // Upper-bound count: surfaceY+1 blocks per column
-    let total = 0;
-    for (let i = 0; i < S; i++) {
-      for (let j = 0; j < S; j++) {
-        total += hm[i * S + j]! + 1;
-      }
-    }
-
-    const positions = new Float32Array(4 * total);
-    const colors = new Float32Array(3 * total);
-    const ambientOcclusion = new Uint8Array(24 * total);
+    const positions = this.scratchPositions;
+    const colors = this.scratchColors;
+    const ambientOcclusion = this.scratchAmbientOcclusion;
     let count = 0;
 
     const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
@@ -306,9 +331,8 @@ export class Chunk {
     }
 
     this.cubes = count;
-    // Edge culling may reduce count below total; subarray trims to exact size
-    this.cubePositionsF32 = positions.subarray(0, 4 * count);
-    this.cubeColorsF32 = colors.subarray(0, 3 * count);
+    this.cubePositionsF32 = positions.slice(0, 4 * count);
+    this.cubeColorsF32 = colors.slice(0, 3 * count);
     this.cubeAmbientOcclusionU8 = ambientOcclusion.subarray(0, 24 * count);
   }
 
