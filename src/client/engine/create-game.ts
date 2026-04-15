@@ -2,14 +2,12 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import { CHUNK_SIZE, Chunk, chunkOrigin } from "@/game/chunk";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
-import { ChunkGenerationQueue } from "./chunks/queue";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
@@ -140,9 +138,6 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 
-const SPAWN_X = 0.0;
-const SPAWN_Z = 0.0;
-
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
@@ -182,8 +177,7 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  const chunks = new ChunkManager(SPAWN_X, SPAWN_Z, TEMP_START_SEED, new ChunkWorkerClient());
-  const collisionQueue = new ChunkGenerationQueue();
+  const chunks = new ChunkManager(TEMP_START_SEED, new ChunkWorkerClient());
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -198,7 +192,7 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const handleReset = () => {
     ctx?.camera.reset();
-    chunks.reset(SPAWN_X, SPAWN_Z);
+    chunks.reset();
   };
 
   const input = createInput(args.glCanvas, {
@@ -278,25 +272,10 @@ export function createGame(args: CreateGameArgs): GameState {
     camera.setPosition(player.position);
 
     chunks.update(player.position.x, player.position.z);
-    const [colOx, colOz] = chunkOrigin(player.position.x, player.position.z);
-    const colArgs = {
-      generationId: 1,
-      originX: colOx,
-      originZ: colOz,
-      renderDistance: 1,
-      loadDistance: 1,
-      evictDistance: 4,
-      seed: TEMP_START_SEED,
-      chunkOrigins: buildNearbyOrigins(player.position.x, player.position.z),
-    };
-    collisionQueue.setVisibleChunks(colArgs);
-    while (collisionQueue.generateNext(colArgs) !== null) {}
 
-    // Collision detection
     const replicated = room().replicated();
     if (replicated) {
-      (replicated.entity as Player).collisionQuery = (cx, cz) =>
-        Chunk.minYForCylinderWorld(cx, cz, (bx, by, bz) => collisionQueue.getBlockWorld(bx, by, bz));
+      (replicated.entity as Player).collisionQuery = (cx, cz) => chunks.collisionQuery(cx, cz);
     }
 
     const viewMatrix = camera.viewMatrix();
@@ -363,12 +342,4 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   return state;
-}
-
-function buildNearbyOrigins(wx: number, wz: number) {
-  const [ox, oz] = chunkOrigin(wx, wz);
-  const origins: { originX: number; originZ: number }[] = [];
-  for (let dx = -1; dx <= 1; dx++)
-    for (let dz = -1; dz <= 1; dz++) origins.push({ originX: ox + dx * CHUNK_SIZE, originZ: oz + dz * CHUNK_SIZE });
-  return origins;
 }

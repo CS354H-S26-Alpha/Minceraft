@@ -1,5 +1,6 @@
 import { Mat4, type Mat4Like } from "gl-matrix";
-import { CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
+import { CubeType } from "@/client/engine/render/cube-types";
+import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "@/game/chunk";
 import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
@@ -10,15 +11,8 @@ const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 export interface ChunkClient {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
-  clearCache(): Promise<void>;
   dispose(): void;
 }
-
-// export interface ChunkClient {
-//   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
-//   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
-//   dispose(): void;
-// }
 
 /**
  * Main-thread coordinator that keeps the renderer fed with terrain data
@@ -39,10 +33,9 @@ export class ChunkManager {
   colors = new Float32Array(0);
   count = 0;
 
-  constructor(spawnX: number, spawnZ: number, seed: number, client: ChunkClient) {
+  constructor(seed: number, client: ChunkClient) {
     this.client = client;
     this.seed = seed;
-    this.update(spawnX, spawnZ);
   }
 
   private buildArgs(generationId: number, originX: number, originZ: number): ChunkQueueArgs {
@@ -71,11 +64,24 @@ export class ChunkManager {
     void this.load(args);
   }
 
-  reset(wx: number, wz: number): void {
+  reset(): void {
     this.lastOriginX = NaN;
     this.lastOriginZ = NaN;
-    void this.client.clearCache();
-    this.update(wx, wz);
+  }
+
+  /** Minimum camera Y where the player cylinder can stand at `(wx, wz)`. */
+  collisionQuery(wx: number, wz: number): number {
+    return Chunk.minYForCylinderWorld(wx, wz, (bx, by, bz) => this.getBlockWorld(bx, by, bz));
+  }
+
+  private getBlockWorld(wx: number, wy: number, wz: number): CubeType {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
+    const [ox, oz] = chunkOrigin(wx, wz);
+    const chunk = this.chunkDataMap.get(chunkKey(ox, oz));
+    if (!chunk) return CubeType.Air;
+    const lx = wx - (ox - CHUNK_SIZE / 2);
+    const lz = wz - (oz - CHUNK_SIZE / 2);
+    return chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] as CubeType;
   }
 
   /** Frustum-cull chunks and concatenate visible ones into flat arrays. */

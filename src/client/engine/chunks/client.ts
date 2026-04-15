@@ -7,6 +7,8 @@ export interface SingleChunkData {
   originZ: number;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  /** Packed block grid (CubeType per voxel), indexed `y*S*S + z*S + x`. */
+  blocks: Uint8Array;
   numCubes: number;
 }
 
@@ -46,23 +48,12 @@ export class ChunkWorkerClient {
   private readonly worker = new ChunkWorkerConstructor();
   private readonly remote = wrap<ChunkWorkerApi>(this.worker);
 
-  private nextId = 0;
-  private pending = new Map<number, (value: void | PromiseLike<void>) => void>();
-
   setVisibleChunks(args: ChunkQueueArgs) {
     return this.remote.setVisibleChunks(args);
   }
 
   generateNext(args: ChunkQueueArgs) {
     return this.remote.generateNext(args);
-  }
-
-  async clearCache(): Promise<void> {
-    return new Promise((resolve) => {
-      const id = this.nextId++;
-      this.pending.set(id, resolve);
-      this.worker.postMessage({ type: "clearCache", id });
-    });
   }
 
   dispose(): void {

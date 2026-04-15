@@ -7,6 +7,7 @@ interface ChunkLike {
   getBlockWorld(wx: number, wy: number, wz: number): CubeType;
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
+  blocks: Uint8Array;
   numCubes(): number;
 }
 
@@ -224,6 +225,7 @@ export class ChunkGenerationQueue {
         originZ: chunkZ,
         cubePositions: chunk.cubePositions(),
         cubeColors: chunk.cubeColors(),
+        blocks: chunk.blocks,
         numCubes,
       });
     }
