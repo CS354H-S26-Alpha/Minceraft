@@ -42,6 +42,7 @@ export class Chunk {
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
+    this.renderChunk(); // render on creation, might not be necessary
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {

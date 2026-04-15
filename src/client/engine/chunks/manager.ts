@@ -1,7 +1,9 @@
+import { Mat4, type Mat4Like } from "gl-matrix";
 import { CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
 import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
+import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
-const RENDER_DISTANCE = 1;
+const RENDER_DISTANCE = 4;
 
 export interface ChunkClient {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
@@ -9,6 +11,10 @@ export interface ChunkClient {
   dispose(): void;
 }
 
+/**
+ * Main-thread coordinator that keeps the renderer fed with terrain data
+ * from the chunk generation worker, with per-frame frustum culling.
+ */
 export class ChunkManager {
   private readonly client: ChunkClient;
   private readonly seed: number;
@@ -44,15 +50,26 @@ export class ChunkManager {
       originZ,
       renderDistance: RENDER_DISTANCE,
       seed: this.seed,
-      chunkOrigins: buildChunkOrigins(originX, originZ),
+      chunkOrigins: buildGenerationOrder(originX, originZ, RENDER_DISTANCE),
     };
     void this.load(args);
   }
 
-  /** Concatenate all loaded chunks into flat render arrays. */
-  buildRenderData(): void {
+  /** Frustum-cull chunks and concatenate visible ones into flat arrays. */
+  cull(viewMatrix: Readonly<Mat4Like>, projMatrix: Readonly<Mat4Like>): void {
+    const vp = Mat4.multiply(new Mat4(), projMatrix, viewMatrix) as Mat4;
+    const planes = extractFrustumPlanes(vp);
+
     let totalCubes = 0;
-    for (const chunk of this.chunkDataMap.values()) totalCubes += chunk.numCubes;
+    const visible: SingleChunkData[] = [];
+
+    for (const chunk of this.chunkDataMap.values()) {
+      const aabb = chunkAABB(chunk.originX, chunk.originZ);
+      if (aabbInFrustum(aabb, planes)) {
+        visible.push(chunk);
+        totalCubes += chunk.numCubes;
+      }
+    }
 
     if (this.positionBuffer.length < totalCubes * 4) {
       this.positionBuffer = new Float32Array(totalCubes * 4);
@@ -63,7 +80,7 @@ export class ChunkManager {
 
     let posOffset = 0;
     let colOffset = 0;
-    for (const chunk of this.chunkDataMap.values()) {
+    for (const chunk of visible) {
       this.positionBuffer.set(chunk.cubePositions, posOffset);
       posOffset += chunk.cubePositions.length;
       this.colorBuffer.set(chunk.cubeColors, colOffset);
@@ -97,16 +114,20 @@ export class ChunkManager {
   }
 }
 
-/** Returns all 9 chunk origins in a 3x3 grid centered on (originX, originZ). */
-function buildChunkOrigins(originX: number, originZ: number): ChunkOrigin[] {
-  const origins: ChunkOrigin[] = [];
-  for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
-    for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
-      origins.push({
-        originX: originX + dx * CHUNK_SIZE,
-        originZ: originZ + dz * CHUNK_SIZE,
-      });
+function buildGenerationOrder(originX: number, originZ: number, renderDistance: number) {
+  const origins: ChunkOrigin[] = [{ originX, originZ }];
+
+  for (let radius = 1; radius <= renderDistance; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+        origins.push({
+          originX: originX + dx * CHUNK_SIZE,
+          originZ: originZ + dz * CHUNK_SIZE,
+        });
+      }
     }
   }
+
   return origins;
 }

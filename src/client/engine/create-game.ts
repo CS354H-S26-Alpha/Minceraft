@@ -270,7 +270,7 @@ export function createGame(args: CreateGameArgs): GameState {
 
     const viewMatrix = camera.viewMatrix();
     const projMatrix = camera.projMatrix();
-    chunks.buildRenderData();
+    chunks.cull(viewMatrix, projMatrix);
 
     // --- Remote entities ---
     const snap = room().snapshot;
