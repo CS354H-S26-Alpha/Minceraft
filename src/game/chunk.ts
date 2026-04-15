@@ -145,6 +145,48 @@ export class Chunk {
       }
     }
 
+    // --- Pass 2.5: Collapse floating mountain peak caps ---
+    // Cave carving (caveCap=0) can sever a thin peak tip from the main mountain body.
+    // Per column: scan down from the actual top, find the first air gap, and remove the
+    // cap above it if it is ≤5 blocks tall (thin spires are always floating artefacts).
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        if ((biomeMap[this.size * i + j] as Biome) !== Biome.Mountain) continue;
+        const idx = this.size * i + j;
+
+        // Find actual topmost solid block (heightMap is stale after cave carving)
+        let topY = this.heightMap[idx] as number;
+        while (topY > 0 && this.getBlock(j, topY, i) === CubeType.Air) topY--;
+
+        // Scan down through the top solid section looking for the first air gap
+        let gapAt = -1;
+        for (let y = topY; y > 1; y--) {
+          if (this.getBlock(j, y - 1, i) === CubeType.Air) {
+            gapAt = y; // lowest block of the floating cap
+            break;
+          }
+        }
+        if (gapAt < 0) {
+          this.heightMap[idx] = topY;
+          continue; // solid all the way down — stable
+        }
+
+        const capHeight = topY - gapAt + 1;
+        if (capHeight <= 5) {
+          // Thin cap — almost certainly a floating artefact; remove it
+          for (let y = gapAt; y <= topY; y++) {
+            this.setBlock(j, y, i, CubeType.Air);
+          }
+          // Find new surface below the removed section and the air gap
+          let newTop = gapAt - 1;
+          while (newTop > 0 && this.getBlock(j, newTop, i) === CubeType.Air) newTop--;
+          this.heightMap[idx] = newTop;
+        } else {
+          this.heightMap[idx] = topY;
+        }
+      }
+    }
+
     // --- Pass 3: Ore placement (only in Stone blocks within depth ranges) ---
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
@@ -247,11 +289,14 @@ export class Chunk {
             }
           }
           if (onEdge) continue;
-          this.setBlock(j, terrainY, i, CubeType.Lava);
+          // Flood-fill lava up to DESERT_LAVA_LEVEL — flat lake surface, sand stays as floor
+          for (let y = terrainY + 1; y <= DESERT_LAVA_LEVEL; y++) {
+            this.setBlock(j, y, i, CubeType.Lava);
+          }
+          this.heightMap[idx] = DESERT_LAVA_LEVEL;
           this.surfaceTypesMap[idx] = CubeType.Lava;
-          // heightMap unchanged — lava sits at the existing terrain surface
-        } else if (biome === Biome.Tundra) {
-          // Tundra is dry/frozen — no water fill
+        } else if (biome === Biome.Tundra || biome === Biome.Mountain) {
+          // Tundra is dry/frozen; Mountain valleys are rocky, not flooded
         } else {
           if (terrainY >= SEA_LEVEL) continue;
           for (let y = terrainY + 1; y <= SEA_LEVEL; y++) {
