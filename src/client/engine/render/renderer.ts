@@ -12,6 +12,7 @@ export interface RenderView {
   projMatrix: Mat4;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  cubeAo: Float32Array;
   numCubes: number;
   lightPosition: Float32Array;
   backgroundColor: Float32Array;
@@ -38,6 +39,13 @@ export class Renderer {
   private currentView!: RenderView;
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
+  private lastCubeAo: Float32Array | null = null;
+  private aoTopBuffer = new Float32Array(0);
+  private aoLeftBuffer = new Float32Array(0);
+  private aoRightBuffer = new Float32Array(0);
+  private aoFrontBuffer = new Float32Array(0);
+  private aoBackBuffer = new Float32Array(0);
+  private aoBottomBuffer = new Float32Array(0);
 
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
@@ -84,6 +92,16 @@ export class Renderer {
     if (view.cubeColors !== this.lastCubeColors) {
       this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
       this.lastCubeColors = view.cubeColors;
+    }
+    if (view.cubeAo !== this.lastCubeAo) {
+      this.updateCubeAoBuffers(view.cubeAo, view.numCubes);
+      this.blankCubeRenderPass.updateAttributeBuffer("aAoTop", this.aoTopBuffer.subarray(0, view.numCubes * 4));
+      this.blankCubeRenderPass.updateAttributeBuffer("aAoLeft", this.aoLeftBuffer.subarray(0, view.numCubes * 4));
+      this.blankCubeRenderPass.updateAttributeBuffer("aAoRight", this.aoRightBuffer.subarray(0, view.numCubes * 4));
+      this.blankCubeRenderPass.updateAttributeBuffer("aAoFront", this.aoFrontBuffer.subarray(0, view.numCubes * 4));
+      this.blankCubeRenderPass.updateAttributeBuffer("aAoBack", this.aoBackBuffer.subarray(0, view.numCubes * 4));
+      this.blankCubeRenderPass.updateAttributeBuffer("aAoBottom", this.aoBottomBuffer.subarray(0, view.numCubes * 4));
+      this.lastCubeAo = view.cubeAo;
     }
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
 
@@ -156,6 +174,16 @@ export class Renderer {
       undefined,
       cube.normalsFlat(),
     );
+    pass.addAttribute(
+      "aUV",
+      2,
+      gl.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      cube.uvFlat(),
+    );
     pass.addInstancedAttribute(
       "aOffset",
       4,
@@ -172,6 +200,66 @@ export class Renderer {
       this.ctx.FLOAT,
       false,
       3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aAoTop",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aAoLeft",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aAoRight",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aAoFront",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aAoBack",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addInstancedAttribute(
+      "aAoBottom",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
       0,
       undefined,
       new Float32Array(0),
@@ -198,5 +286,50 @@ export class Renderer {
     pass.addUniform("uSunColor", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform3fv(loc, this.currentView.sunColor);
     });
+  }
+
+  private updateCubeAoBuffers(packedAo: Float32Array, cubeCount: number): void {
+    const needed = cubeCount * 4;
+    if (this.aoTopBuffer.length < needed) this.aoTopBuffer = new Float32Array(needed);
+    if (this.aoLeftBuffer.length < needed) this.aoLeftBuffer = new Float32Array(needed);
+    if (this.aoRightBuffer.length < needed) this.aoRightBuffer = new Float32Array(needed);
+    if (this.aoFrontBuffer.length < needed) this.aoFrontBuffer = new Float32Array(needed);
+    if (this.aoBackBuffer.length < needed) this.aoBackBuffer = new Float32Array(needed);
+    if (this.aoBottomBuffer.length < needed) this.aoBottomBuffer = new Float32Array(needed);
+
+    for (let i = 0; i < cubeCount; i++) {
+      const src = i * 24;
+      const dst = i * 4;
+
+      this.aoTopBuffer[dst] = packedAo[src] ?? 1;
+      this.aoTopBuffer[dst + 1] = packedAo[src + 1] ?? 1;
+      this.aoTopBuffer[dst + 2] = packedAo[src + 2] ?? 1;
+      this.aoTopBuffer[dst + 3] = packedAo[src + 3] ?? 1;
+
+      this.aoLeftBuffer[dst] = packedAo[src + 4] ?? 1;
+      this.aoLeftBuffer[dst + 1] = packedAo[src + 5] ?? 1;
+      this.aoLeftBuffer[dst + 2] = packedAo[src + 6] ?? 1;
+      this.aoLeftBuffer[dst + 3] = packedAo[src + 7] ?? 1;
+
+      this.aoRightBuffer[dst] = packedAo[src + 8] ?? 1;
+      this.aoRightBuffer[dst + 1] = packedAo[src + 9] ?? 1;
+      this.aoRightBuffer[dst + 2] = packedAo[src + 10] ?? 1;
+      this.aoRightBuffer[dst + 3] = packedAo[src + 11] ?? 1;
+
+      this.aoFrontBuffer[dst] = packedAo[src + 12] ?? 1;
+      this.aoFrontBuffer[dst + 1] = packedAo[src + 13] ?? 1;
+      this.aoFrontBuffer[dst + 2] = packedAo[src + 14] ?? 1;
+      this.aoFrontBuffer[dst + 3] = packedAo[src + 15] ?? 1;
+
+      this.aoBackBuffer[dst] = packedAo[src + 16] ?? 1;
+      this.aoBackBuffer[dst + 1] = packedAo[src + 17] ?? 1;
+      this.aoBackBuffer[dst + 2] = packedAo[src + 18] ?? 1;
+      this.aoBackBuffer[dst + 3] = packedAo[src + 19] ?? 1;
+
+      this.aoBottomBuffer[dst] = packedAo[src + 20] ?? 1;
+      this.aoBottomBuffer[dst + 1] = packedAo[src + 21] ?? 1;
+      this.aoBottomBuffer[dst + 2] = packedAo[src + 22] ?? 1;
+      this.aoBottomBuffer[dst + 3] = packedAo[src + 23] ?? 1;
+    }
   }
 }

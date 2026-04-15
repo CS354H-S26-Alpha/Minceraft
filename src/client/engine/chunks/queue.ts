@@ -8,6 +8,7 @@ interface ChunkLike {
   getBlockWorld(wx: number, wy: number, wz: number): CubeType;
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
+  cubeAmbientOcclusion(): Float32Array;
   numCubes(): number;
   placedObjects(): readonly PlacedObject[];
   placedObjectCounts(): Readonly<Record<PlacedObjectType, number>>;
@@ -108,6 +109,7 @@ export class ChunkGenerationQueue {
         originZ: chunkZ,
         cubePositions: chunk.cubePositions(),
         cubeColors: chunk.cubeColors(),
+        cubeAo: chunk.cubeAmbientOcclusion(),
         numCubes,
         placedObjects: chunk.placedObjects(),
         placedObjectCounts: chunk.placedObjectCounts(),

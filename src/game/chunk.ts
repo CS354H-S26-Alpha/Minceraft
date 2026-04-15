@@ -45,6 +45,7 @@ export class Chunk {
   private cubes: number = 0;
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
+  private cubeAoF32: Float32Array = new Float32Array(0);
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -280,6 +281,124 @@ export class Chunk {
       return true; // no neighbor data — treat edge as exposed
     };
 
+    const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
+
+    const vertexAO = (side1: boolean, side2: boolean, corner: boolean): number => {
+      if (side1 && side2) return 0;
+      return 3 - Number(side1) - Number(side2) - Number(corner);
+    };
+
+    const aoToFactor = (ao: number): number => {
+      switch (ao) {
+        case 0:
+          return 0.5;
+        case 1:
+          return 0.68;
+        case 2:
+          return 0.84;
+        default:
+          return 1;
+      }
+    };
+
+    const sampleVertexAo = (
+      lx: number,
+      ly: number,
+      lz: number,
+      side1Offset: [number, number, number],
+      side2Offset: [number, number, number],
+      cornerOffset: [number, number, number],
+    ): number => {
+      const side1 = isSolid(lx + side1Offset[0], ly + side1Offset[1], lz + side1Offset[2]);
+      const side2 = isSolid(lx + side2Offset[0], ly + side2Offset[1], lz + side2Offset[2]);
+      const corner = isSolid(lx + cornerOffset[0], ly + cornerOffset[1], lz + cornerOffset[2]);
+      return aoToFactor(vertexAO(side1, side2, corner));
+    };
+
+    const writeFaceAo = (faceAo: Float32Array, cubeOffset: number, faceIndex: number, values: readonly number[]) => {
+      const base = cubeOffset + faceIndex * 4;
+      faceAo[base] = values[0] ?? 1;
+      faceAo[base + 1] = values[1] ?? 1;
+      faceAo[base + 2] = values[2] ?? 1;
+      faceAo[base + 3] = values[3] ?? 1;
+    };
+
+    const writeCubeFaceAo = (faceAo: Float32Array, cubeIndex: number, lx: number, ly: number, lz: number): void => {
+      const cubeOffset = cubeIndex * 24;
+
+      // Top (+Y), vertex order: (-x,-z), (-x,+z), (+x,+z), (+x,-z)
+      if (isAir(lx, ly + 1, lz)) {
+        writeFaceAo(faceAo, cubeOffset, 0, [
+          sampleVertexAo(lx, ly, lz, [-1, 1, 0], [0, 1, -1], [-1, 1, -1]),
+          sampleVertexAo(lx, ly, lz, [-1, 1, 0], [0, 1, 1], [-1, 1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, 1, 0], [0, 1, 1], [1, 1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, 1, 0], [0, 1, -1], [1, 1, -1]),
+        ]);
+      } else {
+        writeFaceAo(faceAo, cubeOffset, 0, [1, 1, 1, 1]);
+      }
+
+      // Left (-X), vertex order: (+y,+z), (-y,+z), (-y,-z), (+y,-z)
+      if (isAir(lx - 1, ly, lz)) {
+        writeFaceAo(faceAo, cubeOffset, 1, [
+          sampleVertexAo(lx, ly, lz, [-1, 1, 0], [-1, 0, 1], [-1, 1, 1]),
+          sampleVertexAo(lx, ly, lz, [-1, -1, 0], [-1, 0, 1], [-1, -1, 1]),
+          sampleVertexAo(lx, ly, lz, [-1, -1, 0], [-1, 0, -1], [-1, -1, -1]),
+          sampleVertexAo(lx, ly, lz, [-1, 1, 0], [-1, 0, -1], [-1, 1, -1]),
+        ]);
+      } else {
+        writeFaceAo(faceAo, cubeOffset, 1, [1, 1, 1, 1]);
+      }
+
+      // Right (+X), vertex order: (+y,+z), (-y,+z), (-y,-z), (+y,-z)
+      if (isAir(lx + 1, ly, lz)) {
+        writeFaceAo(faceAo, cubeOffset, 2, [
+          sampleVertexAo(lx, ly, lz, [1, 1, 0], [1, 0, 1], [1, 1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, -1, 0], [1, 0, 1], [1, -1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, -1, 0], [1, 0, -1], [1, -1, -1]),
+          sampleVertexAo(lx, ly, lz, [1, 1, 0], [1, 0, -1], [1, 1, -1]),
+        ]);
+      } else {
+        writeFaceAo(faceAo, cubeOffset, 2, [1, 1, 1, 1]);
+      }
+
+      // Front (+Z), vertex order: (+x,+y), (+x,-y), (-x,-y), (-x,+y)
+      if (isAir(lx, ly, lz + 1)) {
+        writeFaceAo(faceAo, cubeOffset, 3, [
+          sampleVertexAo(lx, ly, lz, [1, 0, 1], [0, 1, 1], [1, 1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, 0, 1], [0, -1, 1], [1, -1, 1]),
+          sampleVertexAo(lx, ly, lz, [-1, 0, 1], [0, -1, 1], [-1, -1, 1]),
+          sampleVertexAo(lx, ly, lz, [-1, 0, 1], [0, 1, 1], [-1, 1, 1]),
+        ]);
+      } else {
+        writeFaceAo(faceAo, cubeOffset, 3, [1, 1, 1, 1]);
+      }
+
+      // Back (-Z), vertex order: (+x,+y), (+x,-y), (-x,-y), (-x,+y)
+      if (isAir(lx, ly, lz - 1)) {
+        writeFaceAo(faceAo, cubeOffset, 4, [
+          sampleVertexAo(lx, ly, lz, [1, 0, -1], [0, 1, -1], [1, 1, -1]),
+          sampleVertexAo(lx, ly, lz, [1, 0, -1], [0, -1, -1], [1, -1, -1]),
+          sampleVertexAo(lx, ly, lz, [-1, 0, -1], [0, -1, -1], [-1, -1, -1]),
+          sampleVertexAo(lx, ly, lz, [-1, 0, -1], [0, 1, -1], [-1, 1, -1]),
+        ]);
+      } else {
+        writeFaceAo(faceAo, cubeOffset, 4, [1, 1, 1, 1]);
+      }
+
+      // Bottom (-Y), vertex order: (-x,-z), (-x,+z), (+x,+z), (+x,-z)
+      if (isAir(lx, ly - 1, lz)) {
+        writeFaceAo(faceAo, cubeOffset, 5, [
+          sampleVertexAo(lx, ly, lz, [-1, -1, 0], [0, -1, -1], [-1, -1, -1]),
+          sampleVertexAo(lx, ly, lz, [-1, -1, 0], [0, -1, 1], [-1, -1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, -1, 0], [0, -1, 1], [1, -1, 1]),
+          sampleVertexAo(lx, ly, lz, [1, -1, 0], [0, -1, -1], [1, -1, -1]),
+        ]);
+      } else {
+        writeFaceAo(faceAo, cubeOffset, 5, [1, 1, 1, 1]);
+      }
+    };
+
     const touchesAir = (lx: number, ly: number, lz: number): boolean =>
       isAir(lx + 1, ly, lz) ||
       isAir(lx - 1, ly, lz) ||
@@ -331,9 +450,10 @@ export class Chunk {
 
     const positions = new Float32Array(4 * total);
     const colors = new Float32Array(3 * total);
+    const ao = new Float32Array(total * 24);
     let count = 0;
 
-    const writeCube = (blockType: CubeType, wx: number, y: number, wz: number): void => {
+    const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
       const info = CUBE_TYPE_INFO[blockType];
       const c = info.baseColor;
 
@@ -345,6 +465,8 @@ export class Chunk {
       colors[3 * count] = c[0];
       colors[3 * count + 1] = c[1];
       colors[3 * count + 2] = c[2];
+
+      writeCubeFaceAo(ao, count, lx, y, lz);
 
       count++;
     };
@@ -362,19 +484,19 @@ export class Chunk {
           for (let y = 0; y <= topY; y++) {
             const blockType = this.getBlock(j, y, i);
             if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-            writeCube(blockType, wx, y, wz);
+            writeCube(blockType, j, y, i, wx, wz);
           }
         } else {
           // Interior column: heightMap-based culling
           const bt0 = blocks[idx]! as CubeType;
-          writeCube(bt0, wx, 0, wz);
+          writeCube(bt0, j, 0, i, wx, wz);
 
           const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
           for (let y = start; y <= topY; y++) {
             const bt = blocks[y * STRIDE_Y + idx]! as CubeType;
             if (bt === CubeType.Air) continue;
             if (y > surfY && !touchesAir(j, y, i)) continue;
-            writeCube(bt, wx, y, wz);
+            writeCube(bt, j, y, i, wx, wz);
           }
         }
       }
@@ -384,6 +506,7 @@ export class Chunk {
     // Edge culling may reduce count below total; subarray trims to exact size
     this.cubePositionsF32 = positions.subarray(0, 4 * count);
     this.cubeColorsF32 = colors.subarray(0, 3 * count);
+    this.cubeAoF32 = ao.subarray(0, count * 24);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
@@ -393,6 +516,10 @@ export class Chunk {
 
   public cubeColors(): Float32Array {
     return this.cubeColorsF32;
+  }
+
+  public cubeAmbientOcclusion(): Float32Array {
+    return this.cubeAoF32;
   }
 
   public placedObjects(): readonly PlacedObject[] {

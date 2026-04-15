@@ -28,6 +28,10 @@ class FakeChunk {
     return new Float32Array([1, 1, 1]);
   }
 
+  public cubeAmbientOcclusion(): Float32Array {
+    return new Float32Array(24).fill(1);
+  }
+
   public numCubes(): number {
     return 1;
   }

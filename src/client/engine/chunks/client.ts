@@ -8,6 +8,7 @@ export interface SingleChunkData {
   originZ: number;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  cubeAo: Float32Array;
   numCubes: number;
   placedObjects: readonly PlacedObject[];
   placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
