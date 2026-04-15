@@ -1,6 +1,7 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
+import { createEffect } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
@@ -12,6 +13,7 @@ import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelin
 import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
+import { SceneLighting } from "./scene-lighting";
 
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
@@ -60,75 +62,6 @@ interface MutableGameState {
 
 export type GameState = Readonly<MutableGameState>;
 
-/**
- * Full day-night cycle duration in seconds.
- * 4 phases (dawn / day / dusk / night) × 15 s each = 60 s total.
- */
-const DAY_LENGTH_S = 60;
-/** Duration of each phase (dawn, noon, dusk, night) in milliseconds. */
-const PHASE_MS = (DAY_LENGTH_S / 4) * 1000;
-
-// Pre-allocated buffers updated in-place each frame — no GC pressure.
-const _lightPos = new Float32Array(4);
-const _bgColor = new Float32Array(4);
-const _ambient = new Float32Array(3);
-const _sunColor = new Float32Array(3);
-
-/** Accumulated time offset (ms) added by pressing P to skip phases. */
-let _timeOffset = 0;
-
-/**
- * Computes all day/night rendering state from wall-clock time.
- * Called once per frame; result is written into the shared Float32Arrays above.
- *
- * Cycle phases (angle = 0..2π over DAY_LENGTH_S seconds):
- *   angle=0      → sunrise (east horizon)
- *   angle=π/2    → noon
- *   angle=π      → sunset (west horizon)
- *   angle=3π/2   → midnight
- */
-function computeDayNight(nowMs: number): void {
-  const t = ((nowMs + _timeOffset) / 1000) % DAY_LENGTH_S;
-  const angle = (t / DAY_LENGTH_S) * Math.PI * 2;
-  const sinA = Math.sin(angle); // +1 = noon, -1 = midnight
-  const cosA = Math.cos(angle); // +1 = sunrise, -1 = sunset
-
-  // Sun/moon position — orbits in the XY plane, offset in Z for angled light
-  _lightPos[0] = cosA * 2000;
-  _lightPos[1] = sinA * 2000;
-  _lightPos[2] = 600;
-  _lightPos[3] = 1;
-
-  // Smooth phase weights (all ≥ 0, don't need to sum to 1)
-  const day = Math.max(0, sinA); // 0..1, peaks at noon
-  const night = Math.max(0, -sinA); // 0..1, peaks at midnight
-  const horizon = Math.max(0, 1 - Math.abs(sinA) / 0.35) * 0.35; // spike near sunrise/sunset
-
-  // -- Sky / background color --
-  // Day:     cornflower blue  (0.40, 0.62, 0.96)
-  // Horizon: warm orange-red  (0.92, 0.42, 0.12)
-  // Night:   deep space blue  (0.02, 0.02, 0.10)
-  _bgColor[0] = Math.min(1, day * 0.4 + horizon * 0.92 + night * 0.02);
-  _bgColor[1] = Math.min(1, day * 0.62 + horizon * 0.42 + night * 0.02);
-  _bgColor[2] = Math.min(1, day * 0.96 + horizon * 0.12 + night * 0.1);
-  _bgColor[3] = 1;
-
-  // -- Ambient light (sky light bouncing onto all surfaces) --
-  // Day:     cool light grey  (0.28, 0.28, 0.32)
-  // Horizon: warm glow        (0.35, 0.18, 0.06)
-  // Night:   moonlit blue     (0.04, 0.04, 0.10)
-  _ambient[0] = day * 0.28 + horizon * 0.35 + night * 0.04;
-  _ambient[1] = day * 0.28 + horizon * 0.18 + night * 0.04;
-  _ambient[2] = day * 0.32 + horizon * 0.06 + night * 0.1;
-
-  // -- Directional sun/moon color --
-  // Day:     bright warm white (1.00, 0.96, 0.82)
-  // Horizon: deep orange-gold  (1.00, 0.52, 0.10)
-  // Night:   cool moonlight    (0.30, 0.32, 0.50)
-  _sunColor[0] = day * 1.0 + horizon * 1.0 + night * 0.3;
-  _sunColor[1] = day * 0.96 + horizon * 0.52 + night * 0.32;
-  _sunColor[2] = day * 0.82 + horizon * 0.1 + night * 0.5;
-}
 /** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
 /** Number of samples kept in the compute-time and mspt ring buffers. */
@@ -178,6 +111,7 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   const chunks = new ChunkManager(TEMP_START_SEED, new ChunkWorkerClient());
+  const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -197,20 +131,32 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const input = createInput(args.glCanvas, {
     onReset: handleReset,
-    onCycleDayPhase: () => {
-      _timeOffset += PHASE_MS;
-    },
+    onCycleDayPhase: () => lighting.skipPhase(),
     ...args.shortcuts,
   });
 
   // TODO: refactor to be general packet handling rather than only inputs
   let nextPacketSequence = 1;
-  let pendingPacket: PlayerPositionPacket | undefined;
+  let pendingPacket: Omit<PlayerPositionPacket, "sequence"> | undefined;
+
+  // track player position changes to send to server
+  createEffect(() => {
+    const player = room().player();
+    if (!player) return;
+    pendingPacket = {
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw: player.state.yaw,
+      pitch: player.state.pitch,
+    };
+  });
+
   makeTimer(
     () => {
       const s = room().session();
       if (!pendingPacket || !s) return;
-      s.sendPosition(pendingPacket);
+      s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
       pendingPacket = undefined;
     },
     INPUT_SEND_INTERVAL_MS,
@@ -260,14 +206,6 @@ export function createGame(args: CreateGameArgs): GameState {
     if (inputEnabled()) {
       const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
       room().replicated()?.predict(next);
-      pendingPacket = {
-        sequence: nextPacketSequence++,
-        x: player.state.x,
-        y: player.state.y,
-        z: player.state.z,
-        yaw: player.state.yaw,
-        pitch: player.state.pitch,
-      };
     }
     camera.setPosition(player.position);
 
@@ -291,8 +229,7 @@ export function createGame(args: CreateGameArgs): GameState {
       msptHistory.push(snap.tickTimeMs);
     }
 
-    // --- Day/night state (pure math, no allocations) ---
-    computeDayNight(now);
+    lighting.update(now);
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
@@ -303,10 +240,10 @@ export function createGame(args: CreateGameArgs): GameState {
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
       numCubes: chunks.count,
-      lightPosition: _lightPos,
-      backgroundColor: _bgColor,
-      ambientColor: _ambient,
-      sunColor: _sunColor,
+      lightPosition: lighting.lightPosition,
+      backgroundColor: lighting.backgroundColor,
+      ambientColor: lighting.ambientColor,
+      sunColor: lighting.sunColor,
       entities,
     });
 

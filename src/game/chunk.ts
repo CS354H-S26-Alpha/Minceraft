@@ -147,11 +147,10 @@ export class Chunk {
     const topleftz = this.y - this.size / 2;
     const S = this.size;
     const hm = this.heightMap;
-    const blocks = this.blocks;
-    const STRIDE_Y = S * S;
 
     // Cross-chunk aware air check for edge culling
     const isAir = (nlx: number, nly: number, nlz: number): boolean => {
+      if (nly < 0) return false;
       if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
         return this.getBlock(nlx, nly, nlz) === CubeType.Air;
       }
@@ -169,28 +168,11 @@ export class Chunk {
       isAir(lx, ly, lz + 1) ||
       isAir(lx, ly, lz - 1);
 
-    // Pre-compute min neighbor surface height for interior columns.
-    // Blocks at y in (0, surfaceY) with y <= minNeighborHeight are fully buried.
-    const minNH = new Uint8Array(STRIDE_Y);
-    for (let i = 1; i < S - 1; i++) {
-      for (let j = 1; j < S - 1; j++) {
-        const idx = i * S + j;
-        minNH[idx] = Math.min(hm[idx - 1]!, hm[idx + 1]!, hm[idx - S]!, hm[idx + S]!);
-      }
-    }
-
-    // Upper-bound count: exact for interior columns, conservative for edges
+    // Upper-bound count: surfaceY+1 blocks per column
     let total = 0;
     for (let i = 0; i < S; i++) {
       for (let j = 0; j < S; j++) {
-        const idx = i * S + j;
-        const surfY = hm[idx]!;
-        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
-          total += surfY + 1;
-        } else {
-          const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
-          total += 1 + (surfY - start + 1);
-        }
+        total += hm[i * S + j]! + 1;
       }
     }
 
@@ -221,23 +203,10 @@ export class Chunk {
         const wx = topleftx + j;
         const wz = topleftz + i;
 
-        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
-          // Edge column: use touchesAir with cross-chunk awareness
-          for (let y = 0; y <= surfY; y++) {
-            const blockType = this.getBlock(j, y, i);
-            if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-            writeCube(blockType, wx, y, wz);
-          }
-        } else {
-          // Interior column: heightMap-based culling
-          const bt0 = blocks[idx]! as CubeType;
-          writeCube(bt0, wx, 0, wz);
-
-          const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
-          for (let y = start; y <= surfY; y++) {
-            const bt = blocks[y * STRIDE_Y + idx]! as CubeType;
-            writeCube(bt, wx, y, wz);
-          }
+        for (let y = 0; y <= surfY; y++) {
+          const blockType = this.getBlock(j, y, i);
+          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
+          writeCube(blockType, wx, y, wz);
         }
       }
     }

@@ -65,15 +65,19 @@ export class CameraController {
     }
   }
 
-  /** Convert movement flags into a world-space walk vector using camera basis. */
+  /** Convert movement flags into a world-space walk vector */
   walkDir(keys: Readonly<WalkKeys>): Vec3 {
+    const forward = new Vec3([this.camera.forward().x, 0, this.camera.forward().z]).normalize();
+    const right = this.camera.right();
     const out = new Vec3();
-    if (keys.w) out.add(this.camera.forward().negate());
-    if (keys.a) out.add(this.camera.right().negate());
-    if (keys.s) out.add(this.camera.forward());
-    if (keys.d) out.add(this.camera.right());
-    if (keys.space) out.add(new Vec3([0, 1, 0]));
-    if (keys.shift) out.add(new Vec3([0, -1, 0]));
+
+    if (keys.w) out.subtract(forward);
+    if (keys.s) out.add(forward);
+    if (keys.a) out.subtract(right);
+    if (keys.d) out.add(right);
+    if (keys.space) out.y += 1;
+    if (keys.shift) out.y -= 1;
+
     return out;
   }
 
