@@ -53,38 +53,6 @@ float cubeSeed(vec3 c) {
   return fract((p.x + p.y) * p.z);
 }
 
-// ============================================================
-// Reference perlin (commented out)
-// ============================================================
-// vec2 unit_vec(vec2 p, float seed) {
-//   p = mod(p + seed * 23.7, 289.0);
-//   p = fract(p * vec2(0.1031, 0.1030));
-//   p += dot(p, p.yx + 33.33);
-//   return fract(vec2((p.x + p.y) * p.x, (p.x + p.y) * p.y)) * 2.0 - 1.0;
-// }
-//
-// float smoothmix(float a, float b, float t) {
-//   t = t * t * (3.0 - 2.0 * t);
-//   return mix(a, b, t);
-// }
-//
-// float perlin(vec2 xy, float seed, float dim) {
-//   float cellx = floor(xy.x / dim);
-//   float celly = floor(xy.y / dim);
-//   float posx = fract(xy.x / dim);
-//   float posy = fract(xy.y / dim);
-//   vec2 a = vec2(cellx * dim, celly * dim);
-//   vec2 b = vec2((cellx + 1.0) * dim, celly * dim);
-//   vec2 c = vec2(cellx * dim, (celly + 1.0) * dim);
-//   vec2 d = vec2((cellx + 1.0) * dim, (celly + 1.0) * dim);
-//   vec2 atilde = unit_vec(a, seed);
-//   vec2 btilde = unit_vec(b, seed);
-//   vec2 ctilde = unit_vec(c, seed);
-//   vec2 dtilde = unit_vec(d, seed);
-//   float x1 = smoothmix(dot(xy - a, atilde), dot(xy - b, btilde), posx) / dim;
-//   float x2 = smoothmix(dot(xy - c, ctilde), dot(xy - d, dtilde), posx) / dim;
-//   return smoothmix(x1, x2, posy);
-// }
 
 void main() {
   int   type = int(cubeType + 0.5);
