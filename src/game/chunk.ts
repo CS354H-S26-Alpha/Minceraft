@@ -151,6 +151,7 @@ export class Chunk {
 
     // Cross-chunk aware air check for edge culling
     const isAir = (nlx: number, nly: number, nlz: number): boolean => {
+      if (nly < 0) return false;
       if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
         return this.getBlock(nlx, nly, nlz) === CubeType.Air;
       }
@@ -230,7 +231,7 @@ export class Chunk {
         } else {
           // Interior column: heightMap-based culling
           const bt0 = blocks[idx]! as CubeType;
-          writeCube(bt0, wx, 0, wz);
+          if (touchesAir(j, 0, i)) writeCube(bt0, wx, 0, wz);
 
           const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
           for (let y = start; y <= surfY; y++) {
