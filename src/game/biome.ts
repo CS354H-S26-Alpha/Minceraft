@@ -134,11 +134,6 @@ export function sampleColumn(
   // Different frequencies break the quadrant-corner alignment between axes.
   const temp = valueNoiseFbm(seed + 7, gx, gz, 1 / 250);
   const moist = valueNoiseFbm(seed + 13, gx, gz, 1 / 110);
-
-  // // fBm jitter for the structural biome boundary shape — multi-scale variation gives
-  // // organic curves at both large and medium scales instead of a smooth wavy line.
-  // const jTemp  = temp  + (valueNoiseFbm(seed + 41, gx, gz, 1 / 1000) - 0.5) * 0.45;
-  // const jMoist = moist + (valueNoiseFbm(seed + 43, gx, gz, 1 / 1000) - 0.5) * 0.45;
   const biome = computeBiome(temp, moist);
 
   // // Surface spillover: sample the biome function at a nearby world-space position.
@@ -152,6 +147,7 @@ export function sampleColumn(
   const njTemp = nTemp + (valueNoiseFbm(seed + 41, nx, nz, 1 / 50) - 0.5) * 0.11;
   const njMoist = nMoist + (valueNoiseFbm(seed + 43, nx, nz, 1 / 40) - 0.5) * 0.11;
   const neighborBiome = computeBiome(njTemp, njMoist);
+
   // Higher-priority neighbor wins only when a per-column noise gate passes —
   // so only a scattered subset of boundary blocks actually get spilled.
   const spillGate = valueNoise(seed + 71, gx, gz, 1 / 12) > 0.52;
