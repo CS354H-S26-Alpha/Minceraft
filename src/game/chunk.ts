@@ -42,7 +42,6 @@ export class Chunk {
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
-    this.renderChunk(); // render on creation, might not be necessary
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -202,20 +201,10 @@ export class Chunk {
         const wx = topleftx + j;
         const wz = topleftz + i;
 
-        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
-          // Edge column: use touchesAir with cross-chunk awareness
-          for (let y = 0; y <= surfY; y++) {
-            const blockType = this.getBlock(j, y, i);
-            if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-            writeCube(blockType, wx, y, wz);
-          }
-        } else {
-          // Interior column: full touchesAir check (same as edge columns)
-          for (let y = 0; y <= surfY; y++) {
-            const blockType = this.getBlock(j, y, i);
-            if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-            writeCube(blockType, wx, y, wz);
-          }
+        for (let y = 0; y <= surfY; y++) {
+          const blockType = this.getBlock(j, y, i);
+          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
+          writeCube(blockType, wx, y, wz);
         }
       }
     }
