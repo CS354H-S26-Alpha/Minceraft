@@ -11,6 +11,7 @@ import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
+import { EnemyManager } from "./entities/enemy";
 import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
@@ -187,6 +188,9 @@ export function createGame(args: CreateGameArgs): GameState {
   // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
+  const enemies = new EnemyManager();
+  enemies.load().catch((err) => console.error("Failed to load enemy robot", err));
+
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
     const player = room().player();
@@ -246,7 +250,11 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
-    const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    const entityData: EntityDrawData[] = [{ key: "players", buffers, count }];
+
+    const pendingMesh = enemies.takePendingMesh();
+    if (pendingMesh) renderer.loadEnemyMesh(pendingMesh);
+
     renderer.render({
       viewMatrix,
       projMatrix,
@@ -257,7 +265,18 @@ export function createGame(args: CreateGameArgs): GameState {
       backgroundColor: lighting.backgroundColor,
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
-      entities,
+      entities: entityData,
+      enemies: enemies.frame({
+        viewMatrix,
+        projMatrix,
+        lightPosition: lighting.lightPosition,
+        ambientColor: lighting.ambientColor,
+        sunColor: lighting.sunColor,
+        dtSeconds: inputDt,
+        playerX: player.state.x,
+        playerZ: player.state.z,
+        sampleSurface: (x, z) => chunks.sampleSurface(x, z),
+      }),
     });
 
     // --- Diagnostics (producers → store) ---
