@@ -116,7 +116,7 @@ function quatAroundZ(angle: number): Quat {
 
 /**
  * Base rest rotations that bring each arm from the authored T-pose (along
- * ±X) down to hang along -Y. 
+ * ±X) down to hang along -Y.
  */
 const REST_ARM_L = quatAroundZ(+Math.PI / 2); // -X → -Y
 const REST_ARM_R = quatAroundZ(-Math.PI / 2); // +X → -Y
@@ -216,7 +216,6 @@ export class EnemyManager {
       // In wander mode, enemy.yaw was set when wandering started and is
       // preserved across frames (neither branch here touches it).
 
-
       // Sample terrain at both current and proposed-next position. If the
       // next ground is more than one block taller than the current ground,
       // the enemy can't climb the wall: reject the move. Otherwise advance
@@ -288,8 +287,9 @@ function poseSkeletonForPhase(mesh: Mesh, phase: number): void {
   const next = (idx + 1) % WALK_KEYFRAMES.length;
   const t = scaled - Math.floor(scaled);
 
-  const a = WALK_KEYFRAMES[idx]!;
-  const b = WALK_KEYFRAMES[next]!;
+  const a = WALK_KEYFRAMES[idx];
+  const b = WALK_KEYFRAMES[next];
+  if (!a || !b) return;
   const legL = a.legL + (b.legL - a.legL) * t;
   const legR = a.legR + (b.legR - a.legR) * t;
   const armL = a.armL + (b.armL - a.armL) * t;

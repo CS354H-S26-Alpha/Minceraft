@@ -21,7 +21,7 @@ export interface EnemyDrawState {
 }
 
 /**
- * One draw call per enemy using a skinned-mesh shader. 
+ * One draw call per enemy using a skinned-mesh shader.
  */
 export class EnemyPass {
   private readonly gl: WebGL2RenderingContext;
