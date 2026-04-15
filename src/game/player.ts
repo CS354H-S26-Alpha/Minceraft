@@ -28,9 +28,10 @@ export interface PlayerPublicState {
   z: number;
   yaw: number;
   pitch: number;
+  heldItemId: ItemId | null;
 }
 
-export interface PlayerState extends PlayerPublicState {
+export interface PlayerState extends Omit<PlayerPublicState, "heldItemId"> {
   health: number;
   inventory: InventorySlot[];
   selectedHotbarSlot: number;
@@ -83,7 +84,7 @@ export function clampHotbarSlot(slotIndex: number): number {
 }
 
 export function createPlayerState(
-  args: PlayerPublicState & {
+  args: Omit<PlayerPublicState, "heldItemId"> & {
     health?: number;
     inventory?: readonly InventorySlot[] | null;
     selectedHotbarSlot?: number;
@@ -106,7 +107,14 @@ export function clonePlayerState(state: PlayerState): PlayerState {
 
 export function toPublicPlayerState(state: PlayerState): PlayerPublicState {
   const { health: _health, inventory: _inventory, selectedHotbarSlot: _selectedHotbarSlot, ...publicState } = state;
-  return publicState;
+  return {
+    ...publicState,
+    heldItemId: selectedHotbarItemId(state),
+  };
+}
+
+export function selectedHotbarItemId(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): ItemId | null {
+  return state.inventory[HOTBAR_START_INDEX + state.selectedHotbarSlot]?.itemId ?? null;
 }
 
 export function addItemToInventory(inventory: InventorySlot[], stack: ItemStack): ItemStack | null {

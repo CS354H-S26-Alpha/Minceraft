@@ -2,7 +2,8 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import type { ItemId } from "@/game/items";
+import { HOTBAR_START_INDEX, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -10,13 +11,17 @@ import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput, type InputOptions } from "./input";
+import { createRemoteHeldItemBatches } from "./render/held-item-cubes";
+import { HeldItemLayer } from "./render/held-item-layer";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
-  /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
+  /** Currently previewed held item for the first-person overlay. */
+  heldItemId?: () => ItemId | null | undefined;
+  /** Output of `joinWorld()` - provides player, snapshot, input, etc. */
   room: ReturnType<typeof joinWorld>;
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
@@ -62,13 +67,13 @@ export type GameState = Readonly<MutableGameState>;
 
 /**
  * Full day-night cycle duration in seconds.
- * 4 phases (dawn / day / dusk / night) × 15 s each = 60 s total.
+ * 4 phases (dawn / day / dusk / night) x 15 s each = 60 s total.
  */
 const DAY_LENGTH_S = 60;
 /** Duration of each phase (dawn, noon, dusk, night) in milliseconds. */
 const PHASE_MS = (DAY_LENGTH_S / 4) * 1000;
 
-// Pre-allocated buffers updated in-place each frame — no GC pressure.
+// Pre-allocated buffers updated in-place each frame - no GC pressure.
 const _lightPos = new Float32Array(4);
 const _bgColor = new Float32Array(4);
 const _ambient = new Float32Array(3);
@@ -81,11 +86,11 @@ let _timeOffset = 0;
  * Computes all day/night rendering state from wall-clock time.
  * Called once per frame; result is written into the shared Float32Arrays above.
  *
- * Cycle phases (angle = 0..2π over DAY_LENGTH_S seconds):
- *   angle=0      → sunrise (east horizon)
- *   angle=π/2    → noon
- *   angle=π      → sunset (west horizon)
- *   angle=3π/2   → midnight
+ * Cycle phases (angle = 0..2pi over DAY_LENGTH_S seconds):
+ *   angle=0      -> sunrise (east horizon)
+ *   angle=pi/2   -> noon
+ *   angle=pi     -> sunset (west horizon)
+ *   angle=3pi/2  -> midnight
  */
 function computeDayNight(nowMs: number): void {
   const t = ((nowMs + _timeOffset) / 1000) % DAY_LENGTH_S;
@@ -93,13 +98,13 @@ function computeDayNight(nowMs: number): void {
   const sinA = Math.sin(angle); // +1 = noon, -1 = midnight
   const cosA = Math.cos(angle); // +1 = sunrise, -1 = sunset
 
-  // Sun/moon position — orbits in the XY plane, offset in Z for angled light
+  // Sun/moon position - orbits in the XY plane, offset in Z for angled light
   _lightPos[0] = cosA * 2000;
   _lightPos[1] = sinA * 2000;
   _lightPos[2] = 600;
   _lightPos[3] = 1;
 
-  // Smooth phase weights (all ≥ 0, don't need to sum to 1)
+  // Smooth phase weights (all >= 0, don't need to sum to 1)
   const day = Math.max(0, sinA); // 0..1, peaks at noon
   const night = Math.max(0, -sinA); // 0..1, peaks at midnight
   const horizon = Math.max(0, 1 - Math.abs(sinA) / 0.35) * 0.35; // spike near sunrise/sunset
@@ -141,9 +146,10 @@ const INPUT_SEND_INTERVAL_MS = 50;
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
+  const heldItemLayer = new HeldItemLayer(gl.clientWidth, gl.clientHeight);
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
-  return { renderer, camera };
+  return { renderer, camera, heldItemLayer };
 }
 
 /**
@@ -218,7 +224,13 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   // Lazy-initialized on the first frame where all signals have resolved.
-  let ctx: { renderer: Renderer; camera: CameraController } | undefined;
+  let ctx:
+    | {
+        renderer: Renderer;
+        camera: CameraController;
+        heldItemLayer: HeldItemLayer;
+      }
+    | undefined;
 
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
@@ -238,9 +250,10 @@ export function createGame(args: CreateGameArgs): GameState {
       gl.width = Math.round(gl.clientWidth * dpr);
       gl.height = Math.round(gl.clientHeight * dpr);
       camera.resize(gl.clientWidth, gl.clientHeight);
+      ctx.heldItemLayer.resize(gl.clientWidth, gl.clientHeight);
     }
 
-    // --- Input → server ---
+    // --- Input -> server ---
     const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
     camera.rotate(mouse.dx, mouse.dy);
     const walk = inputEnabled()
@@ -285,14 +298,20 @@ export function createGame(args: CreateGameArgs): GameState {
     computeDayNight(now);
 
     // --- Render ---
-    const { buffers, count } = remotePlayers.frame(now);
+    const { states: remotePlayerStates, buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    const heldItemId = args.heldItemId
+      ? args.heldItemId()
+      : player.state.inventory[HOTBAR_START_INDEX + player.state.selectedHotbarSlot]?.itemId;
+    const heldItemOverlayPass = ctx.heldItemLayer.buildPass(heldItemId);
     renderer.render({
       viewMatrix,
       projMatrix,
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
       numCubes: chunks.count,
+      heldItemBatches: createRemoteHeldItemBatches(remotePlayerStates, buffers),
+      overlayHeldItemPasses: heldItemOverlayPass ? [heldItemOverlayPass] : undefined,
       lightPosition: _lightPos,
       backgroundColor: _bgColor,
       ambientColor: _ambient,
@@ -300,7 +319,7 @@ export function createGame(args: CreateGameArgs): GameState {
       entities,
     });
 
-    // --- Diagnostics (producers → store) ---
+    // --- Diagnostics (producers -> store) ---
     frame++;
     const computeTimeMs = performance.now() - tickStart;
     const gpuTimeMs = renderer.gpuTimer.lastTimeMs;
