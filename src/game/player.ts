@@ -45,7 +45,7 @@ export interface PlayerInput {
   pitch: number;
 }
 
-export type CollisionQuery = (x: number, z: number) => number;
+export type CollisionQuery = (x: number, z: number, currentY: number) => number;
 
 export function createEmptyInventory(): InventorySlot[] {
   return Array.from({ length: INVENTORY_SLOT_COUNT }, () => null);
@@ -229,14 +229,14 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
     if (this.collisionQuery !== undefined) {
       // horizontal move checks
-      const minYAtNextXCurrentZ = this.collisionQuery(nextX, currentZ);
+      const minYAtNextXCurrentZ = this.collisionQuery(nextX, currentZ, currentY);
       if (currentY < minYAtNextXCurrentZ) nextX = currentX;
 
-      const minYAtCurrentXNextZ = this.collisionQuery(currentX, nextZ);
+      const minYAtCurrentXNextZ = this.collisionQuery(currentX, nextZ, currentY);
       if (currentY < minYAtCurrentXNextZ) nextZ = currentZ;
 
       // vertical move check at the final horizontal position
-      const minYAtNextXZ = this.collisionQuery(nextX, nextZ);
+      const minYAtNextXZ = this.collisionQuery(nextX, nextZ, currentY);
       if (nextY < minYAtNextXZ) nextY = currentY;
     }
 

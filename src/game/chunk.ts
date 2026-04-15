@@ -2,7 +2,6 @@
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
 import { perlin3D } from "@/utils/noise";
-import { Player } from "./player";
 
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
@@ -231,33 +230,4 @@ export class Chunk {
     return this.cubes;
   }
 
-  public static minYForCylinderWorld(
-    wx: number,
-    wz: number,
-    worldGet: (wx: number, wy: number, wz: number) => CubeType,
-  ): number {
-    const r = Player.CYLINDER_RADIUS;
-    const h = Player.CYLINDER_HEIGHT;
-    const x0 = Math.floor(wx - r);
-    const x1 = Math.floor(wx + r);
-    const z0 = Math.floor(wz - r);
-    const z1 = Math.floor(wz + r);
-
-    let minCameraY = 0;
-
-    for (let bx = x0; bx <= x1; bx++) {
-      for (let bz = z0; bz <= z1; bz++) {
-        for (let by = CHUNK_HEIGHT - 1; by >= 0; by--) {
-          if (worldGet(bx, by, bz) === CubeType.Air) continue;
-          // Block's top face is at by+1. Camera bottom = cameraY - h.
-          // So cameraY must be >= by+1+h.
-          const required = by + 1 + h;
-          if (required > minCameraY) minCameraY = required;
-          break;
-        }
-      }
-    }
-
-    return minCameraY;
-  }
 }

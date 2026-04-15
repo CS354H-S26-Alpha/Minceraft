@@ -1,6 +1,7 @@
 import { Mat4, type Mat4Like } from "gl-matrix";
+import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
+import { Player } from "@/game/player";
 import { CubeType } from "@/client/engine/render/cube-types";
-import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "@/game/chunk";
 import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
@@ -69,19 +70,55 @@ export class ChunkManager {
     this.lastOriginZ = NaN;
   }
 
-  /** Minimum camera Y where the player cylinder can stand at `(wx, wz)`. */
-  collisionQuery(wx: number, wz: number): number {
-    return Chunk.minYForCylinderWorld(wx, wz, (bx, by, bz) => this.getBlockWorld(bx, by, bz));
-  }
+  /**
+   * Minimum camera Y where the player cylinder can stand at `(wx, wz)` given
+   * their current camera Y. Scans each column downward from the lower of the
+   * heightmap surface or the player's current head Y, so overhangs above the
+   * player are ignored and caves below the surface become traversable.
+   */
+  collisionQuery(wx: number, wz: number, currentY: number): number {
+    const r = Player.CYLINDER_RADIUS;
+    const h = Player.CYLINDER_HEIGHT;
+    const x0 = Math.floor(wx - r);
+    const x1 = Math.floor(wx + r);
+    const z0 = Math.floor(wz - r);
+    const z1 = Math.floor(wz + r);
 
-  private getBlockWorld(wx: number, wy: number, wz: number): CubeType {
-    if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
-    const [ox, oz] = chunkOrigin(wx, wz);
-    const chunk = this.chunkDataMap.get(chunkKey(ox, oz));
-    if (!chunk) return CubeType.Air;
-    const lx = wx - (ox - CHUNK_SIZE / 2);
-    const lz = wz - (oz - CHUNK_SIZE / 2);
-    return chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] as CubeType;
+    const scanCap = Math.min(CHUNK_HEIGHT - 1, Math.floor(currentY));
+    if (scanCap < 0) return 0;
+
+    let minCameraY = 0;
+    let cachedOx = Number.NaN;
+    let cachedOz = Number.NaN;
+    let cachedChunk: SingleChunkData | undefined;
+
+    for (let bx = x0; bx <= x1; bx++) {
+      for (let bz = z0; bz <= z1; bz++) {
+        const [ox, oz] = chunkOrigin(bx, bz);
+        if (ox !== cachedOx || oz !== cachedOz) {
+          cachedOx = ox;
+          cachedOz = oz;
+          cachedChunk = this.chunkDataMap.get(chunkKey(ox, oz));
+        }
+        if (!cachedChunk) continue;
+        const lx = bx - (ox - CHUNK_SIZE / 2);
+        const lz = bz - (oz - CHUNK_SIZE / 2);
+        const surface = cachedChunk.heightMap[lz * CHUNK_SIZE + lx]!;
+        const start = surface < scanCap ? surface : scanCap;
+        const blocks = cachedChunk.blocks;
+        const colOffset = lz * CHUNK_SIZE + lx;
+        const stride = CHUNK_SIZE * CHUNK_SIZE;
+        for (let by = start; by >= 0; by--) {
+          if (blocks[by * stride + colOffset] !== CubeType.Air) {
+            const required = by + 1 + h;
+            if (required > minCameraY) minCameraY = required;
+            break;
+          }
+        }
+      }
+    }
+
+    return minCameraY;
   }
 
   /** Frustum-cull chunks and concatenate visible ones into flat arrays. */

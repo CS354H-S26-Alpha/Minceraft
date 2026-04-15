@@ -213,7 +213,7 @@ export function createGame(args: CreateGameArgs): GameState {
 
     const replicated = room().replicated();
     if (replicated) {
-      (replicated.entity as Player).collisionQuery = (cx, cz) => chunks.collisionQuery(cx, cz);
+      (replicated.entity as Player).collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
     }
 
     const viewMatrix = camera.viewMatrix();
