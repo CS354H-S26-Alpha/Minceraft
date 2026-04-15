@@ -4,6 +4,7 @@ import { Vec3 } from "gl-matrix";
 import { createEffect } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -50,6 +51,8 @@ export interface ServerDiagnostics {
   msptHistory: number[];
   /** How many snapshots we receive per second from the server. */
   snapsPerSec: number;
+  /** Server-authoritative time of day in seconds. */
+  timeOfDayS: number;
 }
 
 interface MutableGameState {
@@ -106,6 +109,7 @@ export function createGame(args: CreateGameArgs): GameState {
         mspt: 0,
         msptHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         snapsPerSec: 0,
+        timeOfDayS: 0,
       },
     },
   });
@@ -123,10 +127,10 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
+  let timeOffsetS = 0;
 
   const input = createInput(args.glCanvas, {
     onReset: () => ctx?.camera.reset(),
-    onCycleDayPhase: () => lighting.skipPhase(),
     ...args.shortcuts,
   });
 
@@ -217,9 +221,11 @@ export function createGame(args: CreateGameArgs): GameState {
       tickDelta = snap.tick - lastTick;
       lastTick = snap.tick;
       msptHistory.push(snap.tickTimeMs);
+      timeOffsetS = snap.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
     }
 
-    lighting.update(now);
+    const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
+    lighting.update(timeOfDayS);
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
@@ -265,6 +271,7 @@ export function createGame(args: CreateGameArgs): GameState {
       mspt: snap.tickTimeMs,
       msptHistory: msptHistory.ordered(),
       snapsPerSec: snapMeter.rate,
+      timeOfDayS: timeOfDayS,
     });
   });
 

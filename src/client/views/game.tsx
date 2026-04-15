@@ -77,6 +77,8 @@ export default function GameView() {
             mspt={game.diagnostics.server.mspt}
             msptHistory={game.diagnostics.server.msptHistory}
             snapsPerSec={game.diagnostics.server.snapsPerSec}
+            timeOfDayS={game.diagnostics.server.timeOfDayS}
+            onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
             onlinePlayers={Object.values(room.snapshot.players)}
             onTeleportTo={(id) => {
               const target = room.snapshot.players[id];
