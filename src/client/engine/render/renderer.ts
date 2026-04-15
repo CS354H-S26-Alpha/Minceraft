@@ -6,6 +6,8 @@ import { Cube } from "./cube";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
+import skyboxFSText from "./shaders/skybox.frag";
+import skyboxVSText from "./shaders/skybox.vert";
 
 export interface RenderView {
   viewMatrix: Mat4;
@@ -31,11 +33,13 @@ interface EntityPass {
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: WebGL2RenderingContext;
+  private readonly skyboxRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
   readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
+  private readonly viewNoTranslation = new Float32Array(16);
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
 
@@ -45,6 +49,8 @@ export class Renderer {
     this.gpuTimer = new GpuTimer(this.ctx);
 
     const cubeGeometry = new Cube();
+    this.skyboxRenderPass = new RenderPass(this.ctx, skyboxVSText, skyboxFSText);
+    this.initSkyboxPass(cubeGeometry);
     this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
@@ -77,6 +83,8 @@ export class Renderer {
     this.gpuTimer.poll();
     this.gpuTimer.begin();
 
+    this.drawSkybox();
+
     if (view.cubePositions !== this.lastCubePositions) {
       this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
       this.lastCubePositions = view.cubePositions;
@@ -102,6 +110,18 @@ export class Renderer {
     }
 
     this.gpuTimer.end();
+  }
+
+  private drawSkybox(): void {
+    const gl = this.ctx;
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    this.skyboxRenderPass.draw();
+    gl.depthMask(true);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
   }
 
   private initEntityPass(pass: RenderPass, def: EntityPassDef): void {
@@ -131,6 +151,128 @@ export class Renderer {
     pass.setup();
   }
 
+  // LUT data — indexed by CubeType (0–11), must stay in sync with blankCube.frag
+  // col1 = mix(vertexColor, lut1Fixed, lut1Blend)
+  // col2 = mix(vertexColor * lut2Scale, lut2Fixed, lut2Blend)
+  private static readonly LUT1_FIXED = new Float32Array([
+    0.0,
+    0.0,
+    0.0, // 0  Air         (unused)
+    0.0,
+    0.0,
+    0.0, // 1  Grass       (overridden by face logic)
+    0.0,
+    0.0,
+    0.0, // 2  Dirt
+    0.0,
+    0.0,
+    0.0, // 3  Stone
+    0.0,
+    0.0,
+    0.0, // 4  Sand
+    0.0,
+    0.0,
+    0.0, // 5  Snow
+    0.08,
+    0.08,
+    0.09, // 6  Bedrock
+    0.0,
+    0.0,
+    0.0, // 7  ForestGrass (overridden by face logic)
+    0.5,
+    0.5,
+    0.5, // 8  CoalOre
+    0.5,
+    0.5,
+    0.5, // 9  IronOre
+    0.5,
+    0.5,
+    0.5, // 10 GoldOre
+    0.5,
+    0.5,
+    0.5, // 11 DiamondOre
+  ]);
+  private static readonly LUT1_BLEND = new Float32Array([
+    0, // Air
+    0, // Grass
+    0, // Dirt
+    0, // Stone
+    0, // Sand
+    0, // Snow
+    1, // Bedrock
+    0, // ForestGrass
+    1, // CoalOre
+    1, // IronOre
+    1, // GoldOre
+    1, // DiamondOre
+  ]);
+  private static readonly LUT2_FIXED = new Float32Array([
+    0.0,
+    0.0,
+    0.0, // 0  Air         (unused)
+    0.0,
+    0.0,
+    0.0, // 1  Grass       (overridden by face logic)
+    0.0,
+    0.0,
+    0.0, // 2  Dirt
+    0.0,
+    0.0,
+    0.0, // 3  Stone
+    0.0,
+    0.0,
+    0.0, // 4  Sand
+    0.8,
+    0.9,
+    1.0, // 5  Snow
+    0.02,
+    0.02,
+    0.03, // 6  Bedrock
+    0.0,
+    0.0,
+    0.0, // 7  ForestGrass (overridden by face logic)
+    0.12,
+    0.12,
+    0.13, // 8  CoalOre
+    0.72,
+    0.46,
+    0.3, // 9  IronOre
+    0.94,
+    0.82,
+    0.08, // 10 GoldOre
+    0.25,
+    0.88,
+    0.92, // 11 DiamondOre
+  ]);
+  private static readonly LUT2_BLEND = new Float32Array([
+    0, // Air
+    0, // Grass
+    0, // Dirt
+    0, // Stone
+    0, // Sand
+    1, // Snow
+    1, // Bedrock
+    0, // ForestGrass
+    1, // CoalOre
+    1, // IronOre
+    1, // GoldOre
+    1, // DiamondOre
+  ]);
+  private static readonly LUT2_SCALE = new Float32Array([
+    0.5, // Air
+    0.5, // Grass
+    0.5, // Dirt
+    0.35, // Stone
+    0.5, // Sand
+    0.5, // Snow        (irrelevant, blend=1)
+    0.5, // Bedrock     (irrelevant, blend=1)
+    0.5, // ForestGrass
+    0.5, // CoalOre     (irrelevant, blend=1)
+    0.5, // IronOre     (irrelevant, blend=1)
+    0.5, // GoldOre     (irrelevant, blend=1)
+    0.5, // DiamondOre  (irrelevant, blend=1)
+  ]);
+
   private initBlankCubePass(cube: Cube): void {
     const gl = this.ctx;
     const pass = this.blankCubeRenderPass;
@@ -156,6 +298,7 @@ export class Renderer {
       undefined,
       cube.normalsFlat(),
     );
+    pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, cube.uvFlat());
     pass.addInstancedAttribute(
       "aOffset",
       4,
@@ -178,6 +321,60 @@ export class Renderer {
     );
 
     this.addSharedUniforms(pass);
+
+    pass.addUniform("uLut1Fixed", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, Renderer.LUT1_FIXED);
+    });
+    pass.addUniform("uLut1Blend", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1fv(loc, Renderer.LUT1_BLEND);
+    });
+    pass.addUniform("uLut2Fixed", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, Renderer.LUT2_FIXED);
+    });
+    pass.addUniform("uLut2Blend", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1fv(loc, Renderer.LUT2_BLEND);
+    });
+    pass.addUniform("uLut2Scale", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1fv(loc, Renderer.LUT2_SCALE);
+    });
+
+    pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private initSkyboxPass(cube: Cube): void {
+    const gl = this.ctx;
+    const pass = this.skyboxRenderPass;
+
+    pass.setIndexBufferData(cube.indicesFlat());
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      cube.positionsFlat(),
+    );
+
+    pass.addUniform("uProj", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
+    });
+    pass.addUniform("uViewNoTranslation", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      this.viewNoTranslation.set(this.currentView.viewMatrix);
+      this.viewNoTranslation[12] = 0;
+      this.viewNoTranslation[13] = 0;
+      this.viewNoTranslation[14] = 0;
+      glCtx.uniformMatrix4fv(loc, false, this.viewNoTranslation);
+    });
+    pass.addUniform("uAmbient", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.ambientColor);
+    });
+    pass.addUniform("uSunColor", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.sunColor);
+    });
+
     pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
     pass.setup();
   }
