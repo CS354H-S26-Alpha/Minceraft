@@ -83,6 +83,6 @@ void main() {
   float aoLow    = mix(faceAmbientOcclusion.x, faceAmbientOcclusion.w, uv.x);
   float aoHigh   = mix(faceAmbientOcclusion.y, faceAmbientOcclusion.z, uv.x);
   float ao       = clamp(mix(aoLow, aoHigh, uv.y) / 3.0, 0.0, 1.0);
-  float aoFactor = mix(0.18, 1.0, ao * ao);
+  float aoFactor = mix(0.28, 1.0, ao * ao);
   fragColor      = vec4(clamp(kd * (uAmbient + dot_nl * uSunColor) * aoFactor, 0.0, 1.0), 1.0);
 }
