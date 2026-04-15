@@ -2,6 +2,7 @@ import { createSignal, Show } from "solid-js";
 import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
+import { Minimap } from "../components/Minimap";
 import { PlayerHud } from "../components/PlayerHud";
 import { createGame, requestPointerLock } from "../engine";
 import { joinWorld } from "../primitives/join-world";
@@ -57,6 +58,12 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
+      <Minimap
+        hidden={inventoryOpen()}
+        minimap={game.minimap}
+        player={room.player}
+        players={() => room.snapshot.players}
+      />
       <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
       <InventoryPanel
         player={room.player}

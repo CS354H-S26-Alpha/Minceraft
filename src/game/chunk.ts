@@ -21,6 +21,7 @@ export class Chunk {
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
   public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
+  private surfaceTypesMap: Uint8Array; // top-most block type per (x, z) column
 
   private x: number; // Center of the chunk
   private y: number;
@@ -40,6 +41,7 @@ export class Chunk {
 
     this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+    this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
     this.renderChunk(); // render on creation, might not be necessary
@@ -92,7 +94,9 @@ export class Chunk {
         for (let y = Math.max(1, height - 3); y < height; y++) {
           this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface);
         }
-        this.setBlock(j, height, i, surfaceBlock(biome, height));
+        const surfaceType = surfaceBlock(biome, height);
+        this.setBlock(j, height, i, surfaceType);
+        this.surfaceTypesMap[this.size * i + j] = surfaceType;
       }
     }
 
@@ -223,6 +227,16 @@ export class Chunk {
 
   public cubeColors(): Float32Array {
     return this.cubeColorsF32;
+  }
+
+  /** Returns a detached copy of the chunk's surface heights for minimap rendering. */
+  public surfaceHeights(): Uint8Array {
+    return this.heightMap.slice();
+  }
+
+  /** Returns a detached copy of the chunk's top-most block types for minimap rendering. */
+  public surfaceTypes(): Uint8Array {
+    return this.surfaceTypesMap.slice();
   }
 
   /** Returns the number of cubes to render this frame. */

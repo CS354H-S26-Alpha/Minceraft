@@ -30,10 +30,20 @@ export class ChunkManager {
   colors = new Float32Array(0);
   count = 0;
 
-  constructor(spawnX: number, spawnZ: number, seed: number, client: ChunkClient) {
+  constructor(
+    spawnX: number,
+    spawnZ: number,
+    seed: number,
+    client: ChunkClient,
+    private readonly onChange?: () => void,
+  ) {
     this.client = client;
     this.seed = seed;
     this.update(spawnX, spawnZ);
+  }
+
+  get minimapRadiusBlocks(): number {
+    return RENDER_DISTANCE * CHUNK_SIZE;
   }
 
   /** Starts a new chunk generation when the player enters a different chunk. */
@@ -107,10 +117,31 @@ export class ChunkManager {
     for (const chunk of batch.chunks) {
       this.chunkDataMap.set(chunkKey(chunk.originX, chunk.originZ), chunk);
     }
+    this.onChange?.();
   }
 
   dispose(): void {
     this.client.dispose();
+  }
+
+  /**
+   * Returns an encoded minimap sample for the highest block at (x, z).
+   * High byte = `CubeType`, low byte = surface Y.
+   */
+  sampleSurface(wx: number, wz: number): number | undefined {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const chunk = this.chunkDataMap.get(chunkKey(originX, originZ));
+    if (!chunk) return undefined;
+
+    const localX = wx - (originX - CHUNK_SIZE / 2);
+    const localZ = wz - (originZ - CHUNK_SIZE / 2);
+    if (localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) return undefined;
+
+    const index = localZ * CHUNK_SIZE + localX;
+    const blockType = chunk.surfaceTypes[index];
+    const height = chunk.surfaceHeights[index];
+    if (blockType === undefined || height === undefined) return undefined;
+    return (blockType << 8) | height;
   }
 }
 

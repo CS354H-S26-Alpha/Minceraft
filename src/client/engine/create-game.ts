@@ -1,7 +1,7 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
-import { createEffect } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { DAY_LENGTH_S } from "@/game/time";
@@ -63,7 +63,21 @@ interface MutableGameState {
   };
 }
 
-export type GameState = Readonly<MutableGameState>;
+export interface MinimapApi {
+  /** Increments whenever chunk surface data changes. */
+  terrainVersion: () => number;
+  /** Number of world blocks available from player center to one map edge. */
+  radiusBlocks: number;
+  /**
+   * Highest loaded block sample for world-space (x, z).
+   * High byte = `CubeType`, low byte = surface Y.
+   */
+  sampleSurface: (wx: number, wz: number) => number | undefined;
+}
+
+export interface GameState extends Readonly<MutableGameState> {
+  readonly minimap: MinimapApi;
+}
 
 /** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
@@ -114,7 +128,10 @@ export function createGame(args: CreateGameArgs): GameState {
     },
   });
 
-  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient());
+  const [terrainVersion, setTerrainVersion] = createSignal(0);
+  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient(), () =>
+    setTerrainVersion((version) => version + 1),
+  );
   const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -275,5 +292,17 @@ export function createGame(args: CreateGameArgs): GameState {
     });
   });
 
-  return state;
+  return {
+    get playerPosition() {
+      return state.playerPosition;
+    },
+    get diagnostics() {
+      return state.diagnostics;
+    },
+    minimap: {
+      terrainVersion,
+      radiusBlocks: chunks.minimapRadiusBlocks,
+      sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
+    },
+  };
 }
