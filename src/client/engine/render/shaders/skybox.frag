@@ -1,5 +1,5 @@
 #version 300 es
-precision highp float;
+precision mediump float;
 
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
@@ -7,13 +7,11 @@ uniform vec3 uSunColor;
 in vec3 vDir;
 out vec4 fragColor;
 
-// Hash integer lattice point to a gradient direction.
+// Hash lattice point to a gradient direction — fract/multiply, no sin().
 vec3 grad3(vec3 p) {
-  float x = dot(p, vec3(127.1, 311.7, 74.7));
-  float y = dot(p, vec3(269.5, 183.3, 246.1));
-  float z = dot(p, vec3(113.5, 271.9, 124.6));
-  vec3 g = fract(sin(vec3(x, y, z)) * 43758.5453123) * 2.0 - 1.0;
-  return normalize(g);
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return normalize(fract((p.xxy + p.yxx) * p.zyx) * 2.0 - 1.0);
 }
 
 float fade(float t) {
@@ -64,7 +62,7 @@ float fbmPerlin3(vec3 p) {
   float freq = 1.0;
   float norm = 0.0;
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 2; i++) {
     total += perlin3(p * freq) * amp;
     norm += amp;
     freq *= 2.0;
