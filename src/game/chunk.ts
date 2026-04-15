@@ -108,23 +108,47 @@ export class Chunk {
     }
 
     // --- Pass 2: Spaghetti cave carving (tunnel-like, follows noise zero-crossings) ---
+    // Mountains carve all the way to the surface (no cap) so caves naturally break through,
+    // creating organic walkable openings without any explicit door placement.
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
         const surfaceY = this.heightMap[this.size * i + j] as number;
+        const isMountain = (biomeMap[this.size * i + j] as Biome) === Biome.Mountain;
+        const caveCap = isMountain ? 0 : 8;
 
-        for (let y = 1; y <= surfaceY - 8; y++) {
+        for (let y = 1; y <= surfaceY - caveCap; y++) {
           if (this.getBlock(j, y, i) === CubeType.Air) continue;
 
           const threshold = 0.12;
-
-          const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 64);
+          const caveFreq = isMountain ? 1 / 40 : 1 / 64;
+          const n1 = perlin3D(this.seed + 100, gx, y, gz, caveFreq);
           if (Math.abs(n1) >= threshold) continue;
-          const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 64);
+          const n2 = perlin3D(this.seed + 200, gx, y, gz, caveFreq);
           if (Math.abs(n2) < threshold) {
             this.setBlock(j, y, i, CubeType.Air);
           }
+        }
+      }
+    }
+
+    // --- Pass 2.5: Mountain snow re-application ---
+    // Cave carving can expose interior stone blocks to air. Re-apply the surface block
+    // (snow or stone depending on height) to any mountain block that now has air above it.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        if ((biomeMap[this.size * i + j] as Biome) !== Biome.Mountain) continue;
+        const gx = topleftx + j;
+        const gz = topleftz + i;
+        const surfaceY = this.heightMap[this.size * i + j] as number;
+
+        for (let y = surfaceY; y >= 1; y--) {
+          if (this.getBlock(j, y, i) === CubeType.Air) continue;
+          if (this.getBlock(j, y + 1, i) !== CubeType.Air) continue;
+          // This block is newly exposed — apply the correct surface type
+          this.setBlock(j, y, i, surfaceBlock(Biome.Mountain, y, this.seed, gx, gz));
+          break; // only the top exposed block needs snow
         }
       }
     }
@@ -141,6 +165,39 @@ export class Chunk {
           for (const [oreType, seedOff, freq, threshold, minY, maxY] of Chunk.ORES) {
             if (y < minY || y > maxY) continue;
             if (perlin3D(this.seed + seedOff, gx, y, gz, freq) > threshold) {
+              this.setBlock(j, y, i, oreType);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // --- Pass 3.5: Mountain cave wall ore clusters ---
+    // Stone blocks adjacent to air (cave surfaces) in mountain biome get extra ore density.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        if ((biomeMap[this.size * i + j] as Biome) !== Biome.Mountain) continue;
+        const gx = topleftx + j;
+        const gz = topleftz + i;
+
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+          if (this.getBlock(j, y, i) !== CubeType.Stone) continue;
+
+          // Only target cave wall blocks — stone that touches at least one air neighbour
+          const onCaveWall =
+            this.getBlock(j + 1, y, i) === CubeType.Air ||
+            this.getBlock(j - 1, y, i) === CubeType.Air ||
+            this.getBlock(j, y, i + 1) === CubeType.Air ||
+            this.getBlock(j, y, i - 1) === CubeType.Air ||
+            this.getBlock(j, y + 1, i) === CubeType.Air ||
+            this.getBlock(j, y - 1, i) === CubeType.Air;
+          if (!onCaveWall) continue;
+
+          for (const [oreType, seedOff, freq, threshold, minY, maxY] of Chunk.ORES) {
+            if (y < minY || y > maxY) continue;
+            // Lower threshold = more ore on cave walls
+            if (perlin3D(this.seed + seedOff + 700, gx, y, gz, freq) > threshold - 0.15) {
               this.setBlock(j, y, i, oreType);
               break;
             }
