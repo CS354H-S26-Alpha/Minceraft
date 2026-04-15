@@ -19,8 +19,8 @@ out float cubeType;
 out vec3 cubeOrigin;
 
 void main() {
-  gl_Position = uProj * uView * (aVertPos + vec4(aOffset.xyz, 1.0));
-  wsPos = vec4(aOffset.xyz, 1.0) + aVertPos;
+  wsPos = vec4(aVertPos.xyz + aOffset.xyz, 1.0);
+  gl_Position = uProj * uView * wsPos;
   normal = normalize(aNorm);
   uv = aUV;
   color = aColor;
