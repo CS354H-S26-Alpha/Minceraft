@@ -353,10 +353,18 @@ export class Renderer {
       gl.uniform4fv(loc, this.currentHeldItemPassView?.lightPosition ?? this.currentView.lightPosition);
     });
     pass.addUniform("uProj", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentHeldItemPassView?.projMatrix ?? this.currentView.projMatrix));
+      gl.uniformMatrix4fv(
+        loc,
+        false,
+        new Float32Array(this.currentHeldItemPassView?.projMatrix ?? this.currentView.projMatrix),
+      );
     });
     pass.addUniform("uView", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentHeldItemPassView?.viewMatrix ?? this.currentView.viewMatrix));
+      gl.uniformMatrix4fv(
+        loc,
+        false,
+        new Float32Array(this.currentHeldItemPassView?.viewMatrix ?? this.currentView.viewMatrix),
+      );
     });
     pass.addUniform("uAmbient", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform3fv(loc, this.currentHeldItemPassView?.ambientColor ?? this.currentView.ambientColor);
