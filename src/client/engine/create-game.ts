@@ -43,14 +43,14 @@ export interface ClientDiagnostics {
 
 /** Server-side performance metrics derived from room snapshots. */
 export interface ServerDiagnostics {
-  /** Server ticks per second, computed from snapshot tick deltas. */
-  tps: number;
   /** Milliseconds per server tick (from the snapshot). */
   mspt: number;
   /** Rolling ring-buffer of recent mspt values. */
   msptHistory: number[];
   /** How many snapshots we receive per second from the server. */
   snapsPerSec: number;
+  /** How many position packets we send to the server per second. */
+  packetsPerSec: number;
   /** Server-authoritative time of day in seconds. */
   timeOfDayS: number;
 }
@@ -119,10 +119,10 @@ export function createGame(args: CreateGameArgs): GameState {
         pointerLocked: false,
       },
       server: {
-        tps: 0,
         mspt: 0,
         msptHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         snapsPerSec: 0,
+        packetsPerSec: 0,
         timeOfDayS: 0,
       },
     },
@@ -135,15 +135,15 @@ export function createGame(args: CreateGameArgs): GameState {
   const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
-  const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
+  const packetMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   let frame = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
-  let tickDelta = 0;
+  let lastPacketCount = 0;
   let timeOffsetS = 0;
 
   const input = createInput(args.glCanvas, {
@@ -168,12 +168,14 @@ export function createGame(args: CreateGameArgs): GameState {
     };
   });
 
+  let packetCount = 0;
   makeTimer(
     () => {
       const s = room().session();
       if (!pendingPacket || !s) return;
       s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
       pendingPacket = undefined;
+      packetCount++;
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -232,13 +234,12 @@ export function createGame(args: CreateGameArgs): GameState {
     chunks.cull(viewMatrix, projMatrix);
 
     // --- Remote entities ---
-    const snap = room().snapshot;
-    if (snap.tick !== lastTick) {
-      remotePlayers.onSnapshot(unwrap(snap.players), now);
-      tickDelta = snap.tick - lastTick;
-      lastTick = snap.tick;
-      msptHistory.push(snap.tickTimeMs);
-      timeOffsetS = snap.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
+    const tickInfo = room().tickInfo;
+    if (tickInfo.tick !== lastTick) {
+      remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
+      lastTick = tickInfo.tick;
+      msptHistory.push(tickInfo.tickTimeMs);
+      timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
     }
 
     const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
@@ -268,11 +269,11 @@ export function createGame(args: CreateGameArgs): GameState {
     fpsMeter.sample(dt, 1);
     computeHistory.push(computeTimeMs);
     gpuHistory.push(gpuTimeMs);
-    tpsMeter.sample(dt, tickDelta);
-    tickDelta = 0;
     const currentSnapCount = room().snapCount();
     snapMeter.sample(dt, currentSnapCount - lastSnapCount);
     lastSnapCount = currentSnapCount;
+    packetMeter.sample(dt, packetCount - lastPacketCount);
+    lastPacketCount = packetCount;
 
     setState("playerPosition", player.position);
     setState("diagnostics", "client", {
@@ -285,11 +286,11 @@ export function createGame(args: CreateGameArgs): GameState {
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {
-      tps: tpsMeter.rate,
-      mspt: snap.tickTimeMs,
+      mspt: tickInfo.tickTimeMs,
       msptHistory: msptHistory.ordered(),
       snapsPerSec: snapMeter.rate,
-      timeOfDayS: timeOfDayS,
+      packetsPerSec: packetMeter.rate,
+      timeOfDayS,
     });
   });
 
