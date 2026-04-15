@@ -194,17 +194,13 @@ export function createGame(args: CreateGameArgs): GameState {
     // --- Input → server ---
     const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
     camera.rotate(mouse.dx, mouse.dy);
-    const walk = inputEnabled()
-      ? camera.walkDir(input.walkKeys())
-      : {
-          x: 0,
-          y: 0,
-          z: 0,
-        };
+    const keys = input.walkKeys();
+    const walk = inputEnabled() ? camera.walkDir(keys) : { x: 0, z: 0 };
+    const jump = inputEnabled() && keys.space;
     const yaw = camera.yaw();
     const pitch = camera.pitch();
     if (inputEnabled()) {
-      const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
+      const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump };
       room().replicated()?.predict(next);
     }
     camera.setPosition(player.position);

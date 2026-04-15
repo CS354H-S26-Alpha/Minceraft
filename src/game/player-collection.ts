@@ -22,6 +22,7 @@ import {
   type InventorySlot,
   MAX_COORDINATE,
   normalizeInventory,
+  PLAYER_MAX_FALL_SPEED,
   PLAYER_SPEED,
   Player,
   type PlayerPositionPacket,
@@ -358,12 +359,13 @@ export class PlayerCollection implements EntityCollection {
   }
 
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
-    const elapsedMs = Math.max(0, Date.now() - lastAcceptedAt);
-    const maxDistance = PLAYER_SPEED * ((elapsedMs + BASE_MOVEMENT_WINDOW_MS) / 1000) + MOVEMENT_TOLERANCE;
+    const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
+    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;
-    return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+    return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
 }
 

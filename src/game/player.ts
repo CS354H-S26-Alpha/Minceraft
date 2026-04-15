@@ -2,7 +2,11 @@ import { Vec3 } from "gl-matrix";
 import { Entity } from "./entity";
 import { ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
 
-export const PLAYER_SPEED = 30;
+// minceraft yoinked
+export const PLAYER_SPEED = 4.317;
+export const PLAYER_GRAVITY = 32;
+export const PLAYER_JUMP_VELOCITY = 8.944;
+export const PLAYER_MAX_FALL_SPEED = 78.4;
 export const PLAYER_MAX_HEALTH = 20;
 export const HOTBAR_SLOT_COUNT = 9;
 export const MAIN_INVENTORY_SLOT_COUNT = 27;
@@ -31,6 +35,7 @@ export interface PlayerPublicState {
 }
 
 export interface PlayerState extends PlayerPublicState {
+  vy: number;
   health: number;
   inventory: InventorySlot[];
   selectedHotbarSlot: number;
@@ -38,12 +43,14 @@ export interface PlayerState extends PlayerPublicState {
 
 export interface PlayerInput {
   dx: number;
-  dy: number;
   dz: number;
   dtSeconds: number;
   yaw: number;
   pitch: number;
+  jump: boolean;
 }
+
+const GROUND_EPSILON = 1e-3;
 
 export type CollisionQuery = (x: number, z: number, currentY: number) => number;
 
@@ -86,6 +93,7 @@ export function clampHotbarSlot(slotIndex: number): number {
 
 export function createPlayerState(
   args: PlayerPublicState & {
+    vy?: number;
     health?: number;
     inventory?: readonly InventorySlot[] | null;
     selectedHotbarSlot?: number;
@@ -93,6 +101,7 @@ export function createPlayerState(
 ): PlayerState {
   return {
     ...args,
+    vy: Number.isFinite(args.vy) ? (args.vy as number) : 0,
     health: normalizeHealth(args.health),
     inventory: args.inventory === undefined ? createStarterInventory() : normalizeInventory(args.inventory),
     selectedHotbarSlot: clampHotbarSlot(args.selectedHotbarSlot ?? DEFAULT_SELECTED_HOTBAR_SLOT),
@@ -107,7 +116,13 @@ export function clonePlayerState(state: PlayerState): PlayerState {
 }
 
 export function toPublicPlayerState(state: PlayerState): PlayerPublicState {
-  const { health: _health, inventory: _inventory, selectedHotbarSlot: _selectedHotbarSlot, ...publicState } = state;
+  const {
+    vy: _vy,
+    health: _health,
+    inventory: _inventory,
+    selectedHotbarSlot: _selectedHotbarSlot,
+    ...publicState
+  } = state;
   return publicState;
 }
 
@@ -158,8 +173,10 @@ export interface PlayerPositionPacket {
 
 /** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
-  public static readonly CYLINDER_RADIUS = 0.4;
-  public static readonly CYLINDER_HEIGHT = 2;
+  public static readonly CYLINDER_RADIUS = 0.3;
+  public static readonly CYLINDER_HEIGHT = 1.8;
+  /** Distance from feet to camera — Minecraft eye height. */
+  public static readonly EYE_OFFSET = 1.62;
 
   public collisionQuery: CollisionQuery | undefined = undefined;
 
@@ -193,14 +210,13 @@ export class Player extends Entity<PlayerState, PlayerInput> {
   }
 
   /**
-   * Applies one input frame: validates the input, normalises the movement
-   * vector to a constant speed, and clamps coordinates within world bounds.
-   * TODO: Handle sending new snapshot to client when movement on server is unexpected.
+   * Applies one input frame: updates facing, integrates horizontal intent at
+   * `PLAYER_SPEED`, and — when a `collisionQuery` is wired — applies gravity,
+   * jump, and per-axis collision against the voxel world.
    */
-  step({ dx, dy, dz, dtSeconds, yaw, pitch }: PlayerInput) {
+  step({ dx, dz, dtSeconds, yaw, pitch, jump }: PlayerInput) {
     if (
       !Number.isFinite(dx) ||
-      !Number.isFinite(dy) ||
       !Number.isFinite(dz) ||
       !Number.isFinite(dtSeconds) ||
       !Number.isFinite(yaw) ||
@@ -212,38 +228,62 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
     this.state.yaw = yaw;
     this.state.pitch = pitch;
-    const mag2 = dx * dx + dy * dy + dz * dz;
-    if (mag2 === 0) return;
-    const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
-    const nx = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.x + dx * inv));
-    const ny = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
-    const nz = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
 
     const currentX = this.state.x;
     const currentY = this.state.y;
     const currentZ = this.state.z;
 
-    let nextX = nx;
-    let nextY = ny;
-    let nextZ = nz;
-
-    if (this.collisionQuery !== undefined) {
-      // horizontal move checks
-      const minYAtNextXCurrentZ = this.collisionQuery(nextX, currentZ, currentY);
-      if (currentY < minYAtNextXCurrentZ) nextX = currentX;
-
-      const minYAtCurrentXNextZ = this.collisionQuery(currentX, nextZ, currentY);
-      if (currentY < minYAtCurrentXNextZ) nextZ = currentZ;
-
-      // vertical move check at the final horizontal position
-      const minYAtNextXZ = this.collisionQuery(nextX, nextZ, currentY);
-      if (nextY < minYAtNextXZ) nextY = currentY;
+    const mag2 = dx * dx + dz * dz;
+    let nextX = currentX;
+    let nextZ = currentZ;
+    if (mag2 > 0) {
+      const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
+      nextX = clampCoord(currentX + dx * inv);
+      nextZ = clampCoord(currentZ + dz * inv);
     }
 
+    if (this.collisionQuery === undefined) {
+      this.state.x = nextX;
+      this.state.z = nextZ;
+      return;
+    }
+
+    const minYAtNextXCurrentZ = this.collisionQuery(nextX, currentZ, currentY);
+    if (currentY < minYAtNextXCurrentZ) nextX = currentX;
+
+    const minYAtCurrentXNextZ = this.collisionQuery(currentX, nextZ, currentY);
+    if (currentY < minYAtCurrentXNextZ) nextZ = currentZ;
+
+    let floorY = this.collisionQuery(nextX, nextZ, currentY);
+    if (currentY < floorY) {
+      nextX = currentX;
+      nextZ = currentZ;
+      floorY = this.collisionQuery(currentX, currentZ, currentY);
+    }
+    const grounded = currentY - floorY < GROUND_EPSILON;
+
+    let vy = this.state.vy;
+    if (grounded && jump && vy <= 0) vy = PLAYER_JUMP_VELOCITY;
+    vy -= PLAYER_GRAVITY * dtSeconds;
+    if (vy < -PLAYER_MAX_FALL_SPEED) vy = -PLAYER_MAX_FALL_SPEED;
+
+    let nextY = clampCoord(currentY + vy * dtSeconds);
+    if (nextY < floorY) {
+      nextY = floorY;
+      vy = 0;
+    }
+
+    this.state.vy = vy;
     this.state.x = nextX;
     this.state.y = nextY;
     this.state.z = nextZ;
   }
+}
+
+function clampCoord(v: number): number {
+  if (v > MAX_COORDINATE) return MAX_COORDINATE;
+  if (v < -MAX_COORDINATE) return -MAX_COORDINATE;
+  return v;
 }
 
 function normalizeInventorySlot(slot: InventorySlot | undefined): InventorySlot {

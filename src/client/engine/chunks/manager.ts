@@ -1,12 +1,12 @@
 import { Mat4, type Mat4Like } from "gl-matrix";
+import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
 import { Player } from "@/game/player";
-import { CubeType } from "@/client/engine/render/cube-types";
 import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
-const RENDER_DISTANCE = 1;
-const LOAD_DISTANCE = RENDER_DISTANCE + 2;
+const RENDER_DISTANCE = 4;
+const LOAD_DISTANCE = RENDER_DISTANCE + 1;
 const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 
 export interface ChunkClient {
@@ -71,20 +71,20 @@ export class ChunkManager {
   }
 
   /**
-   * Minimum camera Y where the player cylinder can stand at `(wx, wz)` given
-   * their current camera Y. Scans each column downward from the lower of the
-   * heightmap surface or the player's current head Y, so overhangs above the
-   * player are ignored and caves below the surface become traversable.
+   * Minimum camera Y where the player can stand at `(wx, wz)` given their
+   * current Y.
    */
   collisionQuery(wx: number, wz: number, currentY: number): number {
     const r = Player.CYLINDER_RADIUS;
-    const h = Player.CYLINDER_HEIGHT;
+    const r2 = r * r;
+    const eye = Player.EYE_OFFSET;
+    const headOffset = Player.CYLINDER_HEIGHT - eye;
     const x0 = Math.floor(wx - r);
     const x1 = Math.floor(wx + r);
     const z0 = Math.floor(wz - r);
     const z1 = Math.floor(wz + r);
 
-    const scanCap = Math.min(CHUNK_HEIGHT - 1, Math.floor(currentY));
+    const scanCap = Math.min(CHUNK_HEIGHT - 1, Math.ceil(currentY + headOffset) - 1);
     if (scanCap < 0) return 0;
 
     let minCameraY = 0;
@@ -93,7 +93,16 @@ export class ChunkManager {
     let cachedChunk: SingleChunkData | undefined;
 
     for (let bx = x0; bx <= x1; bx++) {
+      const cellX = wx < bx ? bx : wx > bx + 1 ? bx + 1 : wx;
+      const ddx = wx - cellX;
+      const ddx2 = ddx * ddx;
+      if (ddx2 >= r2) continue;
+
       for (let bz = z0; bz <= z1; bz++) {
+        const cellZ = wz < bz ? bz : wz > bz + 1 ? bz + 1 : wz;
+        const ddz = wz - cellZ;
+        if (ddx2 + ddz * ddz >= r2) continue;
+
         const [ox, oz] = chunkOrigin(bx, bz);
         if (ox !== cachedOx || oz !== cachedOz) {
           cachedOx = ox;
@@ -110,7 +119,7 @@ export class ChunkManager {
         const stride = CHUNK_SIZE * CHUNK_SIZE;
         for (let by = start; by >= 0; by--) {
           if (blocks[by * stride + colOffset] !== CubeType.Air) {
-            const required = by + 1 + h;
+            const required = by + 1 + eye;
             if (required > minCameraY) minCameraY = required;
             break;
           }
