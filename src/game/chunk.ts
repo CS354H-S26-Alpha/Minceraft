@@ -14,134 +14,64 @@ interface FaceAmbientOcclusionSpec {
 }
 
 // Face order matches Cube geometry: top, left, right, front, back, bottom.
-const FACE_AMBIENT_OCCLUSION_SPECS: readonly FaceAmbientOcclusionSpec[] = [
-  {
-    normal: [0, 1, 0],
-    corners: [
-      [
-        [-1, 0, 0],
-        [0, 0, -1],
-      ],
-      [
-        [-1, 0, 0],
-        [0, 0, 1],
-      ],
-      [
-        [1, 0, 0],
-        [0, 0, 1],
-      ],
-      [
-        [1, 0, 0],
-        [0, 0, -1],
-      ],
-    ],
-  },
-  {
-    normal: [-1, 0, 0],
-    corners: [
-      [
-        [0, 1, 0],
-        [0, 0, 1],
-      ],
-      [
-        [0, -1, 0],
-        [0, 0, 1],
-      ],
-      [
-        [0, -1, 0],
-        [0, 0, -1],
-      ],
-      [
-        [0, 1, 0],
-        [0, 0, -1],
-      ],
-    ],
-  },
-  {
-    normal: [1, 0, 0],
-    corners: [
-      [
-        [0, 1, 0],
-        [0, 0, 1],
-      ],
-      [
-        [0, -1, 0],
-        [0, 0, 1],
-      ],
-      [
-        [0, -1, 0],
-        [0, 0, -1],
-      ],
-      [
-        [0, 1, 0],
-        [0, 0, -1],
-      ],
-    ],
-  },
-  {
-    normal: [0, 0, 1],
-    corners: [
-      [
-        [1, 0, 0],
-        [0, 1, 0],
-      ],
-      [
-        [1, 0, 0],
-        [0, -1, 0],
-      ],
-      [
-        [-1, 0, 0],
-        [0, -1, 0],
-      ],
-      [
-        [-1, 0, 0],
-        [0, 1, 0],
-      ],
-    ],
-  },
-  {
-    normal: [0, 0, -1],
-    corners: [
-      [
-        [1, 0, 0],
-        [0, 1, 0],
-      ],
-      [
-        [1, 0, 0],
-        [0, -1, 0],
-      ],
-      [
-        [-1, 0, 0],
-        [0, -1, 0],
-      ],
-      [
-        [-1, 0, 0],
-        [0, 1, 0],
-      ],
-    ],
-  },
-  {
-    normal: [0, -1, 0],
-    corners: [
-      [
-        [-1, 0, 0],
-        [0, 0, -1],
-      ],
-      [
-        [-1, 0, 0],
-        [0, 0, 1],
-      ],
-      [
-        [1, 0, 0],
-        [0, 0, 1],
-      ],
-      [
-        [1, 0, 0],
-        [0, 0, -1],
-      ],
-    ],
-  },
-];
+const FACE_AMBIENT_OCCLUSION_SPECS: readonly FaceAmbientOcclusionSpec[] = buildFaceAmbientOcclusionSpecs();
+
+/**
+ * Generates AO specs for all 6 axis-aligned cube faces.
+ *
+ * Each face is defined by its outward normal and two tangent axes (t1, t2).
+ * The four corners sample neighbours at (n ± s1*t1, n ± s2*t2); the sign
+ * pairs are ordered to match the quad-vertex winding of the cube geometry so
+ * that bilinear AO interpolation in the shader maps to the correct corners.
+ *
+ * Three winding patterns arise from the three tangent-axis families:
+ *   XZ (Y-axis normals):  (−,−),(−,+),(+,+),(+,−)
+ *   YZ (X-axis normals):  (+,+),(−,+),(−,−),(+,−)
+ *   XY (Z-axis normals):  (+,+),(+,−),(−,−),(−,+)
+ */
+function buildFaceAmbientOcclusionSpecs(): readonly FaceAmbientOcclusionSpec[] {
+  // Sign pairs [s1, s2] → sideA = s1*t1, sideB = s2*t2.
+  const XZ: readonly (readonly [number, number])[] = [
+    [-1, -1],
+    [-1, 1],
+    [1, 1],
+    [1, -1],
+  ];
+  const YZ: readonly (readonly [number, number])[] = [
+    [1, 1],
+    [-1, 1],
+    [-1, -1],
+    [1, -1],
+  ];
+  const XY: readonly (readonly [number, number])[] = [
+    [1, 1],
+    [1, -1],
+    [-1, -1],
+    [-1, 1],
+  ];
+
+  const makeFace = (
+    normal: Direction,
+    t1: Direction,
+    t2: Direction,
+    signs: readonly (readonly [number, number])[],
+  ): FaceAmbientOcclusionSpec => ({
+    normal,
+    corners: signs.map(([s1, s2]): readonly [Direction, Direction] => [
+      [s1 * t1[0], s1 * t1[1], s1 * t1[2]] as Direction,
+      [s2 * t2[0], s2 * t2[1], s2 * t2[2]] as Direction,
+    ]),
+  });
+
+  return [
+    makeFace([0, 1, 0], [1, 0, 0], [0, 0, 1], XZ), // top
+    makeFace([-1, 0, 0], [0, 1, 0], [0, 0, 1], YZ), // left
+    makeFace([1, 0, 0], [0, 1, 0], [0, 0, 1], YZ), // right
+    makeFace([0, 0, 1], [1, 0, 0], [0, 1, 0], XY), // front
+    makeFace([0, 0, -1], [1, 0, 0], [0, 1, 0], XY), // back
+    makeFace([0, -1, 0], [1, 0, 0], [0, 0, 1], XZ), // bottom
+  ];
+}
 
 function vertexAmbientOcclusion(side1: boolean, side2: boolean, corner: boolean): number {
   if (side1 && side2) return 0;
