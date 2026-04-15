@@ -6,6 +6,8 @@ import { Cube } from "./cube";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
+import skyboxFSText from "./shaders/skybox.frag";
+import skyboxVSText from "./shaders/skybox.vert";
 
 export interface RenderView {
   viewMatrix: Mat4;
@@ -31,11 +33,13 @@ interface EntityPass {
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: WebGL2RenderingContext;
+  private readonly skyboxRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
   readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
+  private readonly viewNoTranslation = new Float32Array(16);
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
 
@@ -45,6 +49,8 @@ export class Renderer {
     this.gpuTimer = new GpuTimer(this.ctx);
 
     const cubeGeometry = new Cube();
+    this.skyboxRenderPass = new RenderPass(this.ctx, skyboxVSText, skyboxFSText);
+    this.initSkyboxPass(cubeGeometry);
     this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
@@ -77,6 +83,8 @@ export class Renderer {
     this.gpuTimer.poll();
     this.gpuTimer.begin();
 
+    this.drawSkybox();
+
     if (view.cubePositions !== this.lastCubePositions) {
       this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
       this.lastCubePositions = view.cubePositions;
@@ -102,6 +110,18 @@ export class Renderer {
     }
 
     this.gpuTimer.end();
+  }
+
+  private drawSkybox(): void {
+    const gl = this.ctx;
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    this.skyboxRenderPass.draw();
+    gl.depthMask(true);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
   }
 
   private initEntityPass(pass: RenderPass, def: EntityPassDef): void {
@@ -316,6 +336,43 @@ export class Renderer {
     });
     pass.addUniform("uLut2Scale", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform1fv(loc, Renderer.LUT2_SCALE);
+    });
+
+    pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private initSkyboxPass(cube: Cube): void {
+    const gl = this.ctx;
+    const pass = this.skyboxRenderPass;
+
+    pass.setIndexBufferData(cube.indicesFlat());
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      cube.positionsFlat(),
+    );
+
+    pass.addUniform("uProj", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
+    });
+    pass.addUniform("uViewNoTranslation", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      this.viewNoTranslation.set(this.currentView.viewMatrix);
+      this.viewNoTranslation[12] = 0;
+      this.viewNoTranslation[13] = 0;
+      this.viewNoTranslation[14] = 0;
+      glCtx.uniformMatrix4fv(loc, false, this.viewNoTranslation);
+    });
+    pass.addUniform("uAmbient", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.ambientColor);
+    });
+    pass.addUniform("uSunColor", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.sunColor);
     });
 
     pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
