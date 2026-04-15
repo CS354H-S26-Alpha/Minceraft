@@ -3,28 +3,13 @@ precision mediump float;
 uniform vec4 uLightPos;
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
-uniform sampler2D uBlockAtlas;
-uniform float uBlockAtlasTileCount;
 
 varying vec4 normal;
 varying vec4 wsPos;
-varying vec2 uv;
 varying vec3 color;
-varying float faceTile;
-
-vec3 resolveAlbedo() {
-  if (faceTile < 0.0) {
-    return color;
-  }
-
-  float sideFace = 1.0 - step(0.5, abs(normal.y));
-  float atlasV = mix(uv.y, 1.0 - uv.y, sideFace);
-  vec2 atlasUV = vec2((uv.x + faceTile) / uBlockAtlasTileCount, atlasV);
-  return texture2D(uBlockAtlas, atlasUV).rgb;
-}
 
 void main() {
-  vec3 kd = resolveAlbedo();
+  vec3 kd = color;
 
   /* Diffuse term */
   vec4 lightDirection = uLightPos - wsPos;

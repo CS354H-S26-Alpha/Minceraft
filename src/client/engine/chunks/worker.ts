@@ -7,12 +7,7 @@ import { ChunkGenerationQueue } from "./queue";
 function transferBatchData(data: ChunkBatchData): ChunkBatchData {
   const transferables: ArrayBuffer[] = [];
   for (const chunk of data.chunks) {
-    transferables.push(
-      chunk.cubePositions.buffer as ArrayBuffer,
-      chunk.cubeColors.buffer as ArrayBuffer,
-      chunk.cubeFaceTiles0.buffer as ArrayBuffer,
-      chunk.cubeFaceTiles1.buffer as ArrayBuffer,
-    );
+    transferables.push(chunk.cubePositions.buffer as ArrayBuffer, chunk.cubeColors.buffer as ArrayBuffer);
   }
   return transfer(data, transferables);
 }

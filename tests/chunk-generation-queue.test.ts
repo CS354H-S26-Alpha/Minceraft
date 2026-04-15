@@ -27,14 +27,6 @@ class FakeChunk {
     return new Float32Array([1, 1, 1]);
   }
 
-  public cubeFaceTiles0(): Float32Array {
-    return new Float32Array([0, 0, 0]);
-  }
-
-  public cubeFaceTiles1(): Float32Array {
-    return new Float32Array([0, 0, 0]);
-  }
-
   public numCubes(): number {
     return 1;
   }
