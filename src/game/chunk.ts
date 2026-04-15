@@ -174,7 +174,7 @@ export class Chunk {
   private cubes: number = 0;
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
-  private cubeAmbientOcclusionF32: Float32Array = new Float32Array(0);
+  private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -324,7 +324,7 @@ export class Chunk {
 
     const positions = new Float32Array(4 * total);
     const colors = new Float32Array(3 * total);
-    const ambientOcclusion = new Float32Array(24 * total);
+    const ambientOcclusion = new Uint8Array(24 * total);
     let count = 0;
 
     const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
@@ -379,7 +379,7 @@ export class Chunk {
     // Edge culling may reduce count below total; subarray trims to exact size
     this.cubePositionsF32 = positions.subarray(0, 4 * count);
     this.cubeColorsF32 = colors.subarray(0, 3 * count);
-    this.cubeAmbientOcclusionF32 = ambientOcclusion.subarray(0, 24 * count);
+    this.cubeAmbientOcclusionU8 = ambientOcclusion.subarray(0, 24 * count);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
@@ -391,8 +391,8 @@ export class Chunk {
     return this.cubeColorsF32;
   }
 
-  public cubeAmbientOcclusion(): Float32Array {
-    return this.cubeAmbientOcclusionF32;
+  public cubeAmbientOcclusion(): Uint8Array {
+    return this.cubeAmbientOcclusionU8;
   }
 
   /** Returns a detached copy of the chunk's surface heights for minimap rendering. */

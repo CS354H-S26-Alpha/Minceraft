@@ -25,11 +25,11 @@ export class ChunkManager {
   private chunkDataMap = new Map<string, SingleChunkData>();
   private positionBuffer = new Float32Array(0);
   private colorBuffer = new Float32Array(0);
-  private ambientOcclusionBuffer = new Float32Array(0);
+  private ambientOcclusionBuffer = new Uint8Array(0);
 
   positions = new Float32Array(0);
   colors = new Float32Array(0);
-  ambientOcclusion = new Float32Array(0);
+  ambientOcclusion = new Uint8Array(0);
   count = 0;
 
   constructor(
@@ -90,7 +90,7 @@ export class ChunkManager {
       this.colorBuffer = new Float32Array(totalCubes * 3);
     }
     if (this.ambientOcclusionBuffer.length < totalCubes * 24) {
-      this.ambientOcclusionBuffer = new Float32Array(totalCubes * 24);
+      this.ambientOcclusionBuffer = new Uint8Array(totalCubes * 24);
     }
 
     let posOffset = 0;

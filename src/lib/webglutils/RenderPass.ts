@@ -318,4 +318,4 @@ class AttributeBuffer {
   }
 }
 
-type BufferData = Uint32Array | Float32Array | Int32Array;
+type BufferData = Uint32Array | Float32Array | Int32Array | Uint8Array;

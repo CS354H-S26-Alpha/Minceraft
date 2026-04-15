@@ -7,7 +7,7 @@ interface ChunkLike {
   getBlockWorld(wx: number, wy: number, wz: number): CubeType;
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
-  cubeAmbientOcclusion(): Float32Array;
+  cubeAmbientOcclusion(): Uint8Array;
   surfaceHeights(): Uint8Array;
   surfaceTypes(): Uint8Array;
   numCubes(): number;

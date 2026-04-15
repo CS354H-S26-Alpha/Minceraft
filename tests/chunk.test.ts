@@ -20,7 +20,7 @@ describe("Chunk", () => {
   it("returns voxel ambient occlusion values for every cube face vertex", () => {
     const chunk = new Chunk(0, 0, 8, 123);
     const ao = chunk.cubeAmbientOcclusion();
-    expect(ao).toBeInstanceOf(Float32Array);
+    expect(ao).toBeInstanceOf(Uint8Array);
     expect(ao.length).toBe(24 * chunk.numCubes());
     for (const value of ao) {
       expect(value).toBeGreaterThanOrEqual(0);
