@@ -17,7 +17,7 @@ export interface EnemyState {
   /**
    * Seconds remaining in "wander" mode. > 0 means the enemy is walking in a
    * random direction chosen when it last got stuck, instead of seeking the
-   * player. Decremented each frame; when it hits 0 seek resumes.
+   * player.
    */
   wanderTimer: number;
 }
@@ -38,10 +38,7 @@ export interface EnemyFrameInputs {
 }
 
 /**
- * Hardcoded bone indices for `robot.dae`. Originally discovered with a rig
- * walk heuristic (find pelvis = first branching bone down from root, then
- * hip joints, then chest, then upper arms). These are model-specific — if
- * the .dae ever changes, re-run that discovery once.
+ * Hardcoded bone indices for `robot.dae`.
  */
 const RIG = {
   root: 52,
@@ -61,9 +58,6 @@ interface WalkPose {
 
 /**
  * Four-pose walk cycle. Arms swing opposite to legs on the same side.
- * Phase 0.00 → contact A, 0.25 → passing, 0.50 → contact B, 0.75 → passing.
- * After the arms-hang-down rest rotation, both legs and arms point along
- * -Y, so all four swings are rotations around the X axis.
  */
 const WALK_KEYFRAMES: WalkPose[] = [
   { legL: +0.6, legR: -0.6, armL: -0.5, armR: +0.5 }, // contact A
@@ -80,14 +74,11 @@ const WALK_SPEED = 2.0;
 const MIN_SEEK_DISTANCE = 1.5;
 /**
  * Distance (blocks) from the player at which a new enemy materializes.
- * The player is used as the origin for a random angle, and SPAWN_MIN_OFFSET
- * enforces that the new enemy is always well out of arm's reach.
  */
 const SPAWN_MIN_OFFSET = 50;
 const SPAWN_MAX_OFFSET = 350;
 /** When an enemy hits a wall, it picks a random direction and walks that way
- * for a short while before trying to resume seeking the player. Duration is
- * randomized per unstick to avoid visual lockstep. */
+ * for a short while before trying to resume seeking the player. */
 const WANDER_MIN_S = 1.0;
 const WANDER_MAX_S = 2.5;
 /** Max concurrent enemies the manager will keep alive. */
@@ -125,8 +116,7 @@ function quatAroundZ(angle: number): Quat {
 
 /**
  * Base rest rotations that bring each arm from the authored T-pose (along
- * ±X) down to hang along -Y. Composed in front of the walk swing so the
- * rest state is "arms at sides" rather than T-pose.
+ * ±X) down to hang along -Y. 
  */
 const REST_ARM_L = quatAroundZ(+Math.PI / 2); // -X → -Y
 const REST_ARM_R = quatAroundZ(-Math.PI / 2); // +X → -Y
@@ -226,7 +216,7 @@ export class EnemyManager {
       // In wander mode, enemy.yaw was set when wandering started and is
       // preserved across frames (neither branch here touches it).
 
-      // --- 3. Step-up movement rule ---
+
       // Sample terrain at both current and proposed-next position. If the
       // next ground is more than one block taller than the current ground,
       // the enemy can't climb the wall: reject the move. Otherwise advance
@@ -264,10 +254,8 @@ export class EnemyManager {
         enemy.yaw += sign * offset;
       }
 
-      // --- 3. Pose skeleton for this phase ---
       poseSkeletonForPhase(mesh, enemy.phase);
 
-      // --- 4. Produce the draw state ---
       // Offset must be per-enemy; a shared scratch buffer would collapse all
       // draw states onto the last enemy's position since they'd reference
       // the same memory.
