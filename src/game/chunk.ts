@@ -102,8 +102,16 @@ export class Chunk {
           this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface); // subsurface follows structural biome
         }
         const surfaceType = surfaceBlock(surfaceBiome, height, this.seed, globalX, globalZ);
-        this.setBlock(j, height, i, surfaceType); // top block follows surfaceBiome (spillover)
-        this.surfaceTypesMap[this.size * i + j] = surfaceType;
+        if (surfaceType === CubeType.Snow && height + 1 < CHUNK_HEIGHT) {
+          // Snow sits on top as its own block — base surface stays as stone/etc.
+          this.setBlock(j, height, i, BIOME_INFOS[surfaceBiome].surface);
+          this.setBlock(j, height + 1, i, CubeType.Snow);
+          this.heightMap[this.size * i + j] = height + 1;
+          this.surfaceTypesMap[this.size * i + j] = CubeType.Snow;
+        } else {
+          this.setBlock(j, height, i, surfaceType);
+          this.surfaceTypesMap[this.size * i + j] = surfaceType;
+        }
       }
     }
 
@@ -128,27 +136,11 @@ export class Chunk {
           const n2 = perlin3D(this.seed + 200, gx, y, gz, caveFreq);
           if (Math.abs(n2) < threshold) {
             this.setBlock(j, y, i, CubeType.Air);
+            // Remove any snow cap sitting on top of this carved block
+            if (this.getBlock(j, y + 1, i) === CubeType.Snow) {
+              this.setBlock(j, y + 1, i, CubeType.Air);
+            }
           }
-        }
-      }
-    }
-
-    // --- Pass 2.5: Mountain snow re-application ---
-    // Cave carving can expose interior stone blocks to air. Re-apply the surface block
-    // (snow or stone depending on height) to any mountain block that now has air above it.
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        if ((biomeMap[this.size * i + j] as Biome) !== Biome.Mountain) continue;
-        const gx = topleftx + j;
-        const gz = topleftz + i;
-        const surfaceY = this.heightMap[this.size * i + j] as number;
-
-        for (let y = surfaceY; y >= 1; y--) {
-          if (this.getBlock(j, y, i) === CubeType.Air) continue;
-          if (this.getBlock(j, y + 1, i) !== CubeType.Air) continue;
-          // This block is newly exposed — apply the correct surface type
-          this.setBlock(j, y, i, surfaceBlock(Biome.Mountain, y, this.seed, gx, gz));
-          break; // only the top exposed block needs snow
         }
       }
     }
