@@ -64,6 +64,6 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
     baseColor: [0.9, 0.4, 0.05],
   },
   [CubeType.Permafrost]: {
-    baseColor: [0.45, 0.5, 0.55],
+    baseColor: [0.58, 0.68, 0.72],
   },
 };
