@@ -24,6 +24,16 @@ export interface HeldItemRenderBatch {
   cubeTransparentMissingFaces?: number;
 }
 
+export interface HeldItemPassView {
+  viewMatrix: Mat4;
+  projMatrix: Mat4;
+  heldItemBatches: HeldItemRenderBatch[];
+  lightPosition: Float32Array;
+  ambientColor: Float32Array;
+  sunColor: Float32Array;
+  clearDepth?: boolean;
+}
+
 export interface RenderView {
   viewMatrix: Mat4;
   projMatrix: Mat4;
@@ -31,6 +41,7 @@ export interface RenderView {
   cubeColors: Float32Array;
   numCubes: number;
   heldItemBatches?: HeldItemRenderBatch[];
+  overlayHeldItemPasses?: HeldItemPassView[];
   lightPosition: Float32Array;
   backgroundColor: Float32Array;
   /** RGB ambient light color (changes with time of day). */
@@ -75,6 +86,7 @@ export class Renderer {
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
   private currentHeldItemBatch: HeldItemRenderBatch = EMPTY_HELD_ITEM_BATCH;
+  private currentHeldItemPassView: HeldItemPassView | undefined;
   private lastHeldItemPositions: Float32Array | null = null;
   private lastHeldItemColors: Float32Array | null = null;
   private lastHeldItemFaceTiles0: Float32Array | null = null;
@@ -135,15 +147,8 @@ export class Renderer {
       this.blankCubeRenderPass.drawInstanced(view.numCubes);
     }
 
-    for (const batch of view.heldItemBatches ?? []) {
-      if (batch.numCubes === 0) continue;
-      this.currentHeldItemBatch = batch;
-      this.bindHeldItemBatch(batch);
-      this.applyHeldItemBlendState(batch);
-      this.heldItemRenderPass.drawInstanced(batch.numCubes);
-    }
-    gl.disable(gl.BLEND);
-    this.currentHeldItemBatch = EMPTY_HELD_ITEM_BATCH;
+    this.currentHeldItemPassView = undefined;
+    this.drawHeldItemBatches(view.heldItemBatches ?? []);
 
     for (const entity of view.entities) {
       if (entity.count === 0) continue;
@@ -158,6 +163,18 @@ export class Renderer {
       ep.pass.drawInstanced(entity.count);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
+
+    for (const passView of view.overlayHeldItemPasses ?? []) {
+      this.currentHeldItemPassView = passView;
+      if (passView.clearDepth ?? true) {
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+      }
+      this.drawHeldItemBatches(passView.heldItemBatches);
+    }
+
+    gl.disable(gl.BLEND);
+    this.currentHeldItemBatch = EMPTY_HELD_ITEM_BATCH;
+    this.currentHeldItemPassView = undefined;
 
     this.gpuTimer.end();
   }
@@ -333,19 +350,19 @@ export class Renderer {
 
   private addHeldItemUniforms(pass: RenderPass): void {
     pass.addUniform("uLightPos", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniform4fv(loc, this.currentView.lightPosition);
+      gl.uniform4fv(loc, this.currentHeldItemPassView?.lightPosition ?? this.currentView.lightPosition);
     });
     pass.addUniform("uProj", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
+      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentHeldItemPassView?.projMatrix ?? this.currentView.projMatrix));
     });
     pass.addUniform("uView", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
+      gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentHeldItemPassView?.viewMatrix ?? this.currentView.viewMatrix));
     });
     pass.addUniform("uAmbient", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniform3fv(loc, this.currentView.ambientColor);
+      gl.uniform3fv(loc, this.currentHeldItemPassView?.ambientColor ?? this.currentView.ambientColor);
     });
     pass.addUniform("uSunColor", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-      gl.uniform3fv(loc, this.currentView.sunColor);
+      gl.uniform3fv(loc, this.currentHeldItemPassView?.sunColor ?? this.currentView.sunColor);
     });
     pass.addUniform("uCubeModel", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(
@@ -376,6 +393,16 @@ export class Renderer {
     pass.addUniform("uCubeTransparentMissingFaces", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform1f(loc, this.currentHeldItemBatch.cubeTransparentMissingFaces ?? 0);
     });
+  }
+
+  private drawHeldItemBatches(batches: readonly HeldItemRenderBatch[]): void {
+    for (const batch of batches) {
+      if (batch.numCubes === 0) continue;
+      this.currentHeldItemBatch = batch;
+      this.bindHeldItemBatch(batch);
+      this.applyHeldItemBlendState(batch);
+      this.heldItemRenderPass.drawInstanced(batch.numCubes);
+    }
   }
 
   private bindHeldItemBatch(batch: HeldItemRenderBatch): void {

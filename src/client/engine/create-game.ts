@@ -19,8 +19,6 @@ import { createRenderLoop } from "./render-loop";
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
-  /** Transparent overlay canvas for the first-person held-item layer. */
-  heldItemCanvas?: () => HTMLCanvasElement | undefined;
   /** Currently previewed held item for the first-person overlay. */
   heldItemId?: () => ItemId | null | undefined;
   /** Output of `joinWorld()` - provides player, snapshot, input, etc. */
@@ -148,9 +146,10 @@ const INPUT_SEND_INTERVAL_MS = 50;
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
+  const heldItemLayer = new HeldItemLayer(gl.clientWidth, gl.clientHeight);
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
-  return { renderer, camera };
+  return { renderer, camera, heldItemLayer };
 }
 
 /**
@@ -229,7 +228,7 @@ export function createGame(args: CreateGameArgs): GameState {
     | {
         renderer: Renderer;
         camera: CameraController;
-        heldItemLayer?: HeldItemLayer;
+        heldItemLayer: HeldItemLayer;
       }
     | undefined;
 
@@ -239,11 +238,6 @@ export function createGame(args: CreateGameArgs): GameState {
     if (!gl || !player) return;
 
     ctx ??= initRenderState(gl, player);
-    const heldItemCanvas = args.heldItemCanvas?.();
-    if (!ctx.heldItemLayer && heldItemCanvas) {
-      ctx.heldItemLayer = new HeldItemLayer(heldItemCanvas);
-      needsResize = true;
-    }
     const { renderer, camera } = ctx;
 
     const tickStart = performance.now();
@@ -256,7 +250,7 @@ export function createGame(args: CreateGameArgs): GameState {
       gl.width = Math.round(gl.clientWidth * dpr);
       gl.height = Math.round(gl.clientHeight * dpr);
       camera.resize(gl.clientWidth, gl.clientHeight);
-      ctx.heldItemLayer?.resize(gl.clientWidth, gl.clientHeight, dpr);
+      ctx.heldItemLayer.resize(gl.clientWidth, gl.clientHeight);
     }
 
     // --- Input -> server ---
@@ -306,6 +300,10 @@ export function createGame(args: CreateGameArgs): GameState {
     // --- Render ---
     const { states: remotePlayerStates, buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    const heldItemId = args.heldItemId
+      ? args.heldItemId()
+      : player.state.inventory[HOTBAR_START_INDEX + player.state.selectedHotbarSlot]?.itemId;
+    const heldItemOverlayPass = ctx.heldItemLayer.buildPass(heldItemId);
     renderer.render({
       viewMatrix,
       projMatrix,
@@ -313,16 +311,13 @@ export function createGame(args: CreateGameArgs): GameState {
       cubeColors: chunks.colors,
       numCubes: chunks.count,
       heldItemBatches: createRemoteHeldItemBatches(remotePlayerStates, buffers),
+      overlayHeldItemPasses: heldItemOverlayPass ? [heldItemOverlayPass] : undefined,
       lightPosition: _lightPos,
       backgroundColor: _bgColor,
       ambientColor: _ambient,
       sunColor: _sunColor,
       entities,
     });
-    const heldItemId = args.heldItemId
-      ? args.heldItemId()
-      : player.state.inventory[HOTBAR_START_INDEX + player.state.selectedHotbarSlot]?.itemId;
-    ctx.heldItemLayer?.render(heldItemId);
 
     // --- Diagnostics (producers -> store) ---
     frame++;

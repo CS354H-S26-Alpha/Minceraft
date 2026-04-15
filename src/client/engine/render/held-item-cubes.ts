@@ -1,5 +1,5 @@
 import { Mat4, Vec3 } from "gl-matrix";
-import { ITEM_DEFINITIONS_BY_ID, type ItemId } from "@/game/items";
+import { ITEM_DEFINITIONS_BY_ID } from "@/game/items";
 import type { PlayerPublicState } from "@/game/player";
 import { ensureBuffer, type GpuBuffers } from "../entities/pipeline";
 import { type HeldItemFaceTileIndices, resolveHeldItemFaceTiles } from "./held-item-textures";

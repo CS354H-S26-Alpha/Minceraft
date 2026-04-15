@@ -8,7 +8,6 @@ import { joinWorld } from "../primitives/join-world";
 
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
-  const [heldItemCanvas, setHeldItemCanvas] = createSignal<HTMLCanvasElement>();
   const [hoveredHotbarSlot, setHoveredHotbarSlot] = createSignal<number | null>(null);
   const [inventoryOpen, setInventoryOpen] = createSignal(false);
 
@@ -16,7 +15,6 @@ export default function GameView() {
 
   const game = createGame({
     glCanvas,
-    heldItemCanvas,
     heldItemId: () => {
       if (inventoryOpen()) return undefined;
 
@@ -74,7 +72,6 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
-      <canvas ref={setHeldItemCanvas} class="pointer-events-none absolute inset-0 z-10 h-full w-full" />
       <PlayerHud
         hidden={inventoryOpen()}
         hoveredHotbarSlot={hoveredHotbarSlot()}
