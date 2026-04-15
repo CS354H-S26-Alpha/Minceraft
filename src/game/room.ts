@@ -157,7 +157,9 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   setTimeOfDay(timeS: number) {
-    this.timeOffsetS = timeS - ((Date.now() / 1000) % DAY_LENGTH_S);
+    if (!Number.isFinite(timeS)) return;
+    const normalizedTimeS = ((timeS % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
+    this.timeOffsetS = normalizedTimeS - ((Date.now() / 1000) % DAY_LENGTH_S);
     this.needsBroadcast = true;
   }
 

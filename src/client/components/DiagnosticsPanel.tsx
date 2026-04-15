@@ -196,7 +196,7 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         <input
           type="range"
           min="0"
-          max={DAY_LENGTH_S}
+          max={DAY_LENGTH_S - 1}
           step="1"
           value={sliderValue()}
           class="h-1 w-full cursor-pointer accent-blue-400"
