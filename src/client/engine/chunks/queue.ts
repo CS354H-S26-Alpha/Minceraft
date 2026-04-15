@@ -7,6 +7,7 @@ interface ChunkLike {
   getBlockWorld(wx: number, wy: number, wz: number): CubeType;
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
+  cubeAmbientOcclusion(): Float32Array;
   surfaceHeights(): Uint8Array;
   surfaceTypes(): Uint8Array;
   numCubes(): number;
@@ -107,6 +108,7 @@ export class ChunkGenerationQueue {
         originZ: chunkZ,
         cubePositions: chunk.cubePositions(),
         cubeColors: chunk.cubeColors(),
+        cubeAmbientOcclusion: chunk.cubeAmbientOcclusion(),
         surfaceHeights: chunk.surfaceHeights(),
         surfaceTypes: chunk.surfaceTypes(),
         numCubes,

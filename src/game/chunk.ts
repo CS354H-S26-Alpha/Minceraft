@@ -6,6 +6,148 @@ import { perlin3D } from "@/utils/noise";
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
 
+type Direction = readonly [number, number, number];
+
+interface FaceAmbientOcclusionSpec {
+  normal: Direction;
+  corners: readonly (readonly [Direction, Direction])[];
+}
+
+// Face order matches Cube geometry: top, left, right, front, back, bottom.
+const FACE_AMBIENT_OCCLUSION_SPECS: readonly FaceAmbientOcclusionSpec[] = [
+  {
+    normal: [0, 1, 0],
+    corners: [
+      [
+        [-1, 0, 0],
+        [0, 0, -1],
+      ],
+      [
+        [-1, 0, 0],
+        [0, 0, 1],
+      ],
+      [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+      [
+        [1, 0, 0],
+        [0, 0, -1],
+      ],
+    ],
+  },
+  {
+    normal: [-1, 0, 0],
+    corners: [
+      [
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+      [
+        [0, -1, 0],
+        [0, 0, 1],
+      ],
+      [
+        [0, -1, 0],
+        [0, 0, -1],
+      ],
+      [
+        [0, 1, 0],
+        [0, 0, -1],
+      ],
+    ],
+  },
+  {
+    normal: [1, 0, 0],
+    corners: [
+      [
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+      [
+        [0, -1, 0],
+        [0, 0, 1],
+      ],
+      [
+        [0, -1, 0],
+        [0, 0, -1],
+      ],
+      [
+        [0, 1, 0],
+        [0, 0, -1],
+      ],
+    ],
+  },
+  {
+    normal: [0, 0, 1],
+    corners: [
+      [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+      [
+        [1, 0, 0],
+        [0, -1, 0],
+      ],
+      [
+        [-1, 0, 0],
+        [0, -1, 0],
+      ],
+      [
+        [-1, 0, 0],
+        [0, 1, 0],
+      ],
+    ],
+  },
+  {
+    normal: [0, 0, -1],
+    corners: [
+      [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+      [
+        [1, 0, 0],
+        [0, -1, 0],
+      ],
+      [
+        [-1, 0, 0],
+        [0, -1, 0],
+      ],
+      [
+        [-1, 0, 0],
+        [0, 1, 0],
+      ],
+    ],
+  },
+  {
+    normal: [0, -1, 0],
+    corners: [
+      [
+        [-1, 0, 0],
+        [0, 0, -1],
+      ],
+      [
+        [-1, 0, 0],
+        [0, 0, 1],
+      ],
+      [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+      [
+        [1, 0, 0],
+        [0, 0, -1],
+      ],
+    ],
+  },
+];
+
+function vertexAmbientOcclusion(side1: boolean, side2: boolean, corner: boolean): number {
+  if (side1 && side2) return 0;
+  return 3 - Number(side1) - Number(side2) - Number(corner);
+}
+
 export function chunkKey(originX: number, originZ: number): string {
   return `${originX},${originZ}`;
 }
@@ -32,6 +174,7 @@ export class Chunk {
   private cubes: number = 0;
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
+  private cubeAmbientOcclusionF32: Float32Array = new Float32Array(0);
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -181,9 +324,12 @@ export class Chunk {
 
     const positions = new Float32Array(4 * total);
     const colors = new Float32Array(3 * total);
+    const ambientOcclusion = new Float32Array(24 * total);
     let count = 0;
 
-    const writeCube = (blockType: CubeType, wx: number, y: number, wz: number): void => {
+    const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
+
+    const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
       const info = CUBE_TYPE_INFO[blockType];
       const c = info.baseColor;
 
@@ -195,6 +341,21 @@ export class Chunk {
       colors[3 * count] = c[0];
       colors[3 * count + 1] = c[1];
       colors[3 * count + 2] = c[2];
+
+      let aoOffset = 24 * count;
+      for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
+        const n = face.normal;
+        for (const [sideA, sideB] of face.corners) {
+          const side1 = isSolid(lx + n[0] + sideA[0], y + n[1] + sideA[1], lz + n[2] + sideA[2]);
+          const side2 = isSolid(lx + n[0] + sideB[0], y + n[1] + sideB[1], lz + n[2] + sideB[2]);
+          const corner = isSolid(
+            lx + n[0] + sideA[0] + sideB[0],
+            y + n[1] + sideA[1] + sideB[1],
+            lz + n[2] + sideA[2] + sideB[2],
+          );
+          ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(side1, side2, corner);
+        }
+      }
 
       count++;
     };
@@ -209,7 +370,7 @@ export class Chunk {
         for (let y = 0; y <= surfY; y++) {
           const blockType = this.getBlock(j, y, i);
           if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-          writeCube(blockType, wx, y, wz);
+          writeCube(blockType, j, y, i, wx, wz);
         }
       }
     }
@@ -218,6 +379,7 @@ export class Chunk {
     // Edge culling may reduce count below total; subarray trims to exact size
     this.cubePositionsF32 = positions.subarray(0, 4 * count);
     this.cubeColorsF32 = colors.subarray(0, 3 * count);
+    this.cubeAmbientOcclusionF32 = ambientOcclusion.subarray(0, 24 * count);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
@@ -227,6 +389,10 @@ export class Chunk {
 
   public cubeColors(): Float32Array {
     return this.cubeColorsF32;
+  }
+
+  public cubeAmbientOcclusion(): Float32Array {
+    return this.cubeAmbientOcclusionF32;
   }
 
   /** Returns a detached copy of the chunk's surface heights for minimap rendering. */

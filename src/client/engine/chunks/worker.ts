@@ -10,6 +10,7 @@ function transferBatchData(data: ChunkBatchData): ChunkBatchData {
     transferables.push(
       chunk.cubePositions.buffer as ArrayBuffer,
       chunk.cubeColors.buffer as ArrayBuffer,
+      chunk.cubeAmbientOcclusion.buffer as ArrayBuffer,
       chunk.surfaceHeights.buffer as ArrayBuffer,
       chunk.surfaceTypes.buffer as ArrayBuffer,
     );
