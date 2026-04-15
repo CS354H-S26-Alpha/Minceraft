@@ -11,6 +11,8 @@ export enum CubeType {
   IronOre = 9,
   GoldOre = 10,
   DiamondOre = 11,
+  Water = 12,
+  Lava = 13,
 }
 
 export interface CubeTypeInfo {
@@ -53,5 +55,11 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   },
   [CubeType.DiamondOre]: {
     baseColor: [0.3, 0.85, 0.85],
+  },
+  [CubeType.Water]: {
+    baseColor: [0.1, 0.3, 0.9],
+  },
+  [CubeType.Lava]: {
+    baseColor: [0.9, 0.4, 0.05],
   },
 };

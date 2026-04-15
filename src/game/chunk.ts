@@ -1,10 +1,12 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
-import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
+import { BIOME_INFOS, Biome, sampleColumn, surfaceBlock } from "@/game/biome";
 import { perlin3D } from "@/utils/noise";
 
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
+export const SEA_LEVEL = 50; // water surface in non-desert biomes
+export const DESERT_LAVA_LEVEL = 46; // lava surface in desert biome
 
 export function chunkKey(originX: number, originZ: number): string {
   return `${originX},${originZ}`;
@@ -76,13 +78,17 @@ export class Chunk {
     const topleftx = this.x - this.size / 2;
     const topleftz = this.y - this.size / 2;
 
+    // Local biome map used in Pass 4 to distinguish water vs. lava columns.
+    const biomeMap = new Uint8Array(this.size * this.size);
+
     // --- Pass 1: Base terrain fill ---
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const globalX = topleftx + j;
         const globalZ = topleftz + i;
 
-        const { biome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
+        const { biome, surfaceBiome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
+        biomeMap[this.size * i + j] = biome;
         const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
@@ -92,9 +98,9 @@ export class Chunk {
           this.setBlock(j, y, i, CubeType.Stone);
         }
         for (let y = Math.max(1, height - 3); y < height; y++) {
-          this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface);
+          this.setBlock(j, y, i, BIOME_INFOS[surfaceBiome].subsurface);
         }
-        const surfaceType = surfaceBlock(biome, height);
+        const surfaceType = surfaceBlock(surfaceBiome, height);
         this.setBlock(j, height, i, surfaceType);
         this.surfaceTypesMap[this.size * i + j] = surfaceType;
       }
@@ -138,6 +144,36 @@ export class Chunk {
               break;
             }
           }
+        }
+      }
+    }
+
+    // --- Pass 4: Fluid fill ---
+    // Desert: fill low columns with Lava up to DESERT_LAVA_LEVEL (surface lava lakes).
+    // All other biomes: fill low columns with Water up to SEA_LEVEL.
+    // heightMap is updated so renderChunk scans up to the fluid surface.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const idx = this.size * i + j;
+        const terrainY = this.heightMap[idx] as number;
+        const biome = biomeMap[idx] as Biome;
+
+        if (biome === Biome.Desert) {
+          if (terrainY >= DESERT_LAVA_LEVEL) continue;
+          for (let y = terrainY + 1; y <= DESERT_LAVA_LEVEL; y++) {
+            this.setBlock(j, y, i, CubeType.Lava);
+          }
+          this.heightMap[idx] = DESERT_LAVA_LEVEL;
+          this.surfaceTypesMap[idx] = CubeType.Lava;
+        } else if (biome === Biome.Tundra) {
+          // Tundra is dry/frozen — no water fill
+        } else {
+          if (terrainY >= SEA_LEVEL) continue;
+          for (let y = terrainY + 1; y <= SEA_LEVEL; y++) {
+            this.setBlock(j, y, i, CubeType.Water);
+          }
+          this.heightMap[idx] = SEA_LEVEL;
+          this.surfaceTypesMap[idx] = CubeType.Water;
         }
       }
     }
