@@ -6,7 +6,8 @@ import { perlin3D } from "@/utils/noise";
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
 export const SEA_LEVEL = 50; // water surface in non-desert biomes
-export const DESERT_LAVA_LEVEL = 46; // lava surface in desert biome
+export const DESERT_LAVA_LEVEL = 55; // lava surface in desert biome
+export const CAVE_LAVA_LEVEL = 8; // deep lava fills cave air pockets at the bottom of the world
 
 export function chunkKey(originX: number, originZ: number): string {
   return `${originX},${originZ}`;
@@ -88,7 +89,7 @@ export class Chunk {
         const globalZ = topleftz + i;
 
         const { biome, surfaceBiome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
-        biomeMap[this.size * i + j] = biome;
+        biomeMap[this.size * i + j] = biome; // structural biome drives fluid fill
         const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
@@ -98,10 +99,10 @@ export class Chunk {
           this.setBlock(j, y, i, CubeType.Stone);
         }
         for (let y = Math.max(1, height - 3); y < height; y++) {
-          this.setBlock(j, y, i, BIOME_INFOS[surfaceBiome].subsurface);
+          this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface); // subsurface follows structural biome
         }
-        const surfaceType = surfaceBlock(surfaceBiome, height);
-        this.setBlock(j, height, i, surfaceType);
+        const surfaceType = surfaceBlock(surfaceBiome, height, this.seed, globalX, globalZ);
+        this.setBlock(j, height, i, surfaceType); // top block follows surfaceBiome (spillover)
         this.surfaceTypesMap[this.size * i + j] = surfaceType;
       }
     }
@@ -148,8 +149,21 @@ export class Chunk {
       }
     }
 
-    // --- Pass 4: Fluid fill ---
-    // Desert: fill low columns with Lava up to DESERT_LAVA_LEVEL (surface lava lakes).
+    // --- Pass 4: Deep cave lava ---
+    // Any air pocket at or below CAVE_LAVA_LEVEL (above bedrock at Y=0) becomes lava,
+    // creating natural lava pools at the bottom of caves.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        for (let y = 1; y <= CAVE_LAVA_LEVEL; y++) {
+          if (this.getBlock(j, y, i) === CubeType.Air) {
+            this.setBlock(j, y, i, CubeType.Lava);
+          }
+        }
+      }
+    }
+
+    // --- Pass 5: Surface fluid fill ---
+    // Desert: coat low-lying surface blocks with Lava (follows terrain slope).
     // All other biomes: fill low columns with Water up to SEA_LEVEL.
     // heightMap is updated so renderChunk scans up to the fluid surface.
     for (let i = 0; i < this.size; i++) {
@@ -159,12 +173,34 @@ export class Chunk {
         const biome = biomeMap[idx] as Biome;
 
         if (biome === Biome.Desert) {
+          // Surface-coat low desert terrain with lava — follows the slope naturally.
+          // Skip if spillover replaced the surface, or if any adjacent column is a different
+          // biome (lava stays interior to the desert, never on biome edges).
           if (terrainY >= DESERT_LAVA_LEVEL) continue;
-          for (let y = terrainY + 1; y <= DESERT_LAVA_LEVEL; y++) {
-            this.setBlock(j, y, i, CubeType.Lava);
+          if (this.getBlock(j, terrainY, i) !== CubeType.Sand) continue;
+          // Require a 5-block interior buffer — lava with physics must not reach biome edges.
+          const S = this.size;
+          const R = 5;
+          let onEdge = false;
+          outer: for (let di = -R; di <= R && !onEdge; di++) {
+            for (let dj = -R; dj <= R && !onEdge; dj++) {
+              if (Math.abs(di) + Math.abs(dj) > R) continue; // diamond/cross shape
+              const ni = i + di,
+                nj = j + dj;
+              if (ni < 0 || ni >= S || nj < 0 || nj >= S) {
+                onEdge = true;
+                break outer;
+              }
+              if ((biomeMap[ni * S + nj] as Biome) !== Biome.Desert) {
+                onEdge = true;
+                break outer;
+              }
+            }
           }
-          this.heightMap[idx] = DESERT_LAVA_LEVEL;
+          if (onEdge) continue;
+          this.setBlock(j, terrainY, i, CubeType.Lava);
           this.surfaceTypesMap[idx] = CubeType.Lava;
+          // heightMap unchanged — lava sits at the existing terrain surface
         } else if (biome === Biome.Tundra) {
           // Tundra is dry/frozen — no water fill
         } else {

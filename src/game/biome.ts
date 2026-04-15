@@ -5,19 +5,17 @@ import { terrainHeight, valueNoise, valueNoiseFbm } from "@/utils/noise";
 // Biomes are determined by two independent noise axes:
 //   temperature (0=cold → 1=hot) and moisture (0=dry → 1=wet)
 //
-//   temp < 0.35                               → Tundra       (cold, dry, no water)
-//   0.35 ≤ temp < 0.50, moist < 0.55         → ColdMountain (snow peaks, water in valleys)
-//   0.50 ≤ temp < 0.65, moist < 0.55         → Mountain     (stone peaks, snow only above Y=80)
-//   0.35 ≤ temp < 0.65, moist ≥ 0.55         → Forest
-//   temp ≥ 0.65, moist < 0.50                → Desert       (lava in low spots)
-//   temp ≥ 0.65, moist ≥ 0.50                → Swamp        (water, very flat)
+//   temp < 0.30                        → Tundra   (cold, no water)
+//   0.30 ≤ temp < 0.60, moist < 0.50  → Mountain (stone peaks, snow above Y=95)
+//   0.30 ≤ temp < 0.60, moist ≥ 0.50  → Forest
+//   temp ≥ 0.60, moist < 0.50         → Desert   (lava in low spots)
+//   temp ≥ 0.60, moist ≥ 0.50         → Swamp    (water, very flat)
 export enum Biome {
   Forest, // 0 — temperate+wet
   Desert, // 1 — hot+dry  (lava lakes)
-  Mountain, // 2 — warm-temperate+dry  (stone peaks)
-  Tundra, // 3 — cold (dry, no water)
+  Mountain, // 2 — temperate+dry (stone peaks, snow above Y=95)
+  Tundra, // 3 — cold (no water)
   Swamp, // 4 — hot+wet (water lakes)
-  ColdMountain, // 5 — cold-temperate+dry (snow peaks, water in valleys)
 }
 
 export interface BiomeInfo {
@@ -31,15 +29,13 @@ export const BIOME_INFOS: Record<Biome, BiomeInfo> = {
   [Biome.Forest]: { surface: CubeType.ForestGrass, subsurface: CubeType.Dirt, heightBase: 60, heightAmp: 10 },
   [Biome.Desert]: { surface: CubeType.Sand, subsurface: CubeType.Sand, heightBase: 60, heightAmp: 10 },
   [Biome.Mountain]: { surface: CubeType.Stone, subsurface: CubeType.Stone, heightBase: 90, heightAmp: 32 },
-  [Biome.Tundra]: { surface: CubeType.Snow, subsurface: CubeType.Dirt, heightBase: 60, heightAmp: 10 },
+  [Biome.Tundra]: { surface: CubeType.Permafrost, subsurface: CubeType.Dirt, heightBase: 50, heightAmp: 10 },
   [Biome.Swamp]: { surface: CubeType.Grass, subsurface: CubeType.Dirt, heightBase: 52, heightAmp: 8 },
-  [Biome.ColdMountain]: { surface: CubeType.Snow, subsurface: CubeType.Stone, heightBase: 85, heightAmp: 28 },
 };
 
-const TEMP_COLD = 0.3; // below → Tundra       (~30% of range)
-const TEMP_MID = 0.5; // splits ColdMountain (below) from Mountain (above) in dry-temperate
-const TEMP_HOT = 0.6; // above → Desert or Swamp  (~40% of range, expanded for visibility)
-const MOIST_DRY = 0.5; // below (temperate) → mountain zone; above → Forest  (50/50 split)
+const TEMP_COLD = 0.3; // below → Tundra
+const TEMP_HOT = 0.6; // above → Desert or Swamp
+const MOIST_DRY = 0.5; // below (temperate) → Mountain; above → Forest
 const MOIST_DRY_HOT = 0.5; // below (hot) → Desert; above → Swamp
 const BLEND = 0.05; // half-width of crossfade zone at each boundary
 
@@ -47,8 +43,7 @@ const BLEND = 0.05; // half-width of crossfade zone at each boundary
 export function computeBiome(temp: number, moist: number): Biome {
   if (temp < TEMP_COLD) return Biome.Tundra;
   if (temp >= TEMP_HOT) return moist >= MOIST_DRY_HOT ? Biome.Swamp : Biome.Desert;
-  if (moist >= MOIST_DRY) return Biome.Forest;
-  return temp < TEMP_MID ? Biome.ColdMountain : Biome.Mountain;
+  return moist >= MOIST_DRY ? Biome.Forest : Biome.Mountain;
 }
 
 // Per-biome soft weight at (temp, moist) for smooth height blending at boundaries.
@@ -57,30 +52,21 @@ function biomeWeight(temp: number, moist: number, biome: Biome): number {
   const B = BLEND;
   switch (biome) {
     case Biome.Tundra:
-      return smoothstepAB(temp, TEMP_COLD + B, TEMP_COLD - B); // 1 when cold, 0 when warm
-
-    case Biome.ColdMountain:
-      // cold-side of temperate AND below TEMP_MID AND dry
-      return (
-        smoothstepAB(temp, TEMP_COLD - B, TEMP_COLD + B) * // warm side of cold boundary
-        smoothstepAB(temp, TEMP_MID + B, TEMP_MID - B) * // cold side of mid boundary
-        smoothstepAB(moist, MOIST_DRY + B, MOIST_DRY - B)
-      ); // dry side
+      return smoothstepAB(temp, TEMP_COLD + B, TEMP_COLD - B);
 
     case Biome.Mountain:
-      // warm-side of temperate AND above TEMP_MID AND dry
       return (
-        smoothstepAB(temp, TEMP_MID - B, TEMP_MID + B) * // warm side of mid boundary
-        smoothstepAB(temp, TEMP_HOT + B, TEMP_HOT - B) * // cool side of hot boundary
+        smoothstepAB(temp, TEMP_COLD - B, TEMP_COLD + B) *
+        smoothstepAB(temp, TEMP_HOT + B, TEMP_HOT - B) *
         smoothstepAB(moist, MOIST_DRY + B, MOIST_DRY - B)
-      ); // dry side
+      );
 
     case Biome.Forest:
       return (
         smoothstepAB(temp, TEMP_COLD - B, TEMP_COLD + B) *
         smoothstepAB(temp, TEMP_HOT + B, TEMP_HOT - B) *
         smoothstepAB(moist, MOIST_DRY - B, MOIST_DRY + B)
-      ); // wet side
+      );
 
     case Biome.Desert:
       return smoothstepAB(temp, TEMP_HOT - B, TEMP_HOT + B) * smoothstepAB(moist, MOIST_DRY_HOT + B, MOIST_DRY_HOT - B);
@@ -92,7 +78,7 @@ function biomeWeight(temp: number, moist: number, biome: Biome): number {
 
 // Returns height params blended smoothly across biome boundaries.
 function blendedHeightParams(temp: number, moist: number): { base: number; amp: number } {
-  const biomes = [Biome.Tundra, Biome.ColdMountain, Biome.Mountain, Biome.Forest, Biome.Desert, Biome.Swamp] as const;
+  const biomes = [Biome.Tundra, Biome.Mountain, Biome.Forest, Biome.Desert, Biome.Swamp] as const;
   let totalWeight = 0,
     base = 0,
     amp = 0;
@@ -110,39 +96,67 @@ function blendedHeightParams(temp: number, moist: number): { base: number; amp: 
 }
 
 // Returns the top block type.
-// Snow overrides above Y=80 for all biomes — ColdMountain already has Snow as its surface
-// so it is snowy at all elevations; Mountain (Stone surface) only gets snow above Y=80.
-export function surfaceBlock(biome: Biome, height: number): CubeType {
-  if (height > 80) return CubeType.Snow;
+// Mountain snow line is noise-driven so coverage is irregular rather than a flat cutoff.
+export function surfaceBlock(biome: Biome, height: number, seed: number, gx: number, gz: number): CubeType {
+  if (biome === Biome.Mountain) {
+    const snowLine = 85 + valueNoise(seed + 77, gx, gz, 1 / 50) * 20; // varies ~85–105
+    if (height > snowLine) return CubeType.Snow;
+  }
   return BIOME_INFOS[biome].surface;
 }
 
-// Single entry point for chunk generation: returns biome + final height for (gx, gz).
-// Also returns surfaceBiome — determined via a finer warp so block-type transitions at
-// biome boundaries are noisy and interleaved rather than a smooth line.
+// Spillover priority: higher value always wins at biome surface boundaries.
+// Mountain > Desert > Swamp > Forest > Tundra
+function biomePriority(biome: Biome): number {
+  switch (biome) {
+    case Biome.Mountain:
+      return 4;
+    case Biome.Desert:
+      return 3;
+    case Biome.Swamp:
+      return 2;
+    case Biome.Forest:
+      return 1;
+    case Biome.Tundra:
+      return 0;
+  }
+}
+
+// Single entry point for chunk generation: returns biome + surfaceBiome + final height.
+// biome      — structural: drives height blending and fluid fill. Clean, no islands.
+// surfaceBiome — visual only: top surface block type, uses high-freq jitter to spill
+//               patches of neighbouring biome surface across the boundary.
 export function sampleColumn(
   seed: number,
   gx: number,
   gz: number,
 ): { biome: Biome; surfaceBiome: Biome; height: number } {
-  // Coarse domain warp — used for height blending (smooth terrain).
-  const warpStrength = 48;
-  const wx = (valueNoise(seed + 31, gx, gz, 1 / 90) - 0.5) * warpStrength;
-  const wz = (valueNoise(seed + 37, gx, gz, 1 / 90) - 0.5) * warpStrength;
-  const temp = valueNoiseFbm(seed + 7, gx + wx, gz + wz, 1 / 250);
-  const moist = valueNoiseFbm(seed + 13, gx + wx, gz + wz, 1 / 250);
+  // Different frequencies break the quadrant-corner alignment between axes.
+  const temp = valueNoiseFbm(seed + 7, gx, gz, 1 / 250);
+  const moist = valueNoiseFbm(seed + 13, gx, gz, 1 / 110);
+
+  // // fBm jitter for the structural biome boundary shape — multi-scale variation gives
+  // // organic curves at both large and medium scales instead of a smooth wavy line.
+  // const jTemp  = temp  + (valueNoiseFbm(seed + 41, gx, gz, 1 / 1000) - 0.5) * 0.45;
+  // const jMoist = moist + (valueNoiseFbm(seed + 43, gx, gz, 1 / 1000) - 0.5) * 0.45;
   const biome = computeBiome(temp, moist);
 
-  // Fine domain warp — applied only for surface block type.
-  // Higher frequency + smaller amplitude creates a jagged, interleaved transition zone
-  // instead of a smooth boundary line.
-  const fineStrength = 24;
-  const fx = (valueNoise(seed + 53, gx, gz, 1 / 18) - 0.5) * fineStrength;
-  const fz = (valueNoise(seed + 59, gx, gz, 1 / 18) - 0.5) * fineStrength;
-  const surfaceTemp = valueNoiseFbm(seed + 7, gx + wx + fx, gz + wz + fz, 1 / 250);
-  const surfaceMoist = valueNoiseFbm(seed + 13, gx + wx + fx, gz + wz + fz, 1 / 250);
-  const surfaceBiome = computeBiome(surfaceTemp, surfaceMoist);
-
+  // // Surface spillover: sample the biome function at a nearby world-space position.
+  // // This guarantees surfaceBiome is always from an actually-adjacent region — it can never
+  // // jump to a distant biome that isn't geographically nearby.
+  // // If the neighbor is a different biome, a per-column noise value picks the winner.
+  const nx = gx + (valueNoiseFbm(seed + 53, gx, gz, 1 / 60) - 0.5) * 5;
+  const nz = gz + (valueNoiseFbm(seed + 59, gx, gz, 1 / 60) - 0.5) * 5;
+  const nTemp = valueNoiseFbm(seed + 7, nx, nz, 1 / 250);
+  const nMoist = valueNoiseFbm(seed + 13, nx, nz, 1 / 110);
+  const njTemp = nTemp + (valueNoiseFbm(seed + 41, nx, nz, 1 / 50) - 0.5) * 0.11;
+  const njMoist = nMoist + (valueNoiseFbm(seed + 43, nx, nz, 1 / 40) - 0.5) * 0.11;
+  const neighborBiome = computeBiome(njTemp, njMoist);
+  // Higher-priority neighbor wins only when a per-column noise gate passes —
+  // so only a scattered subset of boundary blocks actually get spilled.
+  const spillGate = valueNoise(seed + 71, gx, gz, 1 / 12) > 0.52;
+  const surfaceBiome =
+    neighborBiome !== biome && biomePriority(neighborBiome) > biomePriority(biome) && spillGate ? neighborBiome : biome;
   const raw = terrainHeight(seed, gx, gz);
   const { base, amp } = blendedHeightParams(temp, moist);
   const height = Math.round(base + (raw / 100 - 0.5) * 2 * amp);
