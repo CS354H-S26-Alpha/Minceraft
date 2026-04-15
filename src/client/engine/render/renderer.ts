@@ -222,12 +222,12 @@ export class Renderer {
     0.0,
     0.0,
     0.0, // 2  Dirt
-    0.0,
-    0.0,
-    0.0, // 3  Stone
-    0.0,
-    0.0,
-    0.0, // 4  Sand
+    0.3,
+    0.3,
+    0.335, // 3  Stone
+    0.53,
+    0.47,
+    0.18, // 4  Sand
     0.8,
     0.9,
     1.0, // 5  Snow
@@ -254,8 +254,8 @@ export class Renderer {
     0, // Air
     0, // Grass
     0, // Dirt
-    0, // Stone
-    0, // Sand
+    1, // Stone
+    0.4, // Sand
     1, // Snow
     1, // Bedrock
     0, // ForestGrass
@@ -268,8 +268,8 @@ export class Renderer {
     0.5, // Air
     0.5, // Grass
     0.5, // Dirt
-    0.35, // Stone
-    0.5, // Sand
+    0.5, // Stone
+    0.85, // Sand
     0.5, // Snow        (irrelevant, blend=1)
     0.5, // Bedrock     (irrelevant, blend=1)
     0.5, // ForestGrass

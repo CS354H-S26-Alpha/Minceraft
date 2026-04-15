@@ -21,9 +21,9 @@ out vec4 normal;
 out vec4 wsPos;
 out vec2 uv;
 out vec3 color;
-out float cubeType;
-out vec3 cubeOrigin;
 out vec4 faceAmbientOcclusion;
+flat out float cubeType;
+flat out float cubeSeed;
 
 vec4 selectFaceAmbientOcclusion(vec4 norm) {
   if (norm.y > 0.5) return aAOTop;
@@ -34,6 +34,14 @@ vec4 selectFaceAmbientOcclusion(vec4 norm) {
   return aAOBottom;
 }
 
+// Per-cube seed (mod 289 prevents collapse at large world coords)
+float seedFromOrigin(vec3 c) {
+  c = mod(c, 289.0);
+  vec3 p = fract(c * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
 void main() {
   wsPos = vec4(aVertPos.xyz + aOffset.xyz, 1.0);
   gl_Position = uProj * uView * wsPos;
@@ -41,6 +49,6 @@ void main() {
   uv = aUV;
   color = aColor;
   cubeType = aOffset.w;
-  cubeOrigin = aOffset.xyz;
+  cubeSeed = seedFromOrigin(aOffset.xyz);
   faceAmbientOcclusion = selectFaceAmbientOcclusion(aNorm);
 }
