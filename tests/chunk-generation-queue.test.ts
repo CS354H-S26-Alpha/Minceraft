@@ -27,6 +27,18 @@ class FakeChunk {
     return new Float32Array([1, 1, 1]);
   }
 
+  public cubeAmbientOcclusion(): Uint8Array {
+    return new Uint8Array(24).fill(3);
+  }
+
+  public surfaceHeights(): Uint8Array {
+    return new Uint8Array([1]);
+  }
+
+  public surfaceTypes(): Uint8Array {
+    return new Uint8Array([CubeType.Stone]);
+  }
+
   public numCubes(): number {
     return 1;
   }

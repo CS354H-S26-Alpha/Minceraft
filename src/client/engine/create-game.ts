@@ -252,6 +252,7 @@ export function createGame(args: CreateGameArgs): GameState {
       projMatrix,
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
+      cubeAmbientOcclusion: chunks.ambientOcclusion,
       numCubes: chunks.count,
       lightPosition: lighting.lightPosition,
       backgroundColor: lighting.backgroundColor,

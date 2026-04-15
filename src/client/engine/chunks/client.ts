@@ -7,6 +7,7 @@ export interface SingleChunkData {
   originZ: number;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  cubeAmbientOcclusion: Uint8Array;
   surfaceHeights: Uint8Array;
   surfaceTypes: Uint8Array;
   numCubes: number;

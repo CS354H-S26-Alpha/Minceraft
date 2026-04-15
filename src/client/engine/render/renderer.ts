@@ -14,6 +14,7 @@ export interface RenderView {
   projMatrix: Mat4;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  cubeAmbientOcclusion: Uint8Array;
   numCubes: number;
   lightPosition: Float32Array;
   backgroundColor: Float32Array;
@@ -42,6 +43,7 @@ export class Renderer {
   private readonly viewNoTranslation = new Float32Array(16);
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
+  private lastCubeAmbientOcclusion: Uint8Array | null = null;
 
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
@@ -92,6 +94,10 @@ export class Renderer {
     if (view.cubeColors !== this.lastCubeColors) {
       this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
       this.lastCubeColors = view.cubeColors;
+    }
+    if (view.cubeAmbientOcclusion !== this.lastCubeAmbientOcclusion) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aAmbientOcclusion", view.cubeAmbientOcclusion);
+      this.lastCubeAmbientOcclusion = view.cubeAmbientOcclusion;
     }
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
 
@@ -318,6 +324,54 @@ export class Renderer {
       0,
       undefined,
       new Float32Array(0),
+    );
+    const aoStride = 24 * Uint8Array.BYTES_PER_ELEMENT;
+    const aoBuffer = "aAmbientOcclusion";
+    pass.addInstancedAttribute("aAOTop", 4, gl.UNSIGNED_BYTE, false, aoStride, 0, aoBuffer, new Uint8Array(0));
+    pass.addInstancedAttribute(
+      "aAOLeft",
+      4,
+      gl.UNSIGNED_BYTE,
+      false,
+      aoStride,
+      4 * Uint8Array.BYTES_PER_ELEMENT,
+      aoBuffer,
+    );
+    pass.addInstancedAttribute(
+      "aAORight",
+      4,
+      gl.UNSIGNED_BYTE,
+      false,
+      aoStride,
+      8 * Uint8Array.BYTES_PER_ELEMENT,
+      aoBuffer,
+    );
+    pass.addInstancedAttribute(
+      "aAOFront",
+      4,
+      gl.UNSIGNED_BYTE,
+      false,
+      aoStride,
+      12 * Uint8Array.BYTES_PER_ELEMENT,
+      aoBuffer,
+    );
+    pass.addInstancedAttribute(
+      "aAOBack",
+      4,
+      gl.UNSIGNED_BYTE,
+      false,
+      aoStride,
+      16 * Uint8Array.BYTES_PER_ELEMENT,
+      aoBuffer,
+    );
+    pass.addInstancedAttribute(
+      "aAOBottom",
+      4,
+      gl.UNSIGNED_BYTE,
+      false,
+      aoStride,
+      20 * Uint8Array.BYTES_PER_ELEMENT,
+      aoBuffer,
     );
 
     this.addSharedUniforms(pass);
