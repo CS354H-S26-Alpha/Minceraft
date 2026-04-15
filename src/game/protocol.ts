@@ -20,6 +20,8 @@ export interface RoomSnapshot {
   acks: Record<string, number>;
   /** Wall-clock time the server spent on the last tick (ms). */
   tickTimeMs: number;
+  /** Server-authoritative day/night cycle position in seconds [0, DAY_LENGTH_S) (`DAY_LENGTH_S` wraps to `0`). */
+  timeOfDayS: number;
   /** The client's own authoritative state, included when requested. */
   self?: PlayerState;
   /** Private inventory UI state for the current player. */
@@ -40,6 +42,8 @@ export interface RoomSessionApi {
   closeInventory(): void;
   /** Changes the active hotbar slot. */
   selectHotbarSlot(slotIndex: number): void;
+  /** Sets the server-authoritative time of day (seconds within the day cycle). */
+  setTimeOfDay(timeS: number): void;
   /** Leaves the room and disposes the session. */
   leave(): void;
 }

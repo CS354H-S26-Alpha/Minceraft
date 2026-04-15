@@ -34,9 +34,16 @@ export class ChunkManager {
   colors = new Float32Array(0);
   count = 0;
 
-  constructor(seed: number, client: ChunkClient) {
+  constructor(
+    spawnX: number,
+    spawnZ: number,
+    seed: number,
+    client: ChunkClient,
+    private readonly onChange?: () => void,
+  ) {
     this.client = client;
     this.seed = seed;
+    this.update(spawnX, spawnZ);
   }
 
   private buildArgs(generationId: number, originX: number, originZ: number): ChunkQueueArgs {
@@ -50,6 +57,10 @@ export class ChunkManager {
       seed: this.seed,
       chunkOrigins: buildGenerationOrder(originX, originZ, LOAD_DISTANCE),
     };
+  }
+
+  get minimapRadiusBlocks(): number {
+    return RENDER_DISTANCE * CHUNK_SIZE;
   }
 
   /** Starts a new chunk generation when the player enters a different chunk. */
@@ -112,7 +123,7 @@ export class ChunkManager {
         if (!cachedChunk) continue;
         const lx = bx - (ox - CHUNK_SIZE / 2);
         const lz = bz - (oz - CHUNK_SIZE / 2);
-        const surface = cachedChunk.heightMap[lz * CHUNK_SIZE + lx]!;
+        const surface = cachedChunk.surfaceHeights[lz * CHUNK_SIZE + lx]!;
         const start = surface < scanCap ? surface : scanCap;
         const blocks = cachedChunk.blocks;
         const colOffset = lz * CHUNK_SIZE + lx;
@@ -181,10 +192,31 @@ export class ChunkManager {
     for (const chunk of batch.chunks) {
       this.chunkDataMap.set(chunkKey(chunk.originX, chunk.originZ), chunk);
     }
+    this.onChange?.();
   }
 
   dispose(): void {
     this.client.dispose();
+  }
+
+  /**
+   * Returns an encoded minimap sample for the highest block at (x, z).
+   * High byte = `CubeType`, low byte = surface Y.
+   */
+  sampleSurface(wx: number, wz: number): number | undefined {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const chunk = this.chunkDataMap.get(chunkKey(originX, originZ));
+    if (!chunk) return undefined;
+
+    const localX = wx - (originX - CHUNK_SIZE / 2);
+    const localZ = wz - (originZ - CHUNK_SIZE / 2);
+    if (localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) return undefined;
+
+    const index = localZ * CHUNK_SIZE + localX;
+    const blockType = chunk.surfaceTypes[index];
+    const height = chunk.surfaceHeights[index];
+    if (blockType === undefined || height === undefined) return undefined;
+    return (blockType << 8) | height;
   }
 }
 

@@ -8,7 +8,8 @@ interface ChunkLike {
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
   blocks: Uint8Array;
-  heightMap: Uint8Array;
+  surfaceHeights(): Uint8Array;
+  surfaceTypes(): Uint8Array;
   numCubes(): number;
 }
 
@@ -227,7 +228,8 @@ export class ChunkGenerationQueue {
         cubePositions: chunk.cubePositions(),
         cubeColors: chunk.cubeColors(),
         blocks: chunk.blocks,
-        heightMap: chunk.heightMap,
+        surfaceHeights: chunk.surfaceHeights(),
+        surfaceTypes: chunk.surfaceTypes(),
         numCubes,
       });
     }

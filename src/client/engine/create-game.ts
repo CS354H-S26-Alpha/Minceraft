@@ -1,9 +1,10 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
-import { createEffect } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -50,6 +51,8 @@ export interface ServerDiagnostics {
   msptHistory: number[];
   /** How many snapshots we receive per second from the server. */
   snapsPerSec: number;
+  /** Server-authoritative time of day in seconds. */
+  timeOfDayS: number;
 }
 
 interface MutableGameState {
@@ -60,7 +63,21 @@ interface MutableGameState {
   };
 }
 
-export type GameState = Readonly<MutableGameState>;
+export interface MinimapApi {
+  /** Increments whenever chunk surface data changes. */
+  terrainVersion: () => number;
+  /** Number of world blocks available from player center to one map edge. */
+  radiusBlocks: number;
+  /**
+   * Highest loaded block sample for world-space (x, z).
+   * High byte = `CubeType`, low byte = surface Y.
+   */
+  sampleSurface: (wx: number, wz: number) => number | undefined;
+}
+
+export interface GameState extends Readonly<MutableGameState> {
+  readonly minimap: MinimapApi;
+}
 
 /** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
@@ -106,11 +123,15 @@ export function createGame(args: CreateGameArgs): GameState {
         mspt: 0,
         msptHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         snapsPerSec: 0,
+        timeOfDayS: 0,
       },
     },
   });
 
-  const chunks = new ChunkManager(TEMP_START_SEED, new ChunkWorkerClient());
+  const [terrainVersion, setTerrainVersion] = createSignal(0);
+  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient(), () =>
+    setTerrainVersion((version) => version + 1),
+  );
   const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
@@ -123,6 +144,7 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
+  let timeOffsetS = 0;
 
   const handleReset = () => {
     ctx?.camera.reset();
@@ -131,7 +153,6 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const input = createInput(args.glCanvas, {
     onReset: handleReset,
-    onCycleDayPhase: () => lighting.skipPhase(),
     ...args.shortcuts,
   });
 
@@ -223,9 +244,11 @@ export function createGame(args: CreateGameArgs): GameState {
       tickDelta = snap.tick - lastTick;
       lastTick = snap.tick;
       msptHistory.push(snap.tickTimeMs);
+      timeOffsetS = snap.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
     }
 
-    lighting.update(now);
+    const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
+    lighting.update(timeOfDayS);
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
@@ -271,8 +294,21 @@ export function createGame(args: CreateGameArgs): GameState {
       mspt: snap.tickTimeMs,
       msptHistory: msptHistory.ordered(),
       snapsPerSec: snapMeter.rate,
+      timeOfDayS: timeOfDayS,
     });
   });
 
-  return state;
+  return {
+    get playerPosition() {
+      return state.playerPosition;
+    },
+    get diagnostics() {
+      return state.diagnostics;
+    },
+    minimap: {
+      terrainVersion,
+      radiusBlocks: chunks.minimapRadiusBlocks,
+      sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
+    },
+  };
 }

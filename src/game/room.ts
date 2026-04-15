@@ -10,6 +10,7 @@ import type { EntityCollection } from "./entity-collection";
 import type { PlayerPositionPacket } from "./player";
 import { PlayerCollection } from "./player-collection";
 import type { AuthenticatedApi, GameApi, PlayerCredentials, RoomSessionApi, RoomSnapshot } from "./protocol";
+import { DAY_LENGTH_S } from "./time";
 
 export type {
   AuthenticatedApi,
@@ -63,6 +64,7 @@ export class GameRoom extends DurableObject<Env> {
   private needsBroadcast = false;
   private pendingSelfState = new Set<string>();
   private gameTick = 0;
+  private timeOffsetS = 0;
   private lastTickTimeMs = 0;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private db: DrizzleSqliteDODatabase<typeof schema>;
@@ -151,6 +153,13 @@ export class GameRoom extends DurableObject<Env> {
     this.ensureInitialized();
     if (!this.playerCollection.setSelectedHotbarSlot(playerId, slotIndex)) return;
     this.pendingSelfState.add(playerId);
+    this.needsBroadcast = true;
+  }
+
+  setTimeOfDay(timeS: number) {
+    if (!Number.isFinite(timeS)) return;
+    const normalizedTimeS = ((timeS % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
+    this.timeOffsetS = normalizedTimeS - ((Date.now() / 1000) % DAY_LENGTH_S);
     this.needsBroadcast = true;
   }
 
@@ -249,6 +258,7 @@ export class GameRoom extends DurableObject<Env> {
       players: this.playerCollection.snapshot(onlinePlayerIds),
       acks: this.playerCollection.getAcks(onlinePlayerIds),
       tickTimeMs: this.lastTickTimeMs,
+      timeOfDayS: (((Date.now() / 1000 + this.timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S,
     };
   }
 
@@ -329,6 +339,11 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Changes the selected hotbar slot. */
   selectHotbarSlot(slotIndex: number) {
     return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
+  }
+
+  /** Sets the server-authoritative time of day. */
+  setTimeOfDay(timeS: number) {
+    return this.#room.setTimeOfDay(timeS);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */

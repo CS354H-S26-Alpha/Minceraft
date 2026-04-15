@@ -27,6 +27,7 @@ export function joinWorld(roomId: string) {
     players: {},
     acks: {},
     tickTimeMs: 0,
+    timeOfDayS: 0,
   });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
 

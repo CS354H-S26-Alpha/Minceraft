@@ -1,4 +1,6 @@
+import { createSignal } from "solid-js";
 import type { PlayerState } from "@/game/player";
+import { DAY_LENGTH_S } from "@/game/time";
 
 const FRAME_GRAPH_WIDTH = 240;
 const FRAME_GRAPH_HEIGHT = 80;
@@ -24,6 +26,8 @@ interface DiagnosticsPanelProps {
   mspt: number;
   msptHistory: readonly number[];
   snapsPerSec: number;
+  timeOfDayS: number;
+  onSetTimeOfDay: (timeS: number) => void;
   onlinePlayers: readonly OnlinePlayer[];
   onTeleportTo: (playerId: string) => void;
   pointerLocked: boolean;
@@ -131,8 +135,18 @@ function Graph(props: {
   );
 }
 
+function formatTimeOfDay(seconds: number): string {
+  const progress = seconds / DAY_LENGTH_S;
+  const hours = Math.floor(progress * 24) % 24;
+  const minutes = Math.floor((progress * 24 * 60) % 60);
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+}
+
 export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
-  const player = () => props.playerState; // shorter access
+  const player = () => props.playerState;
+  const [dragging, setDragging] = createSignal(false);
+  const [localTime, setLocalTime] = createSignal(0);
+  const sliderValue = () => (dragging() ? localTime() : props.timeOfDayS);
 
   return (
     <div class="absolute top-2 right-2 z-20 w-80 rounded bg-black/60 p-3 font-mono text-sm text-white">
@@ -175,6 +189,26 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           history={props.msptHistory}
           stroke="rgb(52 211 153)"
           title="Server tick time graph"
+        />
+      </div>
+      <div class="flex items-center gap-2 border-t border-white/20 pt-2 pb-2">
+        <span class="shrink-0 text-gray-400">{formatTimeOfDay(sliderValue())}</span>
+        <input
+          type="range"
+          min="0"
+          max={DAY_LENGTH_S - 1}
+          step="1"
+          value={sliderValue()}
+          class="h-1 w-full cursor-pointer accent-blue-400"
+          onPointerDown={() => {
+            setDragging(true);
+            setLocalTime(props.timeOfDayS);
+          }}
+          onInput={(e) => setLocalTime(Number(e.currentTarget.value))}
+          onChange={(e) => {
+            props.onSetTimeOfDay(Number(e.currentTarget.value));
+            setDragging(false);
+          }}
         />
       </div>
       <div class="border-t border-white/20 pt-2">

@@ -16,6 +16,8 @@ function renderData(value: number): ChunkBatchData {
         cubePositions: new Float32Array([value, 0, 0, 0]),
         cubeColors: new Float32Array([value, 0, 0]),
         blocks: new Uint8Array(0),
+        surfaceHeights: new Uint8Array(0),
+        surfaceTypes: new Uint8Array(0),
         numCubes: 1,
       },
     ],
@@ -41,8 +43,7 @@ describe("ChunkManager", () => {
       dispose: () => {},
     };
 
-    const chunkManager = new ChunkManager(123, client);
-    chunkManager.update(0, 0);
+    const chunkManager = new ChunkManager(0, 0, 123, client);
 
     await flushPromises();
     await flushPromises();
@@ -82,8 +83,7 @@ describe("ChunkManager", () => {
       dispose: () => {},
     };
 
-    const chunkManager = new ChunkManager(123, client);
-    chunkManager.update(0, 0);
+    const chunkManager = new ChunkManager(0, 0, 123, client);
     await flushPromises();
 
     chunkManager.update(64, 0);
