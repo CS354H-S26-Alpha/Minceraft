@@ -93,7 +93,7 @@ export class ChunkGenerationQueue {
     const worldGetBlock = (wx: number, wy: number, wz: number): CubeType => {
       const [ox, oz] = chunkOrigin(wx, wz);
       const chunk = this.chunkMap.get(chunkKey(ox, oz));
-      if (!chunk) return CubeType.Stone;
+      if (!chunk) return CubeType.Air;
       return chunk.getBlockWorld(wx, wy, wz);
     };
 
