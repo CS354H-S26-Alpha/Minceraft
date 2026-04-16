@@ -62,8 +62,8 @@ export default function GameView() {
       <Show when={!inventoryOpen()}>
         <div class="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2">
           <div class="relative h-5 w-5">
-            <div class="absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)]" />
-            <div class="absolute left-0 top-1/2 h-[2px] w-full -translate-y-1/2 rounded bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)]" />
+            <div class="absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded bg-white" />
+            <div class="absolute left-0 top-1/2 h-[2px] w-full -translate-y-1/2 rounded bg-white" />
           </div>
         </div>
       </Show>
