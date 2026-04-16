@@ -486,6 +486,7 @@ export class Chunk {
         for (let y = CHUNK_HEIGHT - 1; y > terrainY; y--) {
           if (this.getBlock(j, y, i) !== CubeType.Air) {
             this.heightMap[idx] = y;
+            this.surfaceTypesMap[idx] = this.getBlock(j, y, i);
             break;
           }
         }
