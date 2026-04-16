@@ -554,10 +554,28 @@ export class Chunk {
     if (t !== CubeType.Water && t !== CubeType.Lava) return false;
     this.blocks[idx] = CubeType.Air;
     this.fluidLevels[idx] = 0;
+    const hmIdx = lz * CHUNK_SIZE + lx;
+    if (ly >= this.heightMap[hmIdx]!) {
+      this.refreshSurfaceCacheForColumn(lx, lz);
+    }
     this.activateFluidNeighbours(lx, ly, lz);
     return true;
   }
 
+  private refreshSurfaceCacheForColumn(lx: number, lz: number): void {
+    const hmIdx = lz * CHUNK_SIZE + lx;
+    for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+      const idx = y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx;
+      const t = this.blocks[idx] as CubeType;
+      if (t !== CubeType.Air) {
+        this.heightMap[hmIdx] = y;
+        this.surfaceTypesMap[hmIdx] = t;
+        return;
+      }
+    }
+    this.heightMap[hmIdx] = -1;
+    this.surfaceTypesMap[hmIdx] = CubeType.Air;
+  }
   private activateFluidNeighbours(lx: number, ly: number, lz: number): void {
     const candidates: readonly [number, number, number][] = [
       [lx + 1, ly, lz],
