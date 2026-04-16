@@ -87,6 +87,8 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
+/** How often fluid flow is advanced. Slow enough to be visible and cheap. */
+const FLUID_TICK_INTERVAL_MS = 400;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
@@ -186,6 +188,11 @@ export function createGame(args: CreateGameArgs): GameState {
     setInterval,
   );
 
+  // Advance fluid simulation in the background. The worker ticks every
+  // loaded chunk and ships only the changed ones back, which mergeBatch
+  // applies to the render + collision snapshots on the main thread.
+  makeTimer(() => void chunks.tickFluids(), FLUID_TICK_INTERVAL_MS, setInterval);
+
   let needsResize = true;
   createResizeObserver(args.glCanvas, () => {
     needsResize = true;
@@ -265,6 +272,7 @@ export function createGame(args: CreateGameArgs): GameState {
       backgroundColor: lighting.backgroundColor,
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
+      timeS: now / 1000,
       entities,
     });
 

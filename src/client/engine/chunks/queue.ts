@@ -12,6 +12,12 @@ interface ChunkLike {
   surfaceHeights(): Uint8Array;
   surfaceTypes(): Uint8Array;
   numCubes(): number;
+  /** Advance fluid flow by one tick. Returns true iff any block changed. */
+  tickFluids?(
+    spillover?: (wx: number, wy: number, wz: number, type: CubeType.Water | CubeType.Lava, level: number) => void,
+  ): boolean;
+  /** Place a fluid into the given cell (for cross-chunk spillover). */
+  applyFluidFlow?(lx: number, ly: number, lz: number, type: CubeType.Water | CubeType.Lava, level: number): boolean;
 }
 
 type ChunkFactory = (centerX: number, centerZ: number, size: number, seed: number) => ChunkLike;
@@ -151,6 +157,59 @@ export class ChunkGenerationQueue {
     this.queuedChunks = this.buildQueue(args.chunkOrigins);
     this.evictDistantChunks(args);
     return this.renderAllVisible(args);
+  }
+
+  /**
+   * Advances fluid simulation by one tick across every currently-visible
+   * chunk. Re-renders only the chunks whose blocks actually changed, and
+   * returns them so the main thread can refresh its render buffers and
+   * collision data. Returns `null` if nothing changed.
+   */
+  tickFluids(args: ChunkQueueArgs): ChunkBatchData | null {
+    this.ensureSeed(args.seed);
+    if (args.generationId !== this.activeGenerationId) return null;
+
+    const changedKeys = new Set<string>();
+
+    // Cross-chunk spillover: a fluid leaving its chunk is routed to the
+    // owning neighbour's applyFluidFlow. If the neighbour isn't loaded,
+    // the flow is simply dropped — the next time that chunk is generated
+    // it will carry whatever sources terrain gen placed. Visited chunks
+    // are marked so their re-render picks up the new blocks.
+    const spillover = (
+      wx: number,
+      wy: number,
+      wz: number,
+      type: CubeType.Water | CubeType.Lava,
+      level: number,
+    ): void => {
+      const [ox, oz] = chunkOrigin(wx, wz);
+      const key = chunkKey(ox, oz);
+      const target = this.cache.get(key);
+      if (!target?.applyFluidFlow) return;
+      const lx = wx - (ox - CHUNK_SIZE / 2);
+      const lz = wz - (oz - CHUNK_SIZE / 2);
+      if (target.applyFluidFlow(lx, wy, lz, type, level)) changedKeys.add(key);
+    };
+
+    for (const key of this.visibleKeys) {
+      const chunk = this.cache.get(key);
+      if (!chunk?.tickFluids) continue;
+      if (chunk.tickFluids(spillover)) changedKeys.add(key);
+    }
+
+    if (changedKeys.size === 0) return null;
+
+    const worldGetBlock = this.buildWorldGetBlock();
+    const changedEntries: ChunkEntry[] = [];
+    for (const key of changedKeys) {
+      const chunk = this.cache.get(key);
+      if (!chunk) continue;
+      chunk.renderChunk(worldGetBlock);
+      const [cx, cz] = key.split(",").map(Number) as [number, number];
+      changedEntries.push({ chunkX: cx, chunkZ: cz, chunk });
+    }
+    return this.collectBatch(changedEntries);
   }
 
   /** Generates one queued chunk and returns only the changed chunks, or `null` if done or stale. */

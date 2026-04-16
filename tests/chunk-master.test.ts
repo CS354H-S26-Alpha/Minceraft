@@ -41,6 +41,9 @@ describe("ChunkManager", () => {
         if (nextCalls > 3) return null;
         return renderData(nextCalls);
       },
+      async tickFluids() {
+        return null;
+      },
       dispose: () => {},
     };
 
@@ -81,6 +84,9 @@ describe("ChunkManager", () => {
           });
         }
         return Promise.resolve(null);
+      },
+      async tickFluids() {
+        return null;
       },
       dispose: () => {},
     };

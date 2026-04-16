@@ -12,6 +12,7 @@ const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 export interface ChunkClient {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  tickFluids(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
   dispose(): void;
 }
 
@@ -83,6 +84,26 @@ export class ChunkManager {
   reset(): void {
     this.lastOriginX = NaN;
     this.lastOriginZ = NaN;
+  }
+
+  /**
+   * Asks the worker to advance fluid simulation by one tick. No-ops while
+   * the player hasn't yet entered a generation (e.g. during boot) or while
+   * a previous fluid tick is still in flight, so we never queue up work.
+   */
+  private fluidTickInFlight = false;
+  async tickFluids(): Promise<void> {
+    if (this.fluidTickInFlight) return;
+    if (!Number.isFinite(this.lastOriginX) || !Number.isFinite(this.lastOriginZ)) return;
+    const generationId = this.activeGeneration;
+    this.fluidTickInFlight = true;
+    try {
+      const args = this.buildArgs(generationId, this.lastOriginX, this.lastOriginZ);
+      const batch = await this.client.tickFluids(args);
+      if (batch && generationId === this.activeGeneration) this.mergeBatch(batch);
+    } finally {
+      this.fluidTickInFlight = false;
+    }
   }
 
   /**

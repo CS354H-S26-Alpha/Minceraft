@@ -22,6 +22,8 @@ export interface RenderView {
   ambientColor: Float32Array;
   /** RGB sun/moon light color (changes with time of day). */
   sunColor: Float32Array;
+  /** Wall-clock seconds since game start; drives fluid surface animation. */
+  timeS: number;
   entities: EntityDrawData[];
 }
 
@@ -448,6 +450,9 @@ export class Renderer {
     });
     pass.addUniform("uSunColor", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform3fv(loc, this.currentView.sunColor);
+    });
+    pass.addUniform("uTime", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1f(loc, this.currentView.timeS);
     });
   }
 }

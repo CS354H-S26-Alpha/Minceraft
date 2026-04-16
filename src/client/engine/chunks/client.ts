@@ -46,6 +46,7 @@ export interface ChunkQueueArgs {
 export interface ChunkWorkerApi {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  tickFluids(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
 }
 
 /** Comlink wrapper for the chunk generation web worker. */
@@ -59,6 +60,10 @@ export class ChunkWorkerClient {
 
   generateNext(args: ChunkQueueArgs) {
     return this.remote.generateNext(args);
+  }
+
+  tickFluids(args: ChunkQueueArgs) {
+    return this.remote.tickFluids(args);
   }
 
   dispose(): void {
