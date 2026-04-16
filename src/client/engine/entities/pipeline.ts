@@ -45,6 +45,9 @@ export function createEntityPipeline<S>(config: EntityPipelineConfig<S>) {
     onSnapshot(entities: Record<string, S>, now: number) {
       store.update(structuredClone(entities), now);
     },
+    states(now: number): S[] {
+      return store.interpolated(now);
+    },
     frame(now: number): { buffers: GpuBuffers; count: number } {
       const states = store.interpolated(now);
       const count = config.pack(states, buffers);

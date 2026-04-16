@@ -1,5 +1,5 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
-import type { PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
+import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
 /** Credentials returned after successful authentication. */
 export interface PlayerCredentials {
@@ -78,6 +78,8 @@ export interface RoomSessionApi {
   closeInventory(): void;
   /** Changes the active hotbar slot. */
   selectHotbarSlot(slotIndex: number): void;
+  /** Attempts a melee attack from a client-authoritative snapshot. */
+  attack(packet: PlayerAttackPacket): void;
   /** Sets the server-authoritative time of day (seconds within the day cycle). */
   setTimeOfDay(timeS: number): void;
   /** Leaves the room and disposes the session. */

@@ -4,6 +4,7 @@ import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -145,15 +146,42 @@ export function createGame(args: CreateGameArgs): GameState {
   let lastTick = 0;
   let lastPacketCount = 0;
   let timeOffsetS = 0;
+  // Lazy-initialized on the first frame where all signals have resolved.
+  let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
   const handleReset = () => {
     ctx?.camera.reset();
     chunks.reset();
   };
 
+  const handleAttack = () => {
+    const player = room().player();
+    const session = room().session();
+    const camera = ctx?.camera;
+    if (!player || !session || !camera) return;
+
+    const yaw = camera.yaw();
+    const pitch = camera.pitch();
+    const targetPlayerId = findTargetedPlayerId(
+      { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+      remotePlayers.states(performance.now()),
+    );
+    if (!targetPlayerId) return;
+
+    session.attack({
+      targetPlayerId,
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw,
+      pitch,
+    });
+  };
+
   const input = createInput(args.glCanvas, {
     onReset: handleReset,
     ...args.shortcuts,
+    onAttack: handleAttack,
   });
 
   // TODO: refactor to be general packet handling rather than only inputs
@@ -190,9 +218,6 @@ export function createGame(args: CreateGameArgs): GameState {
   createResizeObserver(args.glCanvas, () => {
     needsResize = true;
   });
-
-  // Lazy-initialized on the first frame where all signals have resolved.
-  let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
