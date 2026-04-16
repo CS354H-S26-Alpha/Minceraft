@@ -204,13 +204,13 @@ export class Renderer {
     0.5, // 11 DiamondOre
     0.0,
     0.0,
-    0.0, // 12 Water       (dummy — fluid branch overrides kd)
+    0.0, // 12 Water
+    1.0,
+    0.7,
+    0.1, // 13 Lava
     0.0,
     0.0,
-    0.0, // 13 Lava        (dummy — fluid branch overrides kd)
-    0.0,
-    0.0,
-    0.0, // 14 Permafrost  (dummy — overridden by grass branch)
+    0.0, // 14 Permafrost  (overridden by face logic)
   ]);
   private static readonly LUT1_BLEND = new Float32Array([
     0, // Air
@@ -225,9 +225,9 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
-    0, // Water      (dummy)
-    0, // Lava       (dummy)
-    0, // Permafrost (dummy)
+    0, // Water
+    0.3, // Lava
+    0, // Permafrost
   ]);
   private static readonly LUT2_FIXED = new Float32Array([
     0.0,
@@ -268,13 +268,13 @@ export class Renderer {
     0.92, // 11 DiamondOre
     0.0,
     0.0,
-    0.0, // 12 Water       (dummy — fluid branch overrides kd)
+    0.0, // 12 Water
+    0.7,
+    0.1,
+    0.0, // 13 Lava
     0.0,
     0.0,
-    0.0, // 13 Lava        (dummy — fluid branch overrides kd)
-    0.0,
-    0.0,
-    0.0, // 14 Permafrost  (dummy — overridden by grass branch)
+    0.0, // 14 Permafrost  (overridden by face logic)
   ]);
   private static readonly LUT2_BLEND = new Float32Array([
     0, // Air
@@ -289,9 +289,9 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
-    0, // Water      (dummy)
-    0, // Lava       (dummy)
-    0, // Permafrost (dummy)
+    0, // Water
+    0.6, // Lava
+    0, // Permafrost
   ]);
   private static readonly LUT2_SCALE = new Float32Array([
     0.5, // Air
@@ -306,9 +306,9 @@ export class Renderer {
     0.5, // IronOre     (irrelevant, blend=1)
     0.5, // GoldOre     (irrelevant, blend=1)
     0.5, // DiamondOre  (irrelevant, blend=1)
-    0.5, // Water       (dummy)
-    0.5, // Lava        (dummy)
-    0.5, // Permafrost  (dummy)
+    0.7, // Water
+    0.5, // Lava        (irrelevant, blend=0.6)
+    0.5, // Permafrost  (overridden by face logic)
   ]);
 
   private initBlankCubePass(cube: Cube): void {
