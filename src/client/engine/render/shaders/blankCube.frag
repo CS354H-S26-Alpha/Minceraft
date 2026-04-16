@@ -20,7 +20,7 @@ in vec2 uv;
 in vec3 color;
 flat in float cubeType;
 flat in float cubeSeed;
-in vec4 faceAmbientOcclusion;
+flat in vec4 faceAmbientOcclusion;
 
 out vec4 fragColor;
 
@@ -106,10 +106,10 @@ void main() {
   vec3 lightDir = normalize(uLightPos.xyz);
   float dot_nl = clamp(dot(lightDir, normalize(normal.xyz)), 0.0, 1.0);
 
-  // Bilinear AO from the four corner occlusion values, sampled at the quantized texel centre
-  float aoLow = mix(faceAmbientOcclusion.x, faceAmbientOcclusion.w, quv.x);
-  float aoHigh = mix(faceAmbientOcclusion.y, faceAmbientOcclusion.z, quv.x);
-  float ao = clamp(mix(aoLow, aoHigh, quv.y) / 3.0, 0.0, 1.0);
+  // Smooth bilinear AO — interpolated per-fragment (not quantized to the texel grid)
+  float aoLow = mix(faceAmbientOcclusion.x, faceAmbientOcclusion.w, uv.x);
+  float aoHigh = mix(faceAmbientOcclusion.y, faceAmbientOcclusion.z, uv.x);
+  float ao = clamp(mix(aoLow, aoHigh, uv.y) / 3.0, 0.0, 1.0);
   float aoFactor = mix(0.3, 1.0, pow(ao, 0.75));
 
   vec3 lit = kd * (uAmbient + dot_nl * uSunColor) * aoFactor;

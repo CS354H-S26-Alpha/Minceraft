@@ -21,17 +21,18 @@ out vec4 normal;
 out vec4 wsPos;
 out vec2 uv;
 out vec3 color;
-out vec4 faceAmbientOcclusion;
+flat out vec4 faceAmbientOcclusion;
 flat out float cubeType;
 flat out float cubeSeed;
 
+// Branchless face-AO selection — one of the six step() masks is 1.0, rest are 0.0.
 vec4 selectFaceAmbientOcclusion(vec4 norm) {
-  if (norm.y > 0.5) return aAOTop;
-  if (norm.x < -0.5) return aAOLeft;
-  if (norm.x > 0.5) return aAORight;
-  if (norm.z > 0.5) return aAOFront;
-  if (norm.z < -0.5) return aAOBack;
-  return aAOBottom;
+  return step( 0.5,  norm.y) * aAOTop
+       + step( 0.5, -norm.y) * aAOBottom
+       + step( 0.5,  norm.x) * aAORight
+       + step( 0.5, -norm.x) * aAOLeft
+       + step( 0.5,  norm.z) * aAOFront
+       + step( 0.5, -norm.z) * aAOBack;
 }
 
 // Per-cube seed (mod 289 prevents collapse at large world coords)
