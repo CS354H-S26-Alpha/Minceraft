@@ -1,10 +1,14 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createEffect, createSignal, on, Show } from "solid-js";
-import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
+import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DeathScreen } from "../components/DeathScreen";
+import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
+import { InventoryPanel } from "../components/InventoryPanel";
+import { Minimap } from "../components/Minimap";
 import { PauseMenu } from "../components/PauseMenu";
+import { PlayerHud } from "../components/PlayerHud";
 import { SettingsMenu } from "../components/SettingsMenu";
-import { createGame } from "../engine";
+import { createGame, requestPointerLock } from "../engine";
 import { createGameplayPreferences } from "../primitives/gameplay-preferences";
 import { createGameplayUiState } from "../primitives/gameplay-ui-state";
 import { joinWorld } from "../primitives/join-world";
@@ -13,11 +17,22 @@ const DEATH_Y_THRESHOLD = -20;
 
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
+  const [inventoryOpen, setInventoryOpen] = createSignal(false);
+
   const room = joinWorld("world-1");
-  const { preferences, setPendingPlayerName, setMouseSensitivity, setInvertY, setRenderDistance, setShowDiagnostics } =
-    createGameplayPreferences();
+  const {
+    preferences,
+    setPendingPlayerName,
+    commitPlayerName,
+    setMouseSensitivity,
+    setInvertY,
+    setRenderDistance,
+    setShowDiagnostics,
+  } = createGameplayPreferences();
   const ui = createGameplayUiState();
   const [spawnPoint, setSpawnPoint] = createSignal<{ x: number; y: number; z: number }>();
+
+  const anyOverlayOpen = () => ui.pauseMenuOpen() || ui.settingsOpen() || ui.deathScreenOpen();
 
   const game = createGame({
     glCanvas,
@@ -26,6 +41,17 @@ export default function GameView() {
       mouseSensitivity: () => preferences.mouseSensitivity,
       invertY: () => preferences.invertY,
       renderDistance: () => preferences.renderDistance,
+    },
+    inputEnabled: () => !inventoryOpen() && !anyOverlayOpen(),
+    shortcuts: {
+      onToggleInventory: toggleInventory,
+      onCloseInventory: closeInventory,
+      onSelectHotbarSlot: selectHotbarSlot,
+      onCycleHotbar: (direction) => {
+        const player = room.player();
+        if (!player) return;
+        selectHotbarSlot(mod(player.state.selectedHotbarSlot + direction, HOTBAR_SLOT_COUNT));
+      },
     },
   });
 
@@ -43,11 +69,12 @@ export default function GameView() {
         document.exitPointerLock?.();
         ui.showDeathScreen();
       },
+      { defer: true },
     ),
   );
 
   createEffect(() => {
-    if (!ui.pauseMenuOpen() && !ui.settingsOpen() && !ui.deathScreenOpen()) return;
+    if (!anyOverlayOpen()) return;
     document.exitPointerLock?.();
   });
 
@@ -70,6 +97,32 @@ export default function GameView() {
     ui.hideDeathScreen();
   };
 
+  function selectHotbarSlot(slotIndex: number) {
+    room.player()?.setSelectedHotbarSlot(slotIndex);
+    room.session()?.selectHotbarSlot(slotIndex);
+  }
+
+  function openInventory() {
+    if (inventoryOpen() || anyOverlayOpen()) return;
+    setInventoryOpen(true);
+    void document.exitPointerLock?.();
+  }
+
+  function closeInventory() {
+    if (!inventoryOpen()) return;
+    setInventoryOpen(false);
+    room.session()?.closeInventory();
+    void requestPointerLock(glCanvas());
+  }
+
+  function toggleInventory() {
+    if (inventoryOpen()) {
+      closeInventory();
+    } else {
+      openInventory();
+    }
+  }
+
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
@@ -91,6 +144,7 @@ export default function GameView() {
           preferences={preferences}
           onBack={() => ui.closeSettings()}
           onNameInput={setPendingPlayerName}
+          onNameBlur={commitPlayerName}
           onMouseSensitivityInput={setMouseSensitivity}
           onInvertYInput={setInvertY}
           onRenderDistanceInput={setRenderDistance}
@@ -100,6 +154,23 @@ export default function GameView() {
       <Show when={ui.deathScreenOpen()}>
         <DeathScreen onRespawn={respawn} />
       </Show>
+      <Minimap
+        hidden={inventoryOpen() || anyOverlayOpen()}
+        minimap={game.minimap}
+        player={room.player}
+        players={() => room.remotePlayers}
+      />
+      <PlayerHud
+        hidden={inventoryOpen() || anyOverlayOpen()}
+        onSelectHotbarSlot={selectHotbarSlot}
+        player={room.player}
+      />
+      <InventoryPanel
+        player={room.player}
+        inventoryUi={room.inventoryUi}
+        open={inventoryOpen()}
+        onClickSlot={(target) => room.session()?.clickInventory(target)}
+      />
       <Show when={room.player()?.state}>
         {(playerState) => (
           <Show when={preferences.showDiagnostics}>
@@ -108,13 +179,17 @@ export default function GameView() {
               fps={game.diagnostics.client.fps}
               computeTimeMs={game.diagnostics.client.computeTimeMs}
               computeTimeHistory={game.diagnostics.client.computeTimeHistory}
-              tps={game.diagnostics.server.tps}
+              gpuTimeMs={game.diagnostics.client.gpuTimeMs}
+              gpuTimeHistory={game.diagnostics.client.gpuTimeHistory}
               mspt={game.diagnostics.server.mspt}
               msptHistory={game.diagnostics.server.msptHistory}
               snapsPerSec={game.diagnostics.server.snapsPerSec}
-              onlinePlayers={Object.values(room.snapshot.players)}
+              packetsPerSec={game.diagnostics.server.packetsPerSec}
+              timeOfDayS={game.diagnostics.server.timeOfDayS}
+              onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
+              onlinePlayers={Object.values(room.remotePlayers)}
               onTeleportTo={(id) => {
-                const target = room.snapshot.players[id];
+                const target = room.remotePlayers[id];
                 const s = room.session();
                 if (!target || !s) return;
                 room.replicated()?.teleport({ x: target.x, y: target.y, z: target.z });
@@ -127,4 +202,8 @@ export default function GameView() {
       </Show>
     </div>
   );
+}
+
+function mod(value: number, base: number) {
+  return ((value % base) + base) % base;
 }

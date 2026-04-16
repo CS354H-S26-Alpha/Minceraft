@@ -1,6 +1,7 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createShortcut } from "@solid-primitives/keyboard";
 import { type Accessor, createEffect, createSignal } from "solid-js";
+import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { createHeldCodes } from "../primitives";
 
 export interface WalkKeys {
@@ -14,6 +15,10 @@ export interface WalkKeys {
 
 export interface InputOptions {
   onReset?: () => void;
+  onToggleInventory?: () => void;
+  onCloseInventory?: () => void;
+  onSelectHotbarSlot?: (slotIndex: number) => void;
+  onCycleHotbar?: (direction: 1 | -1) => void;
 }
 
 export interface InputHandle {
@@ -34,6 +39,14 @@ export interface InputHandle {
  */
 export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opts: InputOptions = {}): InputHandle {
   if (opts.onReset) createShortcut(["R"], opts.onReset);
+  if (opts.onToggleInventory) createShortcut(["E"], opts.onToggleInventory);
+  if (opts.onCloseInventory) createShortcut(["Escape"], opts.onCloseInventory);
+  if (opts.onSelectHotbarSlot) {
+    const onSelect = opts.onSelectHotbarSlot;
+    for (let i = 0; i < HOTBAR_SLOT_COUNT; i++) {
+      createShortcut([String(i + 1)], () => onSelect(i));
+    }
+  }
 
   let pendingMouseDx = 0;
   let pendingMouseDy = 0;
@@ -93,6 +106,15 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   createEventListener(document, "contextmenu", (e) => {
     if (document.pointerLockElement === canvas()) e.preventDefault();
   });
+  if (opts.onCycleHotbar) {
+    const onCycle = opts.onCycleHotbar;
+    createEventListener(window, "wheel", (event: WheelEvent) => {
+      const direction = Math.sign(event.deltaY);
+      if (direction === 0) return;
+      event.preventDefault();
+      onCycle(direction as 1 | -1);
+    });
+  }
 
   return {
     walkKeys() {
@@ -112,7 +134,9 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
  * Requests pointer lock with `unadjustedMovement: true` for raw mouse input.
  * Falls back to standard pointer lock if the option is unsupported.
  */
-async function requestPointerLock(canvas: HTMLCanvasElement): Promise<void> {
+export async function requestPointerLock(canvas: HTMLCanvasElement | undefined): Promise<void> {
+  if (!canvas) return;
+
   const maybePointerLock = canvas.requestPointerLock as (options?: {
     unadjustedMovement?: boolean;
   }) => Promise<void> | void;

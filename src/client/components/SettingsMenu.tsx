@@ -1,17 +1,22 @@
 import type { JSX } from "solid-js";
+import { MAX_RENDER_DISTANCE, MIN_RENDER_DISTANCE } from "../engine/chunks";
 import type { GameplayPreferences } from "../primitives/gameplay-preferences";
 
 interface SettingsMenuProps {
   preferences: GameplayPreferences;
   onBack: () => void;
   onNameInput: (name: string) => void;
+  onNameBlur: () => void;
   onMouseSensitivityInput: (value: number) => void;
   onInvertYInput: (value: boolean) => void;
   onRenderDistanceInput: (value: number) => void;
   onShowDiagnosticsInput: (value: boolean) => void;
 }
 
-const RENDER_DISTANCE_OPTIONS = [1, 2, 3, 4] as const;
+const RENDER_DISTANCE_OPTIONS = Array.from(
+  { length: MAX_RENDER_DISTANCE - MIN_RENDER_DISTANCE + 1 },
+  (_, i) => MIN_RENDER_DISTANCE + i,
+);
 
 export function SettingsMenu(props: SettingsMenuProps) {
   return (
@@ -38,6 +43,7 @@ export function SettingsMenu(props: SettingsMenuProps) {
               maxLength={32}
               class="w-full border-2 border-black bg-[#d7d7d7] px-3 py-2 font-mono text-sm text-black focus:outline-none focus:ring-2 focus:ring-white/70"
               onInput={(event) => props.onNameInput(event.currentTarget.value)}
+              onBlur={() => props.onNameBlur()}
             />
             <p class="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-[#dcdcdc]">
               Applies next time you reconnect.

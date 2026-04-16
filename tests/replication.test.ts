@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LocalPrediction } from "../src/client/engine/local-prediction";
-import { PLAYER_SPEED, Player } from "../src/game/player";
+import { LocalPrediction } from "../src/client/engine/entities/local-prediction";
+import { createPlayerState, PLAYER_SPEED, Player } from "../src/game/player";
 
 const S = (
   overrides: Partial<{
@@ -12,15 +12,25 @@ const S = (
     yaw: number;
     pitch: number;
   }> = {},
-) => ({ id: "p1", name: "test", x: 0, y: 100, z: 0, yaw: 0, pitch: 0, ...overrides });
+) =>
+  createPlayerState({
+    id: "p1",
+    name: "test",
+    x: 0,
+    y: 100,
+    z: 0,
+    yaw: 0,
+    pitch: 0,
+    ...overrides,
+  });
 
-const I = (dx: number, dy: number, dz: number) => ({
+const I = (dx: number, dz: number, jump = false) => ({
   dx,
-  dy,
   dz,
   dtSeconds: 1,
   yaw: 0,
   pitch: 0,
+  jump,
 });
 
 function makeReplicated(x = 0, z = 0) {
@@ -39,53 +49,51 @@ describe("LocalPrediction", () => {
   it("replays unacked inputs after initialize", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(1, 0));
 
     replicated.initialize(S({ x: 5 }));
 
-    expect(player.state.x).toBeCloseTo(5 + PLAYER_SPEED * 2);
+    expect(player.state.x).toBeCloseTo(5);
   });
 
-  it("trims history on acknowledge", () => {
+  it("acknowledge does not affect local prediction replay", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(1, 0));
 
     replicated.acknowledge(2);
     replicated.initialize(S({ x: PLAYER_SPEED * 2 }));
 
-    // Only 1 unacked input replayed
-    expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 3);
+    expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 2);
   });
 
-  it("trims correctly across multiple acknowledge calls", () => {
+  it("replaces local state on initialize before future local movement", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(0, 0, 1));
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(0, 1));
+    replicated.predict(I(1, 0));
 
     replicated.acknowledge(1);
-    replicated.predict(I(0, 0, 1));
+    replicated.predict(I(0, 1));
     replicated.acknowledge(3);
 
-    // After ack(3), only the last predict remains unacked
     replicated.initialize(S({ x: PLAYER_SPEED * 2, z: PLAYER_SPEED }));
 
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 2);
-    expect(player.state.z).toBeCloseTo(PLAYER_SPEED * 2);
+    expect(player.state.z).toBeCloseTo(PLAYER_SPEED);
   });
 
   it("predict applies input immediately", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED);
 
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 2);
   });
 });

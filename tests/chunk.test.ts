@@ -3,9 +3,10 @@ import { CubeType } from "../src/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, Chunk } from "../src/game/chunk";
 
 describe("Chunk", () => {
-  it("generates a positive number of cubes", () => {
-    const chunk = new Chunk(0, 0, 8, 123);
-    expect(chunk.numCubes()).toBeGreaterThan(0);
+  it("generates at least one visible cube per column", () => {
+    const size = 8;
+    const chunk = new Chunk(0, 0, size, 123);
+    expect(chunk.numCubes()).toBeGreaterThanOrEqual(size * size);
   });
 
   it("returns a Float32Array of positions with length 4 * numCubes", () => {
@@ -14,6 +15,17 @@ describe("Chunk", () => {
     const positions = chunk.cubePositions();
     expect(positions).toBeInstanceOf(Float32Array);
     expect(positions.length).toBe(4 * chunk.numCubes());
+  });
+
+  it("returns voxel ambient occlusion values for every cube face vertex", () => {
+    const chunk = new Chunk(0, 0, 8, 123);
+    const ao = chunk.cubeAmbientOcclusion();
+    expect(ao).toBeInstanceOf(Uint8Array);
+    expect(ao.length).toBe(24 * chunk.numCubes());
+    for (const value of ao) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(3);
+    }
   });
 
   it("produces deterministic output from seeded RNG", () => {

@@ -1,27 +1,34 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
-import { Vec3, Vec4 } from "gl-matrix";
+import { Vec3 } from "gl-matrix";
+import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { ChunkMaster } from "@/game/chunk-master";
-import type { Player, PlayerInput } from "@/game/player";
+import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
+import { ChunkManager } from "./chunks";
+import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
-import { createInput } from "./input";
+import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
+import { SceneLighting } from "./scene-lighting";
 
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
-  /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
+  /** Output of `joinWorld()` — provides player, remote players, tick info, input, etc. */
   room: ReturnType<typeof joinWorld>;
-  preferences?: {
+  preferences: {
     mouseSensitivity: () => number;
     invertY: () => boolean;
     renderDistance: () => number;
   };
+  /** Whether first-person movement/look input should currently be active. */
+  inputEnabled?: () => boolean;
+  shortcuts?: Omit<InputOptions, "onReset">;
 }
 
 /** Client-side rendering metrics exposed to the diagnostics panel. */
@@ -32,19 +39,25 @@ export interface ClientDiagnostics {
   computeTimeMs: number;
   /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
+  /** GPU-measured draw time via EXT_disjoint_timer_query (ms). 0 if unsupported. */
+  gpuTimeMs: number;
+  /** Rolling ring-buffer of recent GPU times for sparkline display. */
+  gpuTimeHistory: number[];
   pointerLocked: boolean;
 }
 
-/** Server-side performance metrics derived from room snapshots. */
+/** Server-side performance metrics derived from `ServerTick` packets. */
 export interface ServerDiagnostics {
-  /** Server ticks per second, computed from snapshot tick deltas. */
-  tps: number;
-  /** Milliseconds per server tick (from the snapshot). */
+  /** Milliseconds per server tick (reported in the `WorldStatePacket`). */
   mspt: number;
   /** Rolling ring-buffer of recent mspt values. */
   msptHistory: number[];
-  /** How many snapshots we receive per second from the server. */
+  /** How many server ticks we receive per second. */
   snapsPerSec: number;
+  /** How many position packets we send to the server per second. */
+  packetsPerSec: number;
+  /** Server-authoritative time of day in seconds. */
+  timeOfDayS: number;
 }
 
 interface MutableGameState {
@@ -55,10 +68,22 @@ interface MutableGameState {
   };
 }
 
-export type GameState = Readonly<MutableGameState>;
+export interface MinimapApi {
+  /** Increments whenever chunk surface data changes. */
+  terrainVersion: () => number;
+  /** Number of world blocks available from player center to one map edge. */
+  radiusBlocks: number;
+  /**
+   * Highest loaded block sample for world-space (x, z).
+   * High byte = `CubeType`, low byte = surface Y.
+   */
+  sampleSurface: (wx: number, wz: number) => number | undefined;
+}
 
-const LIGHT_POSITION = new Vec4([-1000, 1000, -1000, 1]);
-const BACKGROUND_COLOR = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
+export interface GameState extends Readonly<MutableGameState> {
+  readonly minimap: MinimapApi;
+}
+
 /** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
 /** Number of samples kept in the compute-time and mspt ring buffers. */
@@ -84,6 +109,7 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
  */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
+  const inputEnabled = () => args.inputEnabled?.() ?? true;
 
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
@@ -93,43 +119,79 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
+        gpuTimeMs: 0,
+        gpuTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         pointerLocked: false,
       },
       server: {
-        tps: 0,
         mspt: 0,
         msptHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         snapsPerSec: 0,
+        packetsPerSec: 0,
+        timeOfDayS: 0,
       },
     },
   });
 
-  const initialRenderDistance = args.preferences?.renderDistance?.() ?? 4;
-  const chunkMaster = new ChunkMaster(0.0, 0.0, TEMP_START_SEED, initialRenderDistance);
+  const [terrainVersion, setTerrainVersion] = createSignal(0);
+  const chunks = new ChunkManager(
+    0.0,
+    0.0,
+    TEMP_START_SEED,
+    new ChunkWorkerClient(),
+    args.preferences.renderDistance(),
+    () => setTerrainVersion((version) => version + 1),
+  );
+  const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
-  const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
+  const packetMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   let frame = 0;
-  let lastYaw = 0;
-  let lastPitch = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
-  let tickDelta = 0;
-  let lastRenderDistance = initialRenderDistance;
+  let lastPacketCount = 0;
+  let timeOffsetS = 0;
+  let lastRenderDistance = args.preferences.renderDistance();
 
-  const input = createInput(args.glCanvas, { onReset: () => ctx?.camera.reset() });
+  const handleReset = () => {
+    ctx?.camera.reset();
+    chunks.reset();
+  };
+
+  const input = createInput(args.glCanvas, {
+    onReset: handleReset,
+    ...args.shortcuts,
+  });
 
   // TODO: refactor to be general packet handling rather than only inputs
-  let unsent: PlayerInput[] = [];
+  let nextPacketSequence = 1;
+  let pendingPacket: Omit<PlayerPositionPacket, "sequence"> | undefined;
+
+  // track player position changes to send to server
+  createEffect(() => {
+    const player = room().player();
+    if (!player) return;
+    pendingPacket = {
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw: player.state.yaw,
+      pitch: player.state.pitch,
+    };
+  });
+
+  let packetCount = 0;
   makeTimer(
     () => {
       const s = room().session();
-      if (unsent.length === 0 || !s) return;
-      s.sendInputs(unsent);
-      unsent = [];
+      if (!pendingPacket || !s) return;
+      s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
+      pendingPacket = undefined;
+      packetCount++;
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -164,64 +226,79 @@ export function createGame(args: CreateGameArgs): GameState {
     }
 
     // --- Input → server ---
-    const mouse = input.consumeMouseDelta();
-    const mouseSensitivity = args.preferences?.mouseSensitivity?.() ?? 1;
-    const invertY = args.preferences?.invertY?.() ? -1 : 1;
+    const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
+    const mouseSensitivity = args.preferences.mouseSensitivity();
+    const invertY = args.preferences.invertY() ? -1 : 1;
     camera.rotate(mouse.dx * mouseSensitivity, mouse.dy * mouseSensitivity * invertY);
-    const walk = camera.walkDir(input.walkKeys());
+    const keys = input.walkKeys();
+    const walk = inputEnabled() ? camera.walkDir(keys) : { x: 0, z: 0 };
+    const jump = inputEnabled() && keys.space;
     const yaw = camera.yaw();
     const pitch = camera.pitch();
-    if (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch) {
-      lastYaw = yaw;
-      lastPitch = pitch;
-      const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
+    if (inputEnabled()) {
+      const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump };
       room().replicated()?.predict(next);
-      unsent.push(next);
     }
     camera.setPosition(player.position);
 
-    const renderDistance = args.preferences?.renderDistance?.() ?? lastRenderDistance;
+    const renderDistance = args.preferences.renderDistance();
     if (renderDistance !== lastRenderDistance) {
       lastRenderDistance = renderDistance;
-      chunkMaster.setRenderDistance(renderDistance, player.position.x, player.position.z);
+      chunks.setRenderDistance(renderDistance, player.position.x, player.position.z);
     }
 
-    // update chunks around player
-    chunkMaster.updateChunksAroundPos(player.position.x, player.position.z);
+    chunks.update(player.position.x, player.position.z);
+
+    const replicated = room().replicated();
+    if (replicated) {
+      (replicated.entity as Player).collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
+    }
+
+    const viewMatrix = camera.viewMatrix();
+    const projMatrix = camera.projMatrix();
+    chunks.cull(viewMatrix, projMatrix);
 
     // --- Remote entities ---
-    const snap = room().snapshot;
-    if (snap.tick !== lastTick) {
-      remotePlayers.onSnapshot(unwrap(snap.players), now);
-      tickDelta = snap.tick - lastTick;
-      lastTick = snap.tick;
-      msptHistory.push(snap.tickTimeMs);
+    const tickInfo = room().tickInfo;
+    if (tickInfo.tick !== lastTick) {
+      remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
+      lastTick = tickInfo.tick;
+      msptHistory.push(tickInfo.tickTimeMs);
+      timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
     }
+
+    const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
+    lighting.update(timeOfDayS);
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
     renderer.render({
-      viewMatrix: camera.viewMatrix(),
-      projMatrix: camera.projMatrix(),
-      cubePositions: chunkMaster.getNearCubePositionsFlattened(),
-      cubeColors: chunkMaster.getNearCubeColorsFlattened(),
-      numCubes: chunkMaster.getNearCubeSize(),
-      lightPosition: LIGHT_POSITION,
-      backgroundColor: BACKGROUND_COLOR,
+      viewMatrix,
+      projMatrix,
+      cubePositions: chunks.positions,
+      cubeColors: chunks.colors,
+      cubeAmbientOcclusion: chunks.ambientOcclusion,
+      numCubes: chunks.count,
+      lightPosition: lighting.lightPosition,
+      backgroundColor: lighting.backgroundColor,
+      ambientColor: lighting.ambientColor,
+      sunColor: lighting.sunColor,
       entities,
     });
 
     // --- Diagnostics (producers → store) ---
     frame++;
     const computeTimeMs = performance.now() - tickStart;
+    const gpuTimeMs = renderer.gpuTimer.lastTimeMs;
     fpsMeter.sample(dt, 1);
     computeHistory.push(computeTimeMs);
-    tpsMeter.sample(dt, tickDelta);
-    tickDelta = 0;
+    gpuHistory.push(gpuTimeMs);
     const currentSnapCount = room().snapCount();
     snapMeter.sample(dt, currentSnapCount - lastSnapCount);
     lastSnapCount = currentSnapCount;
+    packetMeter.sample(dt, packetCount - lastPacketCount);
+    lastPacketCount = packetCount;
 
     setState("playerPosition", player.position);
     setState("diagnostics", "client", {
@@ -229,15 +306,30 @@ export function createGame(args: CreateGameArgs): GameState {
       frameCount: frame,
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
+      gpuTimeMs,
+      gpuTimeHistory: gpuHistory.ordered(),
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {
-      tps: tpsMeter.rate,
-      mspt: snap.tickTimeMs,
+      mspt: tickInfo.tickTimeMs,
       msptHistory: msptHistory.ordered(),
       snapsPerSec: snapMeter.rate,
+      packetsPerSec: packetMeter.rate,
+      timeOfDayS,
     });
   });
 
-  return state;
+  return {
+    get playerPosition() {
+      return state.playerPosition;
+    },
+    get diagnostics() {
+      return state.diagnostics;
+    },
+    minimap: {
+      terrainVersion,
+      radiusBlocks: chunks.minimapRadiusBlocks,
+      sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
+    },
+  };
 }

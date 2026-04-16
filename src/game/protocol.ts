@@ -1,4 +1,5 @@
-import type { PlayerInput, PlayerState } from "./player";
+import type { InventoryClickTarget, InventoryUiState } from "./crafting";
+import type { PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
 /** Credentials returned after successful authentication. */
 export interface PlayerCredentials {
@@ -6,31 +7,79 @@ export interface PlayerCredentials {
   name: string;
 }
 
-/**
- * Point-in-time snapshot of the room's authoritative state, broadcast to all
- * connected clients after every tick that changes player positions.
- */
-export interface RoomSnapshot {
-  /** Monotonically increasing server tick counter. */
-  tick: number;
-  /** Current state of every remote player, keyed by player ID. */
-  players: Record<string, PlayerState>;
-  /** Per-player ack counts; used by the client to trim its input history. */
-  acks: Record<string, number>;
+/** Remote player positions and rotations for this tick. */
+export interface PlayersPacket {
+  type: "players";
+  /** Remote players visible to the receiving client, keyed by player ID. */
+  players: Record<string, PlayerPublicState>;
+}
+
+/** Latest input sequence the server has applied for the receiving client. */
+export interface AckPacket {
+  type: "ack";
+  sequence: number;
+}
+
+/** Non-positional self state (inventory, health, hotbar selection). */
+export interface SelfStatePacket {
+  type: "self";
+  state: PlayerState;
+}
+
+/** Authoritative position override — client should snap to this state. */
+export interface ReconcilePacket {
+  type: "reconcile";
+  state: PlayerState;
+}
+
+/** Private crafting/inventory UI state for the receiving client. */
+export interface InventoryUiPacket {
+  type: "inventoryUi";
+  ui: InventoryUiState;
+}
+
+/** World-wide state — tick cost, time-of-day, etc. */
+export interface WorldStatePacket {
+  type: "world";
   /** Wall-clock time the server spent on the last tick (ms). */
   tickTimeMs: number;
-  /** The client's own authoritative state, included when requested. */
-  self?: PlayerState;
+  /** Server-authoritative day/night cycle position in seconds [0, DAY_LENGTH_S) (`DAY_LENGTH_S` wraps to `0`). */
+  timeOfDayS: number;
+}
+
+/** Discriminated union of every packet the server may send to a client. */
+export type ServerPacket =
+  | PlayersPacket
+  | AckPacket
+  | SelfStatePacket
+  | ReconcilePacket
+  | InventoryUiPacket
+  | WorldStatePacket;
+
+/** A single server tick delivered to one client. */
+export interface ServerTick {
+  /** Monotonically increasing server tick counter. */
+  tick: number;
+  /** All packets produced by systems (and the room) for this client. */
+  packets: ServerPacket[];
 }
 
 /** Per-session API surface available to a player once they've joined a room. */
 export interface RoomSessionApi {
-  /** Sends a batch of player inputs to the server. */
-  sendInputs(inputs: PlayerInput[]): void;
+  /** Sends the latest client-reported position packet to the server. */
+  sendPosition(packet: PlayerPositionPacket): void;
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState(): void;
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number): void;
+  /** Interacts with the inventory or crafting UI. */
+  clickInventory(target: InventoryClickTarget): void;
+  /** Returns crafting/cursor items back to the player's inventory. */
+  closeInventory(): void;
+  /** Changes the active hotbar slot. */
+  selectHotbarSlot(slotIndex: number): void;
+  /** Sets the server-authoritative time of day (seconds within the day cycle). */
+  setTimeOfDay(timeS: number): void;
   /** Leaves the room and disposes the session. */
   leave(): void;
 }
@@ -39,8 +88,8 @@ export interface RoomSessionApi {
 export interface AuthenticatedApi {
   /** The authenticated player's credentials. */
   get credentials(): PlayerCredentials;
-  /** Join a named room and register a snapshot listener. */
-  join(roomId: string, onSnapshot: (snap: RoomSnapshot) => void): Promise<RoomSessionApi>;
+  /** Join a named room and register a tick listener. */
+  join(roomId: string, onTick: (tick: ServerTick) => void): Promise<RoomSessionApi>;
 }
 
 /** Top-level WebSocket RPC entry point. */

@@ -1,8 +1,7 @@
 import { WebGLUtilities } from "./CanvasAnimation.js";
 
 export class RenderPass {
-  private ctx: WebGLRenderingContext;
-  private extVAO: OES_vertex_array_object;
+  private ctx: WebGL2RenderingContext;
 
   /* Shader information */
   private vShader: string;
@@ -10,7 +9,7 @@ export class RenderPass {
   private shaderProgram: WebGLProgram;
 
   /* Attributes and indices */
-  private VAO: WebGLVertexArrayObjectOES;
+  private VAO: WebGLVertexArrayObject;
   private indexBuffer: WebGLBuffer;
   private indexBufferData: Uint32Array;
   private attributeBuffers: Map<string, AttributeBuffer>;
@@ -28,13 +27,10 @@ export class RenderPass {
   private textureLoaded: boolean;
   public texture: WebGLTexture;
 
-  private extInstanced: ANGLE_instanced_arrays | null;
   private instancedAttributes: Set<string>;
 
-  constructor(extVAO: OES_vertex_array_object, context: WebGLRenderingContext, vShader: string, fShader: string) {
-    this.extVAO = extVAO;
+  constructor(context: WebGL2RenderingContext, vShader: string, fShader: string) {
     this.ctx = context;
-    this.extInstanced = context.getExtension("ANGLE_instanced_arrays");
     this.instancedAttributes = new Set();
     this.vShader = vShader.slice();
     this.fShader = fShader.slice();
@@ -60,33 +56,38 @@ export class RenderPass {
   }
 
   public setup() {
-    const gl: WebGLRenderingContext = this.ctx;
+    const gl = this.ctx;
     this.shaderProgram = WebGLUtilities.createProgram(gl, this.vShader, this.fShader);
     gl.useProgram(this.shaderProgram);
 
     /* Setup VAO */
-    this.VAO = this.extVAO.createVertexArrayOES() as WebGLVertexArrayObjectOES;
-    this.extVAO.bindVertexArrayOES(this.VAO);
+    this.VAO = gl.createVertexArray() as WebGLVertexArrayObject;
+    gl.bindVertexArray(this.VAO);
 
     /* Setup Index Buffer */
     this.indexBuffer = gl.createBuffer() as WebGLBuffer;
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indexBufferData, gl.STATIC_DRAW);
 
+    /* Setup Attribute Buffers */
+    this.attributeBuffers.forEach((attrBuffer) => {
+      attrBuffer.bufferId = gl.createBuffer() as WebGLBuffer;
+      gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
+      gl.bufferData(gl.ARRAY_BUFFER, attrBuffer.data, gl.STATIC_DRAW);
+    });
+
     /* Setup Attributes */
     this.attributes.forEach((attr) => {
       const attrLoc = gl.getAttribLocation(this.shaderProgram, attr.name);
       const attrBuffer = this.attributeBuffers.get(attr.bufferName);
-      if (attrBuffer) {
-        attrBuffer.bufferId = gl.createBuffer() as WebGLBuffer;
+      if (attrLoc >= 0 && attrBuffer) {
         gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
-        gl.bufferData(gl.ARRAY_BUFFER, attrBuffer.data, gl.STATIC_DRAW);
         gl.vertexAttribPointer(attrLoc, attr.size, attr.type, attr.normalized, attr.stride, attr.offset);
         gl.enableVertexAttribArray(attrLoc);
-        if (this.instancedAttributes.has(attr.name) && this.extInstanced) {
-          this.extInstanced.vertexAttribDivisorANGLE(attrLoc, 1);
+        if (this.instancedAttributes.has(attr.name)) {
+          gl.vertexAttribDivisor(attrLoc, 1);
         }
-      } else {
+      } else if (!attrBuffer) {
         console.error("Attribute's buffer name not found", this);
       }
     });
@@ -111,27 +112,27 @@ export class RenderPass {
         img.onload = (_ev: Event) => {
           console.log(`Loaded texturemap: ${this.textureMap}`);
           gl.useProgram(this.shaderProgram);
-          this.extVAO.bindVertexArrayOES(this.VAO);
+          gl.bindVertexArray(this.VAO);
           gl.bindTexture(gl.TEXTURE_2D, this.texture);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
           gl.useProgram(null);
-          this.extVAO.bindVertexArrayOES(null);
+          gl.bindVertexArray(null);
         };
         img.src = `/static/assets/skinning/${this.textureMap}`;
       }
     }
 
     gl.useProgram(null);
-    this.extVAO.bindVertexArrayOES(null);
+    gl.bindVertexArray(null);
   }
 
   public draw() {
     const gl = this.ctx;
     gl.useProgram(this.shaderProgram);
-    this.extVAO.bindVertexArrayOES(this.VAO);
+    gl.bindVertexArray(this.VAO);
 
     this.uniforms.forEach((uniform) => {
       uniform.bindFunction(gl, uniform.location);
@@ -142,7 +143,7 @@ export class RenderPass {
     gl.drawElements(this.drawMode, this.drawCount, this.drawType, this.drawOffset);
 
     gl.useProgram(null);
-    this.extVAO.bindVertexArrayOES(null);
+    gl.bindVertexArray(null);
   }
 
   public addInstancedAttribute(
@@ -162,7 +163,7 @@ export class RenderPass {
   public updateAttributeBuffer(attribName: string, data: BufferData) {
     const gl = this.ctx;
     gl.useProgram(this.shaderProgram);
-    this.extVAO.bindVertexArrayOES(this.VAO);
+    gl.bindVertexArray(this.VAO);
     const buf = this.attributeBuffers.get(attribName);
     if (buf) {
       buf.data = data;
@@ -172,13 +173,13 @@ export class RenderPass {
       console.error("Attribute buffer not found:", attribName);
     }
     gl.useProgram(null);
-    this.extVAO.bindVertexArrayOES(null);
+    gl.bindVertexArray(null);
   }
 
   public drawInstanced(instanceCount: number) {
     const gl = this.ctx;
     gl.useProgram(this.shaderProgram);
-    this.extVAO.bindVertexArrayOES(this.VAO);
+    gl.bindVertexArray(this.VAO);
 
     this.uniforms.forEach((uniform) => {
       uniform.bindFunction(gl, uniform.location);
@@ -186,18 +187,10 @@ export class RenderPass {
     if (this.textureMapped) {
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
     }
-    if (this.extInstanced) {
-      this.extInstanced.drawElementsInstancedANGLE(
-        this.drawMode,
-        this.drawCount,
-        this.drawType,
-        this.drawOffset,
-        instanceCount,
-      );
-    }
+    gl.drawElementsInstanced(this.drawMode, this.drawCount, this.drawType, this.drawOffset, instanceCount);
 
     gl.useProgram(null);
-    this.extVAO.bindVertexArrayOES(null);
+    gl.bindVertexArray(null);
   }
 
   public setDrawData(drawMode: GLenum, drawCount: number, drawType: GLenum, drawOffset: number) {
@@ -207,7 +200,7 @@ export class RenderPass {
     this.drawOffset = drawOffset;
   }
 
-  public addUniform(name: string, bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void) {
+  public addUniform(name: string, bindFunction: (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => void) {
     this.uniforms.set(name, new Uniform(0, bindFunction));
   }
 
@@ -276,11 +269,11 @@ export class RenderPass {
 
 class Uniform {
   public location: WebGLUniformLocation;
-  public bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void;
+  public bindFunction: (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => void;
 
   constructor(
     location: WebGLUniformLocation,
-    bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void,
+    bindFunction: (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => void,
   ) {
     this.location = location;
     this.bindFunction = bindFunction;
@@ -325,4 +318,4 @@ class AttributeBuffer {
   }
 }
 
-type BufferData = Uint32Array | Float32Array | Int32Array;
+type BufferData = Uint32Array | Float32Array | Int32Array | Uint8Array;

@@ -39,8 +39,6 @@ export function createGameplayUiState() {
     },
     hideDeathScreen() {
       setDeathScreenOpen(false);
-      setPauseMenuOpen(false);
-      setSettingsOpen(false);
     },
   } as const;
 }
