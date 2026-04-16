@@ -134,6 +134,7 @@ export class Chunk {
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
   private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
+  private maxCubes: number = 0;
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -545,7 +546,7 @@ export class Chunk {
 
   // worldGet: optional cross-chunk block lookup for accurate edge culling.
   // Without it, chunk-boundary faces are always treated as exposed (safe but over-renders).
-  public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
+public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
     const topleftx = this.x - this.size / 2;
     const topleftz = this.y - this.size / 2;
     const S = this.size;
@@ -571,48 +572,7 @@ export class Chunk {
       isAir(lx, ly, lz + 1) ||
       isAir(lx, ly, lz - 1);
 
-    const blocks = this.blocks;
-    const STRIDE_Y = S * S;
-
-    const minNH = new Uint8Array(STRIDE_Y);
-    const topYByColumn = new Uint8Array(STRIDE_Y);
-    for (let i = 0; i < S; i++) {
-      for (let j = 0; j < S; j++) {
-        const idx = i * S + j;
-        let topY = hm[idx]!;
-        for (let y = CHUNK_HEIGHT - 1; y > topY; y--) {
-          if (this.getBlock(j, y, i) !== CubeType.Air) {
-            topY = y;
-            break;
-          }
-        }
-        topYByColumn[idx] = topY;
-      }
-    }
-
-    for (let i = 1; i < S - 1; i++) {
-      for (let j = 1; j < S - 1; j++) {
-        const idx = i * S + j;
-        minNH[idx] = Math.min(hm[idx - 1]!, hm[idx + 1]!, hm[idx - S]!, hm[idx + S]!);
-      }
-    }
-
-    let total = 0;
-    for (let i = 0; i < S; i++) {
-      for (let j = 0; j < S; j++) {
-        const idx = i * S + j;
-        const surfY = hm[idx]!;
-        const topY = topYByColumn[idx]!;
-        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
-          total += topY + 1;
-        } else {
-          const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
-          total += 1 + (topY - start + 1);
-        }
-      }
-    }
-
-    ensureScratchCapacity(total);
+    ensureScratchCapacity(this.maxCubes);
     const positions = scratchPositions;
     const colors = scratchColors;
     const ambientOcclusion = scratchAmbientOcclusion;
@@ -655,27 +615,13 @@ export class Chunk {
       for (let j = 0; j < S; j++) {
         const idx = i * S + j;
         const surfY = hm[idx]!;
-        const topY = topYByColumn[idx]!;
         const wx = topleftx + j;
         const wz = topleftz + i;
 
-        if (i === 0 || i === S - 1 || j === 0 || j === S - 1) {
-          for (let y = 0; y <= topY; y++) {
-            const blockType = this.getBlock(j, y, i);
-            if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-            writeCube(blockType, j, y, i, wx, wz);
-          }
-        } else {
-          const bt0 = blocks[idx]! as CubeType;
-          writeCube(bt0, j, 0, i, wx, wz);
-
-          const start = Math.max(1, Math.min(minNH[idx]! + 1, surfY));
-          for (let y = start; y <= topY; y++) {
-            const bt = blocks[y * STRIDE_Y + idx]! as CubeType;
-            if (bt === CubeType.Air) continue;
-            if (y > surfY && !touchesAir(j, y, i)) continue;
-            writeCube(bt, j, y, i, wx, wz);
-          }
+        for (let y = 0; y <= surfY; y++) {
+          const blockType = this.getBlock(j, y, i);
+          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
+          writeCube(blockType, j, y, i, wx, wz);
         }
       }
     }
@@ -685,6 +631,7 @@ export class Chunk {
     this.cubeColorsF32 = colors.slice(0, 3 * count);
     this.cubeAmbientOcclusionU8 = ambientOcclusion.slice(0, 24 * count);
   }
+
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
   public cubePositions(): Float32Array {
