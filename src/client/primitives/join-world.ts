@@ -36,6 +36,7 @@ export function joinWorld(roomId: string) {
 
   const blockAckQueue: Array<{ seq: number; accepted: boolean }> = [];
   const blockChangesQueue: Array<{ x: number; y: number; z: number; blockType: number }> = [];
+  const chunkDataQueue: Array<Array<{ originX: number; originZ: number; blocks: Uint8Array }>> = [];
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
@@ -94,6 +95,9 @@ export function joinWorld(roomId: string) {
       case "blockChanges":
         blockChangesQueue.push(...packet.changes);
         return;
+      case "chunkData":
+        chunkDataQueue.push(packet.chunks);
+        return;
     }
   }
 
@@ -111,5 +115,6 @@ export function joinWorld(roomId: string) {
     inventoryUi,
     blockAckQueue,
     blockChangesQueue,
+    chunkDataQueue,
   } as const;
 }

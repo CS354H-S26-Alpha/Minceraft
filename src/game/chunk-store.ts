@@ -17,6 +17,9 @@ export interface BlockMutationResult {
 }
 
 const FLUSH_DELAY_MS = 5000;
+const META_SCHEMA_SQL = "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)";
+const CHUNK_SCHEMA_SQL = "CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, data BLOB NOT NULL)";
+const SEED_META_KEY = "seed";
 
 export class ChunkStore extends DurableObject<Env> {
   private chunks = new Map<string, Chunk>();
@@ -25,14 +28,12 @@ export class ChunkStore extends DurableObject<Env> {
   private initialized = false;
 
   initialize(seed: number): void {
-    if (this.initialized) return;
-    this.initialized = true;
-    this.seed = seed;
-
-    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, data BLOB NOT NULL)");
+    this.ensureInitialized(seed);
   }
 
   async processActions(actions: BlockMutation[]): Promise<BlockMutationResult[]> {
+    this.ensureInitialized();
+
     // Collect unique chunk keys that need to be loaded
     const neededKeys = new Set<string>();
     for (const action of actions) {
@@ -87,6 +88,50 @@ export class ChunkStore extends DurableObject<Env> {
     return results;
   }
 
+  async getChunks(
+    origins: Array<{ originX: number; originZ: number }>,
+  ): Promise<Array<{ originX: number; originZ: number; blocks: Uint8Array }>> {
+    this.ensureInitialized();
+
+    const neededKeys = new Set<string>();
+    for (const { originX, originZ } of origins) {
+      const key = chunkKey(originX, originZ);
+      if (!this.chunks.has(key)) neededKeys.add(key);
+    }
+    const startedAt = Date.now();
+    this.log("get_chunks_started", {
+      requestChunkCount: origins.length,
+      missingChunkCount: neededKeys.size,
+      sampleMissingChunkKeys: [...neededKeys].slice(0, 5),
+    });
+    try {
+      if (neededKeys.size > 0) {
+        await Promise.all([...neededKeys].map((key) => this.ensureChunk(key)));
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log("get_chunks_failed", {
+        durationMs: Date.now() - startedAt,
+        requestChunkCount: origins.length,
+        missingChunkCount: neededKeys.size,
+        error: message,
+      });
+      throw error;
+    }
+    const result = origins.map(({ originX, originZ }) => {
+      const chunk = this.chunks.get(chunkKey(originX, originZ));
+      if (!chunk) return { originX, originZ, blocks: new Uint8Array(0) };
+      return { originX, originZ, blocks: rleEncodeBlocks(chunk.blocks, CHUNK_SIZE) };
+    });
+    this.log("get_chunks_finished", {
+      durationMs: Date.now() - startedAt,
+      requestChunkCount: origins.length,
+      missingChunkCount: neededKeys.size,
+      returnedChunkCount: result.length,
+    });
+    return result;
+  }
+
   getBlock(wx: number, wy: number, wz: number): number {
     return this.getBlockInternal(wx, wy, wz);
   }
@@ -100,6 +145,38 @@ export class ChunkStore extends DurableObject<Env> {
    * then SQLite, then dispatches to the ChunkGen service worker for parallel
    * generation on a separate isolate.
    */
+  private ensureInitialized(seed?: number): void {
+    if (this.initialized) {
+      if (seed !== undefined) this.seed = seed;
+      return;
+    }
+
+    this.ctx.storage.sql.exec(META_SCHEMA_SQL);
+    this.ctx.storage.sql.exec(CHUNK_SCHEMA_SQL);
+
+    if (seed !== undefined) {
+      this.seed = seed;
+      this.ctx.storage.sql.exec(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        SEED_META_KEY,
+        String(seed),
+      );
+    } else {
+      const rows = this.ctx.storage.sql
+        .exec("SELECT value FROM meta WHERE key = ?", SEED_META_KEY)
+        .toArray() as Array<{ value: string }>;
+      if (rows.length > 0) {
+        this.seed = Number(rows[0]!.value);
+      }
+    }
+
+    this.initialized = true;
+    this.log("chunk_store_initialized", {
+      seed: this.seed,
+      restoredFromMetadata: seed === undefined,
+    });
+  }
+
   private async ensureChunk(key: string): Promise<void> {
     if (this.chunks.has(key)) return;
 
@@ -123,15 +200,35 @@ export class ChunkStore extends DurableObject<Env> {
     // Dispatch to ChunkGen service worker for generation on a separate isolate
     const chunkGen = this.env.ChunkGen;
     if (chunkGen) {
+      const startedAt = Date.now();
+      this.log("generate_chunk_started", { chunkKey: key, originX, originZ });
       const encoded = await chunkGen.generateChunk(originX, originZ, this.seed);
       const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true);
       chunk.blocks.set(rleDecodeBlocks(new Uint8Array(encoded), CHUNK_SIZE));
       this.chunks.set(key, chunk);
+      this.log("generate_chunk_finished", {
+        chunkKey: key,
+        originX,
+        originZ,
+        durationMs: Date.now() - startedAt,
+      });
     } else {
       // Fallback: generate inline (no service binding available, e.g. in tests)
       const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true);
       this.chunks.set(key, chunk);
     }
+  }
+
+  private log(event: string, data: Record<string, unknown>): void {
+    console.info(
+      JSON.stringify({
+        message: "chunk_store",
+        event,
+        chunkStoreId: this.ctx.id.toString(),
+        cachedChunkCount: this.chunks.size,
+        ...data,
+      }),
+    );
   }
 
   /**

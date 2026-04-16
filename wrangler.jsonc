@@ -28,7 +28,14 @@
             "class_name": "ChunkStore"
           }
         ]
-      }
+      },
+      "services": [
+        {
+          "binding": "ChunkGen",
+          "service": "minceraft-staging",
+          "entrypoint": "ChunkGen"
+        }
+      ]
     }
   },
   "services": [

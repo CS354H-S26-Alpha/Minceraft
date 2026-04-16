@@ -2,7 +2,7 @@
 
 import { expose, transfer } from "comlink";
 import type { ChunkBatchData, ChunkWorkerApi } from "./client";
-import { ChunkGenerationQueue } from "./queue";
+import { ChunkMeshBuilder } from "./queue";
 
 function transferBatchData(data: ChunkBatchData): ChunkBatchData {
   const transferables: ArrayBuffer[] = [];
@@ -18,17 +18,19 @@ function transferBatchData(data: ChunkBatchData): ChunkBatchData {
   return transfer(data, transferables);
 }
 
-const queue = new ChunkGenerationQueue();
+const builder = new ChunkMeshBuilder();
 
 const api: ChunkWorkerApi = {
-  async setVisibleChunks(args) {
-    return transferBatchData(queue.setVisibleChunks(args));
+  async loadChunks(chunks) {
+    return transferBatchData(builder.loadChunks(chunks));
   },
 
-  async generateNext(args) {
-    const data = queue.generateNext(args);
-    if (!data) return null;
-    return transferBatchData(data);
+  syncBlock(wx, wy, wz, blockType) {
+    builder.syncBlock(wx, wy, wz, blockType);
+  },
+
+  async clearCache() {
+    builder.clearCache();
   },
 
   async tickFluids(args) {

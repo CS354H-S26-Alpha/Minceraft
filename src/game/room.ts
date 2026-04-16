@@ -1,11 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { Alarms } from "@cloudflare/actors/alarms";
 import { RpcTarget } from "capnweb";
+import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
-import { BlockSystem } from "./block-system";
+import { BlockSystem, type BlockSystemOptions } from "./block-system";
 import type { ChunkStore } from "./chunk-store";
 import type { InventoryClickTarget } from "./crafting";
 import type { GameSystem } from "./game-system";
@@ -32,7 +33,6 @@ export type {
 
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
-const TEMP_START_SEED = 123; // TODO: persist seed per room
 const MAX_NAME_LENGTH = 32;
 const NAME_PATTERN = /^[\w\s-]+$/;
 const MIN_INPUT_INTERVAL_MS = 25;
@@ -70,6 +70,7 @@ export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
   private blockSystem!: BlockSystem;
+  private chunkStoreId!: DurableObjectId;
   private systems!: GameSystem[];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
@@ -80,6 +81,7 @@ export class GameRoom extends DurableObject<Env> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private db: DrizzleSqliteDODatabase<typeof schema>;
   private initialized = false;
+  private blockSystemOptions?: BlockSystemOptions;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -95,17 +97,39 @@ export class GameRoom extends DurableObject<Env> {
     if (this.initialized) return;
     this.initialized = true;
 
-    const chunkStoreId = this.env.ChunkStore.idFromName(this.ctx.id.toString());
-    const chunkStoreStub = this.env.ChunkStore.get(chunkStoreId) as unknown as DurableObjectStub<ChunkStore>;
-    void chunkStoreStub.initialize(TEMP_START_SEED);
+    migrate(this.db, migrations);
+    const seed = this.getOrCreateSeed();
 
-    this.blockSystem = new BlockSystem(chunkStoreStub, this.playerSystem);
+    this.chunkStoreId = this.env.ChunkStore.idFromName(this.ctx.id.toString());
+    void this.getChunkStoreStub().initialize(seed);
+
+    this.blockSystem = new BlockSystem(
+      () => this.getChunkStoreStub(),
+      this.playerSystem,
+      this.blockSystemOptions,
+      this.ctx.id.toString(),
+    );
     this.systems = [this.playerSystem, this.blockSystem];
 
-    migrate(this.db, migrations);
     for (const system of this.systems) {
       system.hydrate(this.db);
     }
+  }
+
+  private getOrCreateSeed(): number {
+    const row = this.db.select().from(schema.roomConfig).where(eq(schema.roomConfig.key, "seed")).get();
+    if (row) return Number(row.value);
+
+    const seed = Math.floor(Math.random() * 2147483647);
+    this.db
+      .insert(schema.roomConfig)
+      .values({ key: "seed", value: String(seed) })
+      .run();
+    return seed;
+  }
+
+  private getChunkStoreStub(): DurableObjectStub<ChunkStore> {
+    return this.env.ChunkStore.get(this.chunkStoreId);
   }
 
   /**
@@ -122,6 +146,7 @@ export class GameRoom extends DurableObject<Env> {
       this.onListenerLost(playerId);
     });
     this.listeners.set(playerId, listener);
+    this.blockSystem.onPlayerJoin(playerId);
     this.needsBroadcast = true;
     this.startTickLoop();
   }
@@ -137,6 +162,7 @@ export class GameRoom extends DurableObject<Env> {
     if (now - last < MIN_INPUT_INTERVAL_MS) return;
     this.lastInputTime.set(playerId, now);
     this.playerSystem.queuePosition(playerId, packet);
+    this.blockSystem.onPlayerPosition(playerId, packet.x, packet.z);
     this.needsBroadcast = true;
   }
 
@@ -203,12 +229,18 @@ export class GameRoom extends DurableObject<Env> {
   leave(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
+    this.blockSystem?.onPlayerLeave(playerId);
     this.playerSystem.leave(playerId);
     this.needsBroadcast = true;
   }
 
   override async alarm(info?: AlarmInvocationInfo) {
     await this.alarms.alarm(info);
+  }
+
+  /** Configures block system options. Must be called before the first join. */
+  configureBlockSystem(opts: BlockSystemOptions) {
+    this.blockSystemOptions = opts;
   }
 
   /** Runs a single tick; exposed publicly for external callers (e.g. tests). */
@@ -291,6 +323,7 @@ export class GameRoom extends DurableObject<Env> {
   private onListenerLost(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
+    this.blockSystem?.onPlayerLeave(playerId);
     this.playerSystem.leave(playerId);
     this.needsBroadcast = true;
   }
@@ -334,48 +367,48 @@ type GameRoomStub = DurableObjectStub<GameRoom>;
  * send inputs and leave the room. The session is invalidated after `leave()`.
  */
 export class RoomSession extends RpcTarget implements RoomSessionApi {
-  #room: GameRoomStub;
+  #getRoom: () => GameRoomStub;
   #playerId: string;
   #left = false;
 
-  constructor(room: GameRoomStub, playerId: string) {
+  constructor(getRoom: () => GameRoomStub, playerId: string) {
     super();
-    this.#room = room;
+    this.#getRoom = getRoom;
     this.#playerId = playerId;
   }
 
   /** Forwards client position packets to the authoritative `GameRoom`. */
   sendPosition(packet: PlayerPositionPacket) {
-    return this.#room.sendPosition(this.#playerId, packet);
+    return this.#getRoom().sendPosition(this.#playerId, packet);
   }
 
   sendBlockAction(action: import("./protocol").BlockActionPacket) {
-    return this.#room.sendBlockAction(this.#playerId, action);
+    return this.#getRoom().sendBlockAction(this.#playerId, action);
   }
 
   /** Asks the server to include own state in the next tick. */
   requestState() {
-    return this.#room.requestState(this.#playerId);
+    return this.#getRoom().requestState(this.#playerId);
   }
 
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number) {
-    return this.#room.teleportTo(this.#playerId, x, y, z);
+    return this.#getRoom().teleportTo(this.#playerId, x, y, z);
   }
 
   /** Applies an inventory or crafting interaction. */
   clickInventory(target: InventoryClickTarget) {
-    return this.#room.clickInventory(this.#playerId, target);
+    return this.#getRoom().clickInventory(this.#playerId, target);
   }
 
   /** Returns crafting-grid items and the cursor to the player's inventory. */
   closeInventory() {
-    return this.#room.closeInventory(this.#playerId);
+    return this.#getRoom().closeInventory(this.#playerId);
   }
 
   /** Changes the selected hotbar slot. */
   selectHotbarSlot(slotIndex: number) {
-    return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
+    return this.#getRoom().selectHotbarSlot(this.#playerId, slotIndex);
   }
 
   /** Attempts a melee attack from the local client snapshot. */
@@ -385,14 +418,14 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
 
   /** Sets the server-authoritative time of day. */
   setTimeOfDay(timeS: number) {
-    return this.#room.setTimeOfDay(timeS);
+    return this.#getRoom().setTimeOfDay(timeS);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */
   leave() {
     if (this.#left) return;
     this.#left = true;
-    return this.#room.leave(this.#playerId);
+    return this.#getRoom().leave(this.#playerId);
   }
 
   /** Called automatically when the RPC session is disposed. */
@@ -428,9 +461,9 @@ export class AuthSession extends RpcTarget implements AuthenticatedApi {
    */
   async join(roomId: string, onTick: TickListener) {
     const id = this.#env.GameRoom.idFromName(roomId);
-    const stub = this.#env.GameRoom.get(id);
-    await stub.join(this.#playerId, this.#name, onTick);
-    return new RoomSession(stub, this.#playerId);
+    const getRoom = () => this.#env.GameRoom.get(id);
+    await getRoom().join(this.#playerId, this.#name, onTick);
+    return new RoomSession(getRoom, this.#playerId);
   }
 }
 
