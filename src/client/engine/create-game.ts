@@ -355,18 +355,9 @@ function raycastTargetedBlock(
   const tDeltaY = stepY === 0 ? Number.POSITIVE_INFINITY : Math.abs(1 / dirY);
   const tDeltaZ = stepZ === 0 ? Number.POSITIVE_INFINITY : Math.abs(1 / dirZ);
 
-  let tMaxX =
-    stepX === 0
-      ? Number.POSITIVE_INFINITY
-      : ((stepX > 0 ? x + 1 - originX : originX - x) / Math.abs(dirX));
-  let tMaxY =
-    stepY === 0
-      ? Number.POSITIVE_INFINITY
-      : ((stepY > 0 ? y + 1 - originY : originY - y) / Math.abs(dirY));
-  let tMaxZ =
-    stepZ === 0
-      ? Number.POSITIVE_INFINITY
-      : ((stepZ > 0 ? z + 1 - originZ : originZ - z) / Math.abs(dirZ));
+  let tMaxX = stepX === 0 ? Number.POSITIVE_INFINITY : (stepX > 0 ? x + 1 - originX : originX - x) / Math.abs(dirX);
+  let tMaxY = stepY === 0 ? Number.POSITIVE_INFINITY : (stepY > 0 ? y + 1 - originY : originY - y) / Math.abs(dirY);
+  let tMaxZ = stepZ === 0 ? Number.POSITIVE_INFINITY : (stepZ > 0 ? z + 1 - originZ : originZ - z) / Math.abs(dirZ);
 
   let traveled = 0;
   while (traveled <= maxDistance) {

@@ -18,31 +18,9 @@ interface BlockTarget {
 }
 
 // Unit-cube wireframe geometry used by the block selection outline pass.
-const OUTLINE_VERTICES = new Float32Array([
-  0, 0, 0,
-  1, 0, 0,
-  1, 1, 0,
-  0, 1, 0,
-  0, 0, 1,
-  1, 0, 1,
-  1, 1, 1,
-  0, 1, 1,
-]);
+const OUTLINE_VERTICES = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
 
-const OUTLINE_INDICES = new Uint32Array([
-  0, 1,
-  1, 2,
-  2, 3,
-  3, 0,
-  4, 5,
-  5, 6,
-  6, 7,
-  7, 4,
-  0, 4,
-  1, 5,
-  2, 6,
-  3, 7,
-]);
+const OUTLINE_INDICES = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]);
 
 export interface RenderView {
   viewMatrix: Mat4;
