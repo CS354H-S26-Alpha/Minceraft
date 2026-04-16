@@ -225,8 +225,6 @@ export function createGame(args: CreateGameArgs): GameState {
     needsResize = true;
   });
 
-  let ctx: { renderer: Renderer; camera: CameraController } | undefined;
-
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
     const player = room().player();
