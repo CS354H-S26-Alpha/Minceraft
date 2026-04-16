@@ -138,9 +138,10 @@ describe("Chunk", () => {
     it("ignores a chunk with no fluids", () => {
       const chunk = new Chunk(0, 0, 4, 5);
       const before = chunk.blocks.slice();
-      for (let t = 0; t < 5; t++) chunk.tickFluids();
-      expect(chunk.blocks).toBeInstanceOf(Uint8Array);
-      expect(chunk.blocks.length).toBe(before.length);
+      for (let t = 0; t < 5; t++) {
+        expect(chunk.tickFluids()).toBe(false);
+      }
+      expect(Array.from(chunk.blocks)).toEqual(Array.from(before));
     });
 
     it("decays flowing fluid once its source is removed", () => {
