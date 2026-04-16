@@ -96,9 +96,7 @@ export function getSelectedHotbarInventoryIndex(selectedHotbarSlot: number): num
   return HOTBAR_START_INDEX + clampHotbarSlot(selectedHotbarSlot);
 }
 
-export function getSelectedHotbarItem(
-  state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">,
-): InventorySlot {
+export function getSelectedHotbarItem(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): InventorySlot {
   return state.inventory[getSelectedHotbarInventoryIndex(state.selectedHotbarSlot)] ?? null;
 }
 
