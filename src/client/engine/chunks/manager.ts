@@ -215,9 +215,12 @@ export class ChunkManager {
   }
 
   private mergeBatch(batch: ChunkBatchData): void {
-    const placedObjects: PlacedObject[] = [];
     for (const chunk of batch.chunks) {
       this.chunkDataMap.set(chunkKey(chunk.originX, chunk.originZ), chunk);
+    }
+
+    const placedObjects: PlacedObject[] = [];
+    for (const chunk of this.chunkDataMap.values()) {
       for (const object of chunk.placedObjects) {
         placedObjects.push(object);
       }

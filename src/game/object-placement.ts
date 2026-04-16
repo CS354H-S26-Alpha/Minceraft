@@ -407,7 +407,7 @@ function placementScale(seed: number, type: PlacedObjectType, x: number, z: numb
 function placementBaseHeight(type: PlacedObjectType): number {
   switch (type) {
     case PlacedObjectType.Rock:
-      return 0.48;
+      return 1.02;
     case PlacedObjectType.FlowerDandelion:
     case PlacedObjectType.FlowerPoppy:
       return 0.52;
