@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyInventory, createPlayerState, PLAYER_MAX_HEALTH, PLAYER_SPEED, Player } from "../src/game/player";
+import {
+  createEmptyInventory,
+  createPlayerState,
+  getHeldItemDamage,
+  PLAYER_MAX_HEALTH,
+  PLAYER_SPEED,
+  Player,
+} from "../src/game/player";
 
 const P = (
   overrides: Partial<{
@@ -87,5 +94,19 @@ describe("Player", () => {
     expect(leftover).toBeNull();
     expect(player.state.inventory[0]).toEqual({ itemId: "wood", quantity: 64 });
     expect(player.state.inventory[1]).toEqual({ itemId: "wood", quantity: 4 });
+  });
+
+  it("defaults held-item damage to 1 and honors per-item overrides", () => {
+    const player = P();
+    player.state.inventory = createEmptyInventory();
+    player.state.selectedHotbarSlot = 0;
+
+    expect(getHeldItemDamage(player.state)).toBe(1);
+
+    player.state.inventory[27] = { itemId: "wood", quantity: 1 };
+    expect(getHeldItemDamage(player.state)).toBe(1);
+
+    player.state.inventory[27] = { itemId: "stick", quantity: 1 };
+    expect(getHeldItemDamage(player.state)).toBe(2);
   });
 });

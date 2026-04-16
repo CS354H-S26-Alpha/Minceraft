@@ -8,7 +8,10 @@ export interface ItemDefinition {
   name: string;
   icon: string;
   maxStack: number;
+  damage?: number;
 }
+
+export const DEFAULT_ITEM_DAMAGE = 1;
 
 const itemDefinitions = [
   {
@@ -28,6 +31,7 @@ const itemDefinitions = [
     name: "Stick",
     icon: stickIcon,
     maxStack: 64,
+    damage: 2,
   },
   {
     id: "dirt",
@@ -48,4 +52,15 @@ export const ITEM_DEFINITIONS_BY_ID = Object.fromEntries(ITEM_DEFINITIONS.map((i
 
 export function isItemId(value: string): value is ItemId {
   return value in ITEM_DEFINITIONS_BY_ID;
+}
+
+export function getItemDamage(itemId: ItemId | null | undefined): number {
+  if (!itemId) return DEFAULT_ITEM_DAMAGE;
+  return normalizeDamage(ITEM_DEFINITIONS_BY_ID[itemId].damage);
+}
+
+function normalizeDamage(damage?: number): number {
+  if (damage === undefined || !Number.isFinite(damage)) return DEFAULT_ITEM_DAMAGE;
+  const normalized = Math.trunc(damage);
+  return normalized > 0 ? normalized : DEFAULT_ITEM_DAMAGE;
 }

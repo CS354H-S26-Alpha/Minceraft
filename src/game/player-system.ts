@@ -17,6 +17,7 @@ import {
   clonePlayerState,
   createPlayerState,
   createStarterInventory,
+  getHeldItemDamage,
   HOTBAR_SLOT_COUNT,
   INVENTORY_SLOT_COUNT,
   type InventorySlot,
@@ -25,11 +26,13 @@ import {
   PLAYER_MAX_FALL_SPEED,
   PLAYER_SPEED,
   Player,
+  type PlayerAttackPacket,
   type PlayerPositionPacket,
   type PlayerPublicState,
   type PlayerState,
   toPublicPlayerState,
 } from "./player";
+import { canTargetPlayer } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
@@ -54,7 +57,7 @@ export class PlayerSystem implements GameSystem {
   private inventoryUi = new Map<string, InventoryUiState>();
   private lastAcceptedAt = new Map<string, number>();
   private pendingReconcile = new Set<string>();
-  private pendingInventorySync = new Set<string>();
+  private pendingSelfStateSync = new Set<string>();
 
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
@@ -110,7 +113,7 @@ export class PlayerSystem implements GameSystem {
     }
     this.inventoryUi.delete(playerId);
     this.pendingReconcile.delete(playerId);
-    this.pendingInventorySync.delete(playerId);
+    this.pendingSelfStateSync.delete(playerId);
   }
 
   /**
@@ -212,18 +215,18 @@ export class PlayerSystem implements GameSystem {
     packets.push({ type: "ack", sequence: this.acks.get(playerId) ?? 0 });
 
     const reconcile = this.pendingReconcile.has(playerId);
-    const inventorySync = this.pendingInventorySync.has(playerId);
+    const selfStateSync = this.pendingSelfStateSync.has(playerId);
     const player = this.players.get(playerId);
 
     if (player) {
       if (reconcile) {
         packets.push({ type: "reconcile", state: clonePlayerState(player.state) });
-      } else if (inventorySync) {
+      } else if (selfStateSync) {
         packets.push({ type: "self", state: clonePlayerState(player.state) });
       }
     }
 
-    if (reconcile || inventorySync) {
+    if (reconcile || selfStateSync) {
       const ui = this.inventoryUi.get(playerId);
       if (ui) packets.push({ type: "inventoryUi", ui: cloneInventoryUiState(ui) });
     }
@@ -234,7 +237,7 @@ export class PlayerSystem implements GameSystem {
   /** Resets pending flags after a broadcast has been delivered. */
   clearPending(): void {
     this.pendingReconcile.clear();
-    this.pendingInventorySync.clear();
+    this.pendingSelfStateSync.clear();
   }
 
   interactInventory(playerId: string, target: InventoryClickTarget): boolean {
@@ -268,7 +271,7 @@ export class PlayerSystem implements GameSystem {
 
     if (!changed) return false;
     this.dirty.add(playerId);
-    this.pendingInventorySync.add(playerId);
+    this.pendingSelfStateSync.add(playerId);
     return true;
   }
 
@@ -279,7 +282,7 @@ export class PlayerSystem implements GameSystem {
     const changed = this.returnCraftingItems(player, ui);
     if (changed) {
       this.dirty.add(playerId);
-      this.pendingInventorySync.add(playerId);
+      this.pendingSelfStateSync.add(playerId);
     }
     return changed;
   }
@@ -289,7 +292,34 @@ export class PlayerSystem implements GameSystem {
     const player = this.players.get(playerId);
     if (!player?.setSelectedHotbarSlot(slotIndex)) return false;
     this.dirty.add(playerId);
-    this.pendingInventorySync.add(playerId);
+    this.pendingSelfStateSync.add(playerId);
+    return true;
+  }
+
+  attack(attackerId: string, packet: PlayerAttackPacket, onlinePlayerIds: ReadonlySet<string>): boolean {
+    if (!this.isValidAttackPacket(packet)) return false;
+    const attacker = this.players.get(attackerId);
+    if (!attacker || attacker.state.health <= 0 || !onlinePlayerIds.has(attackerId)) return false;
+    if (!this.isPlausibleAttack(attacker.state, packet, this.lastAcceptedAt.get(attackerId) ?? Date.now()))
+      return false;
+    if (packet.targetPlayerId === attackerId) return false;
+
+    const target = this.players.get(packet.targetPlayerId);
+    if (!target || target.state.health <= 0 || !onlinePlayerIds.has(packet.targetPlayerId)) return false;
+    if (!canTargetPlayer(packet, target.state)) return false;
+
+    const attackerTurned = attacker.state.yaw !== packet.yaw || attacker.state.pitch !== packet.pitch;
+    attacker.state.yaw = packet.yaw;
+    attacker.state.pitch = packet.pitch;
+    if (attackerTurned) this.dirty.add(attackerId);
+    if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
+
+    this.dirty.add(target.id);
+    if (target.state.health <= 0) {
+      this.respawnPlayer(target.id);
+    } else {
+      this.pendingSelfStateSync.add(target.id);
+    }
     return true;
   }
 
@@ -400,6 +430,21 @@ export class PlayerSystem implements GameSystem {
     );
   }
 
+  private isValidAttackPacket(packet: PlayerAttackPacket): boolean {
+    return (
+      typeof packet.targetPlayerId === "string" &&
+      packet.targetPlayerId.length > 0 &&
+      Number.isFinite(packet.x) &&
+      Number.isFinite(packet.y) &&
+      Number.isFinite(packet.z) &&
+      Number.isFinite(packet.yaw) &&
+      Number.isFinite(packet.pitch) &&
+      Math.abs(packet.x) <= MAX_COORDINATE &&
+      Math.abs(packet.y) <= MAX_COORDINATE &&
+      Math.abs(packet.z) <= MAX_COORDINATE
+    );
+  }
+
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
     const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
@@ -408,6 +453,35 @@ export class PlayerSystem implements GameSystem {
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
+  }
+
+  private isPlausibleAttack(prev: PlayerState, packet: PlayerAttackPacket, lastAcceptedAt: number): boolean {
+    const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
+    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const dx = packet.x - prev.x;
+    const dy = packet.y - prev.y;
+    const dz = packet.z - prev.z;
+    return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
+  }
+
+  private respawnPlayer(playerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+
+    Object.assign(
+      player.state,
+      createPlayerState({
+        id: player.id,
+        name: player.state.name,
+        ...SPAWN_POSITION,
+      }),
+    );
+    this.inventoryUi.set(playerId, createInventoryUiState());
+    this.pendingPackets.delete(playerId);
+    this.lastAcceptedAt.set(playerId, Date.now());
+    this.pendingSelfStateSync.delete(playerId);
+    this.pendingReconcile.add(playerId);
   }
 }
 
