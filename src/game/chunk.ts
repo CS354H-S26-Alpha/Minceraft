@@ -536,6 +536,10 @@ export class Chunk {
     if (target === opposingFluid(type)) {
       this.blocks[idx] = CubeType.Stone;
       this.fluidLevels[idx] = 0;
+      const hmIdx = lz * CHUNK_SIZE + lx;
+      if (ly >= this.heightMap[hmIdx]!) {
+        this.refreshSurfaceCacheForColumn(lx, lz);
+      }
       this.activateFluidNeighbours(lx, ly, lz);
       return true;
     }
