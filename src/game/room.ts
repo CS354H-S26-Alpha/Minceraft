@@ -82,6 +82,7 @@ export class GameRoom extends DurableObject<Env> {
   private db: DrizzleSqliteDODatabase<typeof schema>;
   private initialized = false;
   private blockSystemOptions?: BlockSystemOptions;
+  private chunkStoreInitialization: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -101,7 +102,7 @@ export class GameRoom extends DurableObject<Env> {
     const seed = this.getOrCreateSeed();
 
     this.chunkStoreId = this.env.ChunkStore.idFromName(this.ctx.id.toString());
-    void this.getChunkStoreStub().initialize(seed);
+    this.chunkStoreInitialization = Promise.resolve(this.getChunkStoreStub().initialize(seed));
 
     this.blockSystem = new BlockSystem(
       () => this.getChunkStoreStub(),
@@ -161,8 +162,10 @@ export class GameRoom extends DurableObject<Env> {
     const last = this.lastInputTime.get(playerId) ?? 0;
     if (now - last < MIN_INPUT_INTERVAL_MS) return;
     this.lastInputTime.set(playerId, now);
-    this.playerSystem.queuePosition(playerId, packet);
-    this.blockSystem.onPlayerPosition(playerId, packet.x, packet.z);
+    const acceptedPosition = this.playerSystem.queuePosition(playerId, packet);
+    if (acceptedPosition) {
+      this.blockSystem.onPlayerPosition(playerId, acceptedPosition.x, acceptedPosition.z);
+    }
     this.needsBroadcast = true;
   }
 
@@ -254,6 +257,7 @@ export class GameRoom extends DurableObject<Env> {
    */
   private async tick() {
     this.ensureInitialized();
+    await this.chunkStoreInitialization;
 
     const tickStart = performance.now();
     this.gameTick++;
