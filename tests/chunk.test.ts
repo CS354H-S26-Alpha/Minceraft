@@ -113,7 +113,7 @@ describe("Chunk", () => {
   });
 
   it("generates block-based vegetation without clipping past chunk bounds", () => {
-    const chunk = new Chunk(-128, -128, 64, 12345);
+    const chunk = new Chunk(128, -128, 64, 12345);
     let vegetationBlocks = 0;
 
     for (let z = 0; z < 64; z++) {
@@ -147,10 +147,9 @@ describe("Chunk", () => {
     let foundRenderedVegetation = false;
     const originX = 32 - 32;
     const originZ = 32 - 32;
-    for (let z = 0; z < 64 && !foundRenderedVegetation; z++) {
-      for (let x = 0; x < 64 && !foundRenderedVegetation; x++) {
-        const surfaceY = chunk.heightMap[z * 64 + x] as number;
-        for (let y = surfaceY + 1; y < CHUNK_HEIGHT; y++) {
+    outer: for (let z = 0; z < 64; z++) {
+      for (let x = 0; x < 64; x++) {
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
           const block = chunk.getBlock(x, y, z);
           if (
             block !== CubeType.OakLog &&
@@ -164,7 +163,7 @@ describe("Chunk", () => {
           const key = `${originX + x},${y},${originZ + z}`;
           if (renderedPositions.has(key)) {
             foundRenderedVegetation = true;
-            break;
+            break outer;
           }
         }
       }

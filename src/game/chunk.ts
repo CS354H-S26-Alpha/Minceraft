@@ -118,9 +118,11 @@ function ensureScratchCapacity(maxCubes: number): void {
 export class Chunk {
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
-  public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
+  public heightMap: Uint8Array; // topmost solid block per column (includes vegetation & fluid): z*S + x
   public biomeMap: Uint8Array; // biome per (i,j) column x z // z*S + x
   private surfaceTypesMap: Uint8Array; // top-most block type per (x, z) column
+  /** Terrain-only surface height per column (before vegetation blocks are placed), z*S + x. */
+  public terrainHeightMap: Uint8Array = new Uint8Array(0);
 
   private x: number; // Center of the chunk
   private y: number;
@@ -474,6 +476,9 @@ export class Chunk {
       },
     });
     this.placedObjectsData = this.applyVegetationStructures(placedObjectAnchors, topleftx, topleftz);
+
+    // Snapshot terrain-only heights before extending for vegetation.
+    this.terrainHeightMap = this.heightMap.slice();
 
     // Extend heightMap to include vegetation blocks placed above terrain.
     // Scan from the top of the chunk downward to find the actual highest solid block —

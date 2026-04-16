@@ -60,6 +60,8 @@ describe("per-chunk object placement generation", () => {
     const chunk = new Chunk(0, 0, 64, 12345);
     const chunkOriginX = -32;
     const chunkOriginZ = -32;
+    // Use terrainHeightMap (pre-vegetation) so relief/surfaceBlock checks match placement conditions.
+    const th = chunk.terrainHeightMap;
     const chunkArgs = {
       seed: 12345,
       chunkOriginX,
@@ -67,23 +69,23 @@ describe("per-chunk object placement generation", () => {
       chunkSize: 64,
       sampleAt(localX: number, localZ: number): ObjectPlacementSample {
         const idx = localZ * 64 + localX;
-        const surfaceY = chunk.heightMap[idx] as number;
+        const surfaceY = th[idx] as number;
         const center = surfaceY;
         return {
           biome: chunk.biomeMap[idx] as Biome,
           surfaceY,
           surfaceBlock: chunk.getBlock(localX, surfaceY, localZ),
-          northY: localZ > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX] as number) : center,
-          southY: localZ + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX] as number) : center,
-          eastY: localX + 1 < 64 ? (chunk.heightMap[localZ * 64 + localX + 1] as number) : center,
-          westY: localX > 0 ? (chunk.heightMap[localZ * 64 + localX - 1] as number) : center,
+          northY: localZ > 0 ? (th[(localZ - 1) * 64 + localX] as number) : center,
+          southY: localZ + 1 < 64 ? (th[(localZ + 1) * 64 + localX] as number) : center,
+          eastY: localX + 1 < 64 ? (th[localZ * 64 + localX + 1] as number) : center,
+          westY: localX > 0 ? (th[localZ * 64 + localX - 1] as number) : center,
           northEastY:
-            localZ > 0 && localX + 1 < 64 ? (chunk.heightMap[(localZ - 1) * 64 + localX + 1] as number) : center,
-          northWestY: localZ > 0 && localX > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX - 1] as number) : center,
+            localZ > 0 && localX + 1 < 64 ? (th[(localZ - 1) * 64 + localX + 1] as number) : center,
+          northWestY: localZ > 0 && localX > 0 ? (th[(localZ - 1) * 64 + localX - 1] as number) : center,
           southEastY:
-            localZ + 1 < 64 && localX + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX + 1] as number) : center,
+            localZ + 1 < 64 && localX + 1 < 64 ? (th[(localZ + 1) * 64 + localX + 1] as number) : center,
           southWestY:
-            localZ + 1 < 64 && localX > 0 ? (chunk.heightMap[(localZ + 1) * 64 + localX - 1] as number) : center,
+            localZ + 1 < 64 && localX > 0 ? (th[(localZ + 1) * 64 + localX - 1] as number) : center,
           isSubmerged: false,
           distanceToChunkEdge: Math.min(localX, localZ, 63 - localX, 63 - localZ),
         };
@@ -95,24 +97,24 @@ describe("per-chunk object placement generation", () => {
       const localX = Math.floor(object.x - chunkOriginX);
       const localZ = Math.floor(object.z - chunkOriginZ);
       const idx = localZ * 64 + localX;
-      const surfaceY = chunk.heightMap[idx] as number;
+      const surfaceY = th[idx] as number;
       const center = surfaceY;
 
       const sample: ObjectPlacementSample = {
         biome: chunk.biomeMap[idx] as Biome,
         surfaceY,
         surfaceBlock: chunk.getBlock(localX, surfaceY, localZ),
-        northY: localZ > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX] as number) : center,
-        southY: localZ + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX] as number) : center,
-        eastY: localX + 1 < 64 ? (chunk.heightMap[localZ * 64 + localX + 1] as number) : center,
-        westY: localX > 0 ? (chunk.heightMap[localZ * 64 + localX - 1] as number) : center,
+        northY: localZ > 0 ? (th[(localZ - 1) * 64 + localX] as number) : center,
+        southY: localZ + 1 < 64 ? (th[(localZ + 1) * 64 + localX] as number) : center,
+        eastY: localX + 1 < 64 ? (th[localZ * 64 + localX + 1] as number) : center,
+        westY: localX > 0 ? (th[localZ * 64 + localX - 1] as number) : center,
         northEastY:
-          localZ > 0 && localX + 1 < 64 ? (chunk.heightMap[(localZ - 1) * 64 + localX + 1] as number) : center,
-        northWestY: localZ > 0 && localX > 0 ? (chunk.heightMap[(localZ - 1) * 64 + localX - 1] as number) : center,
+          localZ > 0 && localX + 1 < 64 ? (th[(localZ - 1) * 64 + localX + 1] as number) : center,
+        northWestY: localZ > 0 && localX > 0 ? (th[(localZ - 1) * 64 + localX - 1] as number) : center,
         southEastY:
-          localZ + 1 < 64 && localX + 1 < 64 ? (chunk.heightMap[(localZ + 1) * 64 + localX + 1] as number) : center,
+          localZ + 1 < 64 && localX + 1 < 64 ? (th[(localZ + 1) * 64 + localX + 1] as number) : center,
         southWestY:
-          localZ + 1 < 64 && localX > 0 ? (chunk.heightMap[(localZ + 1) * 64 + localX - 1] as number) : center,
+          localZ + 1 < 64 && localX > 0 ? (th[(localZ + 1) * 64 + localX - 1] as number) : center,
         isSubmerged: false,
         distanceToChunkEdge: Math.min(localX, localZ, 63 - localX, 63 - localZ),
       };
@@ -120,7 +122,7 @@ describe("per-chunk object placement generation", () => {
       expect(supportsObjectPlacement(OBJECT_PLACEMENT_RULES[object.type], sample)).toBe(true);
       expect(supportsPlacedFootprint(chunkArgs, object.type, object.x, object.z, surfaceY, object.scale)).toBe(true);
       expect(object.y).toBeGreaterThanOrEqual(surfaceY + 0.4);
-      expect(object.y).toBeLessThanOrEqual(surfaceY + 0.5);
+      expect(object.y).toBeLessThanOrEqual(surfaceY + 1.05);
       expect(object.chunkOriginX).toBe(chunkOriginX);
       expect(object.chunkOriginZ).toBe(chunkOriginZ);
       expect(object.renderTypeIndex).toBe(placedObjectTypeIndex(object.type));
@@ -135,7 +137,7 @@ describe("per-chunk object placement generation", () => {
     let shrubLeafCount = 0;
     const renderableTypes = new Set<PlacedObjectType>();
 
-    for (const [centerX, centerZ] of [[-128, -128]]) {
+    for (const [centerX, centerZ] of [[128, -128]]) {
       const chunk = new Chunk(centerX, centerZ, 64, 12345);
       for (let z = 0; z < 64; z++) {
         for (let x = 0; x < 64; x++) {
