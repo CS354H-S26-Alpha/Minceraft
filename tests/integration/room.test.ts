@@ -1,13 +1,43 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { chunkOrigin } from "../../src/game/chunk";
 import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, ServerPacket, ServerTick } from "../../src/game/protocol.ts";
 import type { GameRoom } from "../../src/game/room.ts";
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value?: T | PromiseLike<T>) => void } {
+  let resolve!: (value?: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
+interface RoomChunkStoreBinding {
+  idFromName(name: string): string;
+  get(id: string): {
+    initialize(): Promise<void>;
+    getChunks: ReturnType<typeof vi.fn>;
+    processActions: ReturnType<typeof vi.fn>;
+  };
+}
+
+interface RoomBlockSystemInternals {
+  pendingChunkRequests: Map<string, { origins: Array<{ originX: number; originZ: number }> }>;
+  playerChunkOrigins: Map<string, string>;
+}
+
+interface RoomTestInternals extends GameRoom {
+  env: {
+    ChunkStore: RoomChunkStoreBinding;
+  };
+  blockSystem: RoomBlockSystemInternals;
 }
 
 /**
@@ -84,6 +114,38 @@ describe("GameRoom Durable Object", () => {
     expect(reconcile?.state.health).toBe(PLAYER_MAX_HEALTH);
     expect(reconcile?.state.inventory).toHaveLength(36);
     expect(findPacket(tick, "inventoryUi")?.ui.craftingGrid).toHaveLength(4);
+  });
+
+  it("waits for chunk store initialization before the first chunk tick work starts", async () => {
+    const stub = makeRoomStub(roomName);
+    const initializeGate = deferred<void>();
+    const getChunks = vi.fn(async () => []);
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      const roomInternals = room as unknown as RoomTestInternals;
+
+      const fakeChunkStore = {
+        initialize: () => initializeGate.promise,
+        getChunks,
+        processActions: vi.fn(async () => []),
+      };
+      roomInternals.env.ChunkStore = {
+        idFromName: () => "fake-chunk-store-id",
+        get: () => fakeChunkStore,
+      };
+
+      room.join("alice", "Alice", () => {});
+      const tickPromise = room.runTick();
+      await Promise.resolve();
+
+      expect(getChunks).not.toHaveBeenCalled();
+
+      initializeGate.resolve();
+      await tickPromise;
+
+      expect(getChunks).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("applies buffered input on the next tick and broadcasts to listeners", async () => {
@@ -190,6 +252,30 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(bobLatest, "players")?.players.alice?.x).toBeCloseTo(0);
     const aliceAck = aliceTicks.map((t) => findPacket(t, "ack")).find((p) => p);
     expect(aliceAck?.sequence).toBe(0);
+  });
+
+  it("keeps chunk streaming anchored to the last accepted position", async () => {
+    const stub = makeRoomStub(roomName);
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", () => {});
+      const roomInternals = room as unknown as RoomTestInternals;
+
+      const [spawnOriginX, spawnOriginZ] = chunkOrigin(0, 20);
+      const blockSystem = roomInternals.blockSystem;
+
+      expect(blockSystem.pendingChunkRequests.get("alice")?.origins).toEqual([
+        { originX: spawnOriginX, originZ: spawnOriginZ },
+      ]);
+
+      room.sendPosition("alice", { sequence: 1, x: 500, y: 70, z: 20, yaw: 0, pitch: 0 });
+
+      expect(blockSystem.pendingChunkRequests.get("alice")?.origins).toEqual([
+        { originX: spawnOriginX, originZ: spawnOriginZ },
+      ]);
+      expect(blockSystem.playerChunkOrigins.get("alice")).toBe(`${spawnOriginX},${spawnOriginZ}`);
+    });
   });
 
   it("stops delivering ticks after a player leaves", async () => {
