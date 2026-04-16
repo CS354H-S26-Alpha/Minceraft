@@ -127,6 +127,7 @@ export class ChunkManager {
         if (!cachedChunk) continue;
         const lx = bx - (ox - CHUNK_SIZE / 2);
         const lz = bz - (oz - CHUNK_SIZE / 2);
+        // biome-ignore lint/style/noNonNullAssertion: guaranteed to exist for valid coordinates
         const surface = cachedChunk.surfaceHeights[lz * CHUNK_SIZE + lx]!;
         const start = surface < scanCap ? surface : scanCap;
         const blocks = cachedChunk.blocks;

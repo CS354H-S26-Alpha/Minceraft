@@ -371,5 +371,4 @@ export class Chunk {
   public numCubes(): number {
     return this.cubes;
   }
-
 }
