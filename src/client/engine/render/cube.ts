@@ -16,37 +16,39 @@ export class Cube {
   private uvF32: Float32Array;
 
   constructor() {
+    // Unit cube spanning [0, 1] per axis. Block at integer offset (bx, by, bz)
+    // occupies [bx, bx+1] in world space, matching collision conventions.
     this.positionsRay = [
       /* Top */
-      new Vec4([-0.5, 0.5, -0.5, 1.0]),
-      new Vec4([-0.5, 0.5, 0.5, 1.0]),
-      new Vec4([0.5, 0.5, 0.5, 1.0]),
-      new Vec4([0.5, 0.5, -0.5, 1.0]),
+      new Vec4([0.0, 1.0, 0.0, 1.0]),
+      new Vec4([0.0, 1.0, 1.0, 1.0]),
+      new Vec4([1.0, 1.0, 1.0, 1.0]),
+      new Vec4([1.0, 1.0, 0.0, 1.0]),
       /* Left */
-      new Vec4([-0.5, 0.5, 0.5, 1.0]),
-      new Vec4([-0.5, -0.5, 0.5, 1.0]),
-      new Vec4([-0.5, -0.5, -0.5, 1.0]),
-      new Vec4([-0.5, 0.5, -0.5, 1.0]),
+      new Vec4([0.0, 1.0, 1.0, 1.0]),
+      new Vec4([0.0, 0.0, 1.0, 1.0]),
+      new Vec4([0.0, 0.0, 0.0, 1.0]),
+      new Vec4([0.0, 1.0, 0.0, 1.0]),
       /* Right */
-      new Vec4([0.5, 0.5, 0.5, 1.0]),
-      new Vec4([0.5, -0.5, 0.5, 1.0]),
-      new Vec4([0.5, -0.5, -0.5, 1.0]),
-      new Vec4([0.5, 0.5, -0.5, 1.0]),
+      new Vec4([1.0, 1.0, 1.0, 1.0]),
+      new Vec4([1.0, 0.0, 1.0, 1.0]),
+      new Vec4([1.0, 0.0, 0.0, 1.0]),
+      new Vec4([1.0, 1.0, 0.0, 1.0]),
       /* Front */
-      new Vec4([0.5, 0.5, 0.5, 1.0]),
-      new Vec4([0.5, -0.5, 0.5, 1.0]),
-      new Vec4([-0.5, -0.5, 0.5, 1.0]),
-      new Vec4([-0.5, 0.5, 0.5, 1.0]),
+      new Vec4([1.0, 1.0, 1.0, 1.0]),
+      new Vec4([1.0, 0.0, 1.0, 1.0]),
+      new Vec4([0.0, 0.0, 1.0, 1.0]),
+      new Vec4([0.0, 1.0, 1.0, 1.0]),
       /* Back */
-      new Vec4([0.5, 0.5, -0.5, 1.0]),
-      new Vec4([0.5, -0.5, -0.5, 1.0]),
-      new Vec4([-0.5, -0.5, -0.5, 1.0]),
-      new Vec4([-0.5, 0.5, -0.5, 1.0]),
+      new Vec4([1.0, 1.0, 0.0, 1.0]),
+      new Vec4([1.0, 0.0, 0.0, 1.0]),
+      new Vec4([0.0, 0.0, 0.0, 1.0]),
+      new Vec4([0.0, 1.0, 0.0, 1.0]),
       /* Bottom */
-      new Vec4([-0.5, -0.5, -0.5, 1.0]),
-      new Vec4([-0.5, -0.5, 0.5, 1.0]),
-      new Vec4([0.5, -0.5, 0.5, 1.0]),
-      new Vec4([0.5, -0.5, -0.5, 1.0]),
+      new Vec4([0.0, 0.0, 0.0, 1.0]),
+      new Vec4([0.0, 0.0, 1.0, 1.0]),
+      new Vec4([1.0, 0.0, 1.0, 1.0]),
+      new Vec4([1.0, 0.0, 0.0, 1.0]),
     ];
     console.assert(this.positionsRay != null);
     console.assert(this.positionsRay.length === 4 * 6);

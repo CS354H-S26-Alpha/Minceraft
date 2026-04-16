@@ -10,7 +10,7 @@ import {
   type InventoryClickTarget,
   type InventoryUiState,
 } from "./crafting";
-import type { EntityCollection } from "./entity-collection";
+import type { GameSystem, SystemContext } from "./game-system";
 import { ITEM_DEFINITIONS_BY_ID } from "./items";
 import {
   cloneInventorySlot,
@@ -22,6 +22,7 @@ import {
   type InventorySlot,
   MAX_COORDINATE,
   normalizeInventory,
+  PLAYER_MAX_FALL_SPEED,
   PLAYER_SPEED,
   Player,
   type PlayerPositionPacket,
@@ -29,21 +30,21 @@ import {
   type PlayerState,
   toPublicPlayerState,
 } from "./player";
+import type { ServerPacket } from "./protocol";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const BASE_MOVEMENT_WINDOW_MS = 100;
 const MOVEMENT_TOLERANCE = 1;
-const INVALID_PACKET = "invalid";
-const STALE_PACKET = "stale";
-const ACCEPTED_PACKET = "accepted";
-
-type QueuePositionResult = typeof ACCEPTED_PACKET | typeof STALE_PACKET | typeof INVALID_PACKET;
 
 /**
  * Manages the set of players in a room — their in-memory state, latest pending
  * client position packet, ack counters, and dirty tracking for SQLite persistence.
+ *
+ * The system also owns the per-tick "pending" flags that decide which packets
+ * each client receives: a reconcile forces the client to snap to the server
+ * position, an inventory sync pushes a fresh UI + self state, etc.
  */
-export class PlayerCollection implements EntityCollection {
+export class PlayerSystem implements GameSystem {
   readonly key = "players";
 
   private players = new Map<string, Player>();
@@ -52,6 +53,8 @@ export class PlayerCollection implements EntityCollection {
   private dirty = new Set<string>();
   private inventoryUi = new Map<string, InventoryUiState>();
   private lastAcceptedAt = new Map<string, number>();
+  private pendingReconcile = new Set<string>();
+  private pendingInventorySync = new Set<string>();
 
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
@@ -90,44 +93,70 @@ export class PlayerCollection implements EntityCollection {
           }),
         ),
       );
-      this.lastAcceptedAt.set(playerId, Date.now());
       this.dirty.add(playerId);
     }
+    this.resetSession(playerId);
     this.inventoryUi.set(playerId, createInventoryUiState());
+    this.pendingReconcile.add(playerId);
   }
 
   /** Clears the departing player's input queue; their state remains for persistence. */
   leave(playerId: string): void {
-    this.pendingPackets.delete(playerId);
-    this.lastAcceptedAt.delete(playerId);
+    this.resetSession(playerId);
     const player = this.players.get(playerId);
     const ui = this.inventoryUi.get(playerId);
     if (player && ui && this.returnCraftingItems(player, ui)) {
       this.dirty.add(playerId);
     }
     this.inventoryUi.delete(playerId);
+    this.pendingReconcile.delete(playerId);
+    this.pendingInventorySync.delete(playerId);
+  }
+
+  /**
+   * Clears per-connection state for a player — input queue, ack counter, and
+   * movement timing. The client's packet sequence counter restarts at 1 on
+   * every new session, so stale acks would silently drop all incoming packets
+   * until the client caught back up.
+   */
+  resetSession(playerId: string): void {
+    this.pendingPackets.delete(playerId);
+    this.acks.delete(playerId);
+    this.lastAcceptedAt.set(playerId, Date.now());
   }
 
   /**
    * Accepts the newest client position packet and ignores anything older than
-   * the last applied sequence for this player.
+   * the last applied sequence for this player. Flags a reconcile on invalid
+   * inputs so the client snaps back to authoritative state.
    */
-  queuePosition(playerId: string, packet: PlayerPositionPacket): QueuePositionResult {
-    if (!this.isValidPacket(packet)) return INVALID_PACKET;
+  queuePosition(playerId: string, packet: PlayerPositionPacket): void {
+    if (!this.isValidPacket(packet)) {
+      this.pendingReconcile.add(playerId);
+      return;
+    }
 
     const lastAck = this.acks.get(playerId) ?? 0;
     const pending = this.pendingPackets.get(playerId);
     const newestKnown = Math.max(lastAck, pending?.sequence ?? 0);
-    if (packet.sequence <= newestKnown) return STALE_PACKET;
+    if (packet.sequence <= newestKnown) return;
 
     const player = this.players.get(playerId);
-    if (!player) return INVALID_PACKET;
+    if (!player) {
+      this.pendingReconcile.add(playerId);
+      return;
+    }
     if (!this.isPlausibleMovement(player.state, packet, this.lastAcceptedAt.get(playerId) ?? Date.now())) {
-      return INVALID_PACKET;
+      this.pendingReconcile.add(playerId);
+      return;
     }
 
     this.pendingPackets.set(playerId, packet);
-    return ACCEPTED_PACKET;
+  }
+
+  /** Asks for an authoritative state snapshot to be sent to the player next tick. */
+  requestState(playerId: string): void {
+    this.pendingReconcile.add(playerId);
   }
 
   /**
@@ -144,6 +173,7 @@ export class PlayerCollection implements EntityCollection {
 
     this.pendingPackets.delete(playerId);
     this.lastAcceptedAt.set(playerId, Date.now());
+    this.pendingReconcile.add(playerId);
 
     this.dirty.add(playerId);
     return true;
@@ -175,27 +205,36 @@ export class PlayerCollection implements EntityCollection {
     return changed;
   }
 
-  /**
-   * Returns a state snapshot of all players. When `visiblePlayerIds` is
-   * provided, only those players are included (used to hide offline players).
-   */
-  snapshot(visiblePlayerIds?: ReadonlySet<string>): Record<string, PlayerPublicState> {
-    const result: Record<string, PlayerPublicState> = {};
-    for (const [id, player] of this.players) {
-      if (visiblePlayerIds && !visiblePlayerIds.has(id)) continue;
-      result[id] = player.publicState();
-    }
-    return result;
-  }
+  /** Builds the set of packets this system wants to send to `playerId`. */
+  packetsFor(playerId: string, ctx: SystemContext): ServerPacket[] {
+    const packets: ServerPacket[] = [];
+    packets.push({ type: "players", players: this.publicStatesFor(playerId, ctx.onlinePlayerIds) });
+    packets.push({ type: "ack", sequence: this.acks.get(playerId) ?? 0 });
 
-  selfState(playerId: string): PlayerState | undefined {
+    const reconcile = this.pendingReconcile.has(playerId);
+    const inventorySync = this.pendingInventorySync.has(playerId);
     const player = this.players.get(playerId);
-    return player ? clonePlayerState(player.state) : undefined;
+
+    if (player) {
+      if (reconcile) {
+        packets.push({ type: "reconcile", state: clonePlayerState(player.state) });
+      } else if (inventorySync) {
+        packets.push({ type: "self", state: clonePlayerState(player.state) });
+      }
+    }
+
+    if (reconcile || inventorySync) {
+      const ui = this.inventoryUi.get(playerId);
+      if (ui) packets.push({ type: "inventoryUi", ui: cloneInventoryUiState(ui) });
+    }
+
+    return packets;
   }
 
-  getInventoryUi(playerId: string): InventoryUiState | undefined {
-    const state = this.inventoryUi.get(playerId);
-    return state ? cloneInventoryUiState(state) : undefined;
+  /** Resets pending flags after a broadcast has been delivered. */
+  clearPending(): void {
+    this.pendingReconcile.clear();
+    this.pendingInventorySync.clear();
   }
 
   interactInventory(playerId: string, target: InventoryClickTarget): boolean {
@@ -229,6 +268,7 @@ export class PlayerCollection implements EntityCollection {
 
     if (!changed) return false;
     this.dirty.add(playerId);
+    this.pendingInventorySync.add(playerId);
     return true;
   }
 
@@ -239,6 +279,7 @@ export class PlayerCollection implements EntityCollection {
     const changed = this.returnCraftingItems(player, ui);
     if (changed) {
       this.dirty.add(playerId);
+      this.pendingInventorySync.add(playerId);
     }
     return changed;
   }
@@ -248,20 +289,8 @@ export class PlayerCollection implements EntityCollection {
     const player = this.players.get(playerId);
     if (!player?.setSelectedHotbarSlot(slotIndex)) return false;
     this.dirty.add(playerId);
+    this.pendingInventorySync.add(playerId);
     return true;
-  }
-
-  /**
-   * Returns per-player ack counters, optionally filtered to online players.
-   * The client uses these to trim its input history.
-   */
-  getAcks(visiblePlayerIds?: ReadonlySet<string>): Record<string, number> {
-    const result: Record<string, number> = {};
-    for (const [id] of this.players) {
-      if (visiblePlayerIds && !visiblePlayerIds.has(id)) continue;
-      result[id] = this.acks.get(id) ?? 0;
-    }
-    return result;
   }
 
   /** Returns `true` if any player has unsaved changes. */
@@ -285,6 +314,20 @@ export class PlayerCollection implements EntityCollection {
       }
     }
     this.dirty.clear();
+  }
+
+  /**
+   * Builds the `players` map sent to `playerId`, including every *other*
+   * online player. The viewer is always excluded from their own remote set.
+   */
+  private publicStatesFor(playerId: string, onlinePlayerIds: ReadonlySet<string>): Record<string, PlayerPublicState> {
+    const result: Record<string, PlayerPublicState> = {};
+    for (const [id, player] of this.players) {
+      if (id === playerId) continue;
+      if (!onlinePlayerIds.has(id)) continue;
+      result[id] = player.publicState();
+    }
+    return result;
   }
 
   private refreshCraftingResult(ui: InventoryUiState) {
@@ -358,12 +401,13 @@ export class PlayerCollection implements EntityCollection {
   }
 
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
-    const elapsedMs = Math.max(0, Date.now() - lastAcceptedAt);
-    const maxDistance = PLAYER_SPEED * ((elapsedMs + BASE_MOVEMENT_WINDOW_MS) / 1000) + MOVEMENT_TOLERANCE;
+    const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
+    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;
-    return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+    return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
 }
 
