@@ -2,7 +2,9 @@ import type { Mat4 } from "gl-matrix";
 import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
+import type { Mesh } from "../skinning/Mesh";
 import { Cube } from "./cube";
+import { type EnemyDrawState, EnemyPass } from "./enemy-pass";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
@@ -23,6 +25,7 @@ export interface RenderView {
   /** RGB sun/moon light color (changes with time of day). */
   sunColor: Float32Array;
   entities: EntityDrawData[];
+  skinnedEnemies?: EnemyDrawState[];
 }
 
 interface EntityPass {
@@ -37,6 +40,7 @@ export class Renderer {
   private readonly skyboxRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
+  private readonly enemyPass: EnemyPass;
   readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
@@ -66,6 +70,12 @@ export class Renderer {
         instancedAttributes: def.instancedAttributes,
       });
     }
+
+    this.enemyPass = new EnemyPass(this.ctx);
+  }
+
+  loadEnemyMesh(mesh: Mesh): void {
+    this.enemyPass.loadMesh(mesh);
   }
 
   render(view: RenderView): void {
@@ -113,6 +123,10 @@ export class Renderer {
       }
       ep.pass.drawInstanced(entity.count);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
+    }
+
+    if (view.skinnedEnemies) {
+      for (const enemy of view.skinnedEnemies) this.enemyPass.draw(enemy);
     }
 
     this.gpuTimer.end();
