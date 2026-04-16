@@ -243,6 +243,26 @@ export class ChunkManager {
     if (blockType === undefined || height === undefined) return undefined;
     return (blockType << 8) | height;
   }
+
+  /** Returns the block type at world voxel coordinates. */
+  getBlock(wx: number, wy: number, wz: number): CubeType {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
+
+    // Selection raycasts treat unloaded chunks as empty so targeting is stable at chunk edges.
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const chunk = this.chunkDataMap.get(chunkKey(originX, originZ));
+    if (!chunk) return CubeType.Air;
+
+    const localX = wx - (originX - CHUNK_SIZE / 2);
+    const localZ = wz - (originZ - CHUNK_SIZE / 2);
+    if (localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) {
+      return CubeType.Air;
+    }
+
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const index = wy * stride + localZ * CHUNK_SIZE + localX;
+    return (chunk.blocks[index] as CubeType) ?? CubeType.Air;
+  }
 }
 
 function buildGenerationOrder(originX: number, originZ: number, loadDistance: number): ChunkOrigin[] {
