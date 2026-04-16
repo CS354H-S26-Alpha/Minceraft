@@ -71,7 +71,8 @@ void main() {
   float seed = cubeSeed;
 
   // Quantize UV to a 16×16 grid — one flat-shaded colour per texel, Minecraft-style.
-  vec2 quv = (floor(uv * 16.0) + 0.5) / 16.0;
+  // Clamp the floored texel index so UVs that land exactly on 1.0 stay within the 0..15 grid.
+  vec2 quv = (min(floor(uv * 16.0), vec2(15.0)) + 0.5) / 16.0;
 
   // Branchless LUT lookup — same code path for all block types
   vec3 col1 = mix(color, uLut1Fixed[type], uLut1Blend[type]);
@@ -102,8 +103,9 @@ void main() {
 
   kd *= 0.92 + 0.16 * seed;
 
-  // Directional sun
-  vec3 lightDir = normalize(uLightPos.xyz);
+  // uLightPos is supplied by the render path as a world-space light position,
+  // so derive the incoming light direction per fragment from the fragment world position.
+  vec3 lightDir = normalize(uLightPos.xyz - wsPos.xyz);
   float dot_nl = clamp(dot(lightDir, normalize(normal.xyz)), 0.0, 1.0);
 
   // Smooth bilinear AO — interpolated per-fragment (not quantized to the texel grid)
