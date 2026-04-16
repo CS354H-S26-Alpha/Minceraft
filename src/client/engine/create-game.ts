@@ -11,7 +11,14 @@ import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
-import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
+import {
+  createEntityPipeline,
+  enemyPassDef,
+  enemyPipelineConfig,
+  type EntityDrawData,
+  playerPassDef,
+  playerPipelineConfig,
+} from "./entities";
 import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
@@ -90,7 +97,7 @@ const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef]);
+  const renderer = new Renderer(gl, [playerPassDef, enemyPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -135,6 +142,7 @@ export function createGame(args: CreateGameArgs): GameState {
   );
   const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
+  const remoteEnemies = createEntityPipeline(enemyPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const packetMeter = createRateMeter(FPS_WINDOW_MS);
@@ -268,6 +276,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
+      remoteEnemies.onSnapshot(unwrap(room().remoteEnemies), now);
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
@@ -277,8 +286,12 @@ export function createGame(args: CreateGameArgs): GameState {
     lighting.update(timeOfDayS);
 
     // --- Render ---
-    const { buffers, count } = remotePlayers.frame(now);
-    const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    const { buffers: playerBuffers, count: playerCount } = remotePlayers.frame(now);
+    const { buffers: enemyBuffers, count: enemyCount } = remoteEnemies.frame(now);
+    const entities: EntityDrawData[] = [
+      { key: "players", buffers: playerBuffers, count: playerCount },
+      { key: "enemies", buffers: enemyBuffers, count: enemyCount },
+    ];
     renderer.render({
       viewMatrix,
       projMatrix,
