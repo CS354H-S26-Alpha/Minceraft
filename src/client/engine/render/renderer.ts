@@ -159,9 +159,12 @@ export class Renderer {
     pass.setup();
   }
 
-  // LUT data — indexed by CubeType (0–11), must stay in sync with blankCube.frag
+  // LUT data — indexed by CubeType (0–14), must stay in sync with blankCube.frag
   // col1 = mix(vertexColor, lut1Fixed, lut1Blend)
   // col2 = mix(vertexColor * lut2Scale, lut2Fixed, lut2Blend)
+  // Entries for Water (12), Lava (13), and Permafrost (14) are dummies:
+  //   Water/Lava compute kd directly in the fluid branch (col1/col2 unused).
+  //   Permafrost overrides col1/col2 in the grass/permafrost branch.
   private static readonly LUT1_FIXED = new Float32Array([
     0.0,
     0.0,
@@ -199,6 +202,15 @@ export class Renderer {
     0.5,
     0.5,
     0.5, // 11 DiamondOre
+    0.0,
+    0.0,
+    0.0, // 12 Water       (dummy — fluid branch overrides kd)
+    0.0,
+    0.0,
+    0.0, // 13 Lava        (dummy — fluid branch overrides kd)
+    0.0,
+    0.0,
+    0.0, // 14 Permafrost  (dummy — overridden by grass branch)
   ]);
   private static readonly LUT1_BLEND = new Float32Array([
     0, // Air
@@ -213,6 +225,9 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
+    0, // Water      (dummy)
+    0, // Lava       (dummy)
+    0, // Permafrost (dummy)
   ]);
   private static readonly LUT2_FIXED = new Float32Array([
     0.0,
@@ -251,6 +266,15 @@ export class Renderer {
     0.25,
     0.88,
     0.92, // 11 DiamondOre
+    0.0,
+    0.0,
+    0.0, // 12 Water       (dummy — fluid branch overrides kd)
+    0.0,
+    0.0,
+    0.0, // 13 Lava        (dummy — fluid branch overrides kd)
+    0.0,
+    0.0,
+    0.0, // 14 Permafrost  (dummy — overridden by grass branch)
   ]);
   private static readonly LUT2_BLEND = new Float32Array([
     0, // Air
@@ -265,6 +289,9 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
+    0, // Water      (dummy)
+    0, // Lava       (dummy)
+    0, // Permafrost (dummy)
   ]);
   private static readonly LUT2_SCALE = new Float32Array([
     0.5, // Air
@@ -279,6 +306,9 @@ export class Renderer {
     0.5, // IronOre     (irrelevant, blend=1)
     0.5, // GoldOre     (irrelevant, blend=1)
     0.5, // DiamondOre  (irrelevant, blend=1)
+    0.5, // Water       (dummy)
+    0.5, // Lava        (dummy)
+    0.5, // Permafrost  (dummy)
   ]);
 
   private initBlankCubePass(cube: Cube): void {

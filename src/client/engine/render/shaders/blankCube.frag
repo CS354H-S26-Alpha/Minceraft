@@ -6,14 +6,16 @@ uniform vec3 uAmbient;
 uniform vec3 uSunColor;
 uniform float uTime;
 
-// Per-type LUT uniforms (indexed by CubeType, 12 entries each).
+// Per-type LUT uniforms (indexed by CubeType, 15 entries covering Air–Permafrost).
 // col1 = mix(color,          uLut1Fixed[type], uLut1Blend[type])
 // col2 = mix(color * scale,  uLut2Fixed[type], uLut2Blend[type])
-uniform vec3 uLut1Fixed[12];
-uniform float uLut1Blend[12];
-uniform vec3 uLut2Fixed[12];
-uniform float uLut2Blend[12];
-uniform float uLut2Scale[12];
+// Water/Lava entries are dummies — those types compute kd directly in the fluid branch.
+// Permafrost entries are dummies — that type overrides col1/col2 in the grass branch.
+uniform vec3 uLut1Fixed[15];
+uniform float uLut1Blend[15];
+uniform vec3 uLut2Fixed[15];
+uniform float uLut2Blend[15];
+uniform float uLut2Scale[15];
 
 in vec4 normal;
 in vec4 wsPos;
@@ -98,8 +100,7 @@ void main() {
     // Animated fluid surface. Two counter-scrolling FBM layers over world
     // XZ give a moving caustics/crust look that is continuous across
     // chunk boundaries (the noise only depends on world position, never on
-    // per-cube inputs). Fluids keep their own colour palette here, which
-    // also sidesteps the LUT arrays (those only define entries 0..11).
+    // per-cube inputs). Fluids keep their own colour palette here.
     vec2 wp = wsPos.xz;
     // Fixed seeds (not per-cube) so ripples line up across adjacent water
     // voxels — otherwise you'd see the noise "reset" at every cube border.
