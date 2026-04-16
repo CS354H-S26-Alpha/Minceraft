@@ -1,4 +1,5 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
+import type { EnemyPublicState } from "./enemy";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
 /** Credentials returned after successful authentication. */
@@ -12,6 +13,13 @@ export interface PlayersPacket {
   type: "players";
   /** Remote players visible to the receiving client, keyed by player ID. */
   players: Record<string, PlayerPublicState>;
+}
+
+/** Remote enemies visible to every connected client. */
+export interface EnemiesPacket {
+  type: "enemies";
+  /** Authoritative enemy states keyed by enemy ID. */
+  enemies: Record<string, EnemyPublicState>;
 }
 
 /** Latest input sequence the server has applied for the receiving client. */
@@ -50,6 +58,7 @@ export interface WorldStatePacket {
 /** Discriminated union of every packet the server may send to a client. */
 export type ServerPacket =
   | PlayersPacket
+  | EnemiesPacket
   | AckPacket
   | SelfStatePacket
   | ReconcilePacket

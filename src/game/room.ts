@@ -6,6 +6,7 @@ import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
 import type { InventoryClickTarget } from "./crafting";
+import { EnemySystem } from "./enemy-system";
 import type { GameSystem } from "./game-system";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
 import { PlayerSystem } from "./player-system";
@@ -65,8 +66,9 @@ function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
  */
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
+  private enemySystem = new EnemySystem();
   private playerSystem = new PlayerSystem();
-  private systems: GameSystem[] = [this.playerSystem];
+  private systems: GameSystem[] = [this.playerSystem, this.enemySystem];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
   private needsBroadcast = false;

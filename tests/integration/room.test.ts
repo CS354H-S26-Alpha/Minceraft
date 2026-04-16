@@ -329,6 +329,40 @@ describe("GameRoom Durable Object", () => {
     expect("health" in (alicePlayers?.bob ?? {})).toBe(false);
   });
 
+  it("includes authoritative enemies in the initial join tick", async () => {
+    const stub = makeRoomStub(roomName);
+    const received: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => received.push(tick));
+      await room.runTick();
+    });
+
+    const latest = received[received.length - 1];
+    const enemies = findPacket(latest, "enemies")?.enemies;
+    expect(enemies).toBeDefined();
+    expect(Object.keys(enemies ?? {})).toHaveLength(3);
+    expect(enemies?.["enemy-1"]?.x).toBeCloseTo(6);
+    expect(enemies?.["enemy-1"]?.health).toBe(6);
+  });
+
+  it("broadcasts the same enemy snapshot to every connected player", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const bobTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      room.join("bob", "Bob", (tick) => bobTicks.push(tick));
+      await room.runTick();
+    });
+
+    const aliceEnemies = findPacket(aliceTicks[aliceTicks.length - 1], "enemies")?.enemies;
+    const bobEnemies = findPacket(bobTicks[bobTicks.length - 1], "enemies")?.enemies;
+    expect(aliceEnemies).toEqual(bobEnemies);
+    expect(aliceEnemies?.["enemy-2"]?.z).toBeCloseTo(18);
+  });
+
   it("applies held-item combat damage to the client-selected player on the server", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];

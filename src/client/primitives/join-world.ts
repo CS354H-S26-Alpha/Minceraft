@@ -52,6 +52,8 @@ export function joinWorld(roomId: string) {
       case "players":
         setRemotePlayers(reconcile(packet.players));
         return;
+      case "enemies":
+        return;
       case "ack":
         replicated()?.acknowledge(packet.sequence);
         return;
