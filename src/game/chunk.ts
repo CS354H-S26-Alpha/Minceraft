@@ -563,7 +563,7 @@ export class Chunk {
 
   // worldGet: optional cross-chunk block lookup for accurate edge culling.
   // Without it, chunk-boundary faces are always treated as exposed (safe but over-renders).
-public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
+  public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
     const topleftx = this.x - this.size / 2;
     const topleftz = this.y - this.size / 2;
     const S = this.size;
@@ -648,7 +648,6 @@ public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType):
     this.cubeColorsF32 = colors.slice(0, 3 * count);
     this.cubeAmbientOcclusionU8 = ambientOcclusion.slice(0, 24 * count);
   }
-
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
   public cubePositions(): Float32Array {
