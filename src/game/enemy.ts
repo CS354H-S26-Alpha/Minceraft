@@ -1,6 +1,9 @@
 import { Entity } from "./entity";
 
 export const ENEMY_MAX_HEALTH = 6;
+export const ENEMY_HIT_RADIUS = 0.5;
+export const ENEMY_HEIGHT = 3.0;
+export const ENEMY_HALF_HEIGHT = ENEMY_HEIGHT / 2;
 
 export interface EnemyPublicState {
   id: string;
@@ -37,6 +40,16 @@ export function toPublicEnemyState(state: EnemyState): EnemyPublicState {
 export class Enemy extends Entity<EnemyState, never> {
   get id() {
     return this.state.id;
+  }
+
+  takeDamage(amount: number): boolean {
+    if (!Number.isFinite(amount)) return false;
+    const damage = Math.max(0, Math.trunc(amount));
+    if (damage <= 0 || this.state.health <= 0) return false;
+    const nextHealth = Math.max(0, this.state.health - damage);
+    if (nextHealth === this.state.health) return false;
+    this.state.health = nextHealth;
+    return true;
   }
 
   publicState(): EnemyPublicState {

@@ -193,7 +193,8 @@ export interface PlayerPositionPacket {
 }
 
 export interface PlayerAttackPacket {
-  targetPlayerId: string;
+  targetPlayerId?: string;
+  targetEnemyId?: string;
   x: number;
   y: number;
   z: number;

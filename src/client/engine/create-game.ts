@@ -4,7 +4,7 @@ import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
-import { findTargetedPlayerId } from "@/game/player-targeting";
+import { findTargetedEnemyHit, findTargetedPlayerHit } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -168,16 +168,27 @@ export function createGame(args: CreateGameArgs): GameState {
     const camera = ctx?.camera;
     if (!player || !session || !camera) return;
 
+    const now = performance.now();
     const yaw = camera.yaw();
     const pitch = camera.pitch();
-    const targetPlayerId = findTargetedPlayerId(
+    const targetPlayer = findTargetedPlayerHit(
       { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
-      remotePlayers.states(performance.now()),
+      remotePlayers.states(now),
     );
-    if (!targetPlayerId) return;
+    const targetEnemy = findTargetedEnemyHit(
+      { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+      remoteEnemies.states(now),
+    );
+    if (!targetPlayer && !targetEnemy) return;
+
+    const targetPlayerId =
+      targetPlayer && (!targetEnemy || targetPlayer.distance <= targetEnemy.distance) ? targetPlayer.id : undefined;
+    const targetEnemyId =
+      targetEnemy && (!targetPlayer || targetEnemy.distance < targetPlayer.distance) ? targetEnemy.id : undefined;
 
     session.attack({
       targetPlayerId,
+      targetEnemyId,
       x: player.state.x,
       y: player.state.y,
       z: player.state.z,

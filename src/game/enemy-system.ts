@@ -3,13 +3,17 @@ import type * as schema from "../server/schema";
 import { sampleColumn } from "./biome";
 import type { GameSystem, SystemContext } from "./game-system";
 import { Enemy, createEnemyState, type EnemyPublicState } from "./enemy";
-import type { PlayerPublicState } from "./player";
+import { getHeldItemDamage, type Player, type PlayerPublicState } from "./player";
+import { canTargetEnemy } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
 
 const WORLD_SEED = 123;
 const TICK_SECONDS = 0.05;
 const WALK_SPEED = 2.0;
 const MIN_SEEK_DISTANCE = 1.5;
+const ENEMY_ATTACK_RANGE = 1.75;
+const ENEMY_ATTACK_DAMAGE = 1;
+const ENEMY_ATTACK_COOLDOWN_MS = 750;
 const MAX_STEP_UP = 1;
 const WANDER_MIN_S = 1.0;
 const WANDER_MAX_S = 2.5;
@@ -32,7 +36,10 @@ export class EnemySystem implements GameSystem {
 
   private enemies = new Map<string, Enemy>();
 
-  constructor(private readonly getOnlinePlayers: () => readonly PlayerPublicState[]) {}
+  constructor(
+    private readonly getOnlinePlayers: () => readonly PlayerPublicState[],
+    private readonly damagePlayer: (playerId: string, amount: number) => boolean,
+  ) {}
 
   hydrate(_db: DrizzleSqliteDODatabase<typeof schema>): void {
     this.ensureSeedEnemies();
@@ -87,6 +94,15 @@ export class EnemySystem implements GameSystem {
     return result;
   }
 
+  attack(attacker: Player, packet: { targetEnemyId?: string; x: number; y: number; z: number; yaw: number; pitch: number }): boolean {
+    const targetEnemyId = packet.targetEnemyId;
+    if (!targetEnemyId) return false;
+    const enemy = this.enemies.get(targetEnemyId);
+    if (!enemy || enemy.state.health <= 0) return false;
+    if (!canTargetEnemy(packet, enemy.state)) return false;
+    return enemy.takeDamage(getHeldItemDamage(attacker.state));
+  }
+
   private updateEnemy(enemy: Enemy, onlinePlayers: readonly PlayerPublicState[]): boolean {
     const prevX = enemy.state.x;
     const prevY = enemy.state.y;
@@ -117,7 +133,8 @@ export class EnemySystem implements GameSystem {
 
     const fwdX = -Math.sin(enemy.state.yaw);
     const fwdZ = -Math.cos(enemy.state.yaw);
-    const shouldMove = target ? distanceTo(enemy.state.x, enemy.state.z, target.x, target.z) > MIN_SEEK_DISTANCE : true;
+    const targetDistance = target ? distanceTo(enemy.state.x, enemy.state.z, target.x, target.z) : Infinity;
+    const shouldMove = target ? targetDistance > MIN_SEEK_DISTANCE : true;
     const stepX = shouldMove ? fwdX * WALK_SPEED * TICK_SECONDS : 0;
     const stepZ = shouldMove ? fwdZ * WALK_SPEED * TICK_SECONDS : 0;
 
@@ -134,8 +151,16 @@ export class EnemySystem implements GameSystem {
       enemy.state.yaw += (Math.random() < 0.5 ? -1 : 1) * (Math.PI * 0.5 + Math.random() * Math.PI * 0.5);
     }
 
+    let attacked = false;
+    if (target && targetDistance <= ENEMY_ATTACK_RANGE && enemy.state.attackCooldownMs <= 0) {
+      attacked = this.damagePlayer(target.id, ENEMY_ATTACK_DAMAGE);
+      if (attacked) {
+        enemy.state.attackCooldownMs = ENEMY_ATTACK_COOLDOWN_MS;
+      }
+    }
+
     return (
-      enemy.state.x !== prevX || enemy.state.y !== prevY || enemy.state.z !== prevZ || enemy.state.yaw !== prevYaw
+      attacked || enemy.state.x !== prevX || enemy.state.y !== prevY || enemy.state.z !== prevZ || enemy.state.yaw !== prevYaw
     );
   }
 }

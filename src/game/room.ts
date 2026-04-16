@@ -67,7 +67,10 @@ function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
-  private enemySystem = new EnemySystem(() => this.playerSystem.onlinePlayers(new Set(this.listeners.keys())));
+  private enemySystem = new EnemySystem(
+    () => this.playerSystem.onlinePlayers(new Set(this.listeners.keys())),
+    (playerId, amount) => this.playerSystem.damagePlayer(playerId, amount, new Set(this.listeners.keys())),
+  );
   private systems: GameSystem[] = [this.playerSystem, this.enemySystem];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
@@ -164,7 +167,11 @@ export class GameRoom extends DurableObject<Env> {
   /** Attempts a melee attack from a client-authoritative snapshot. */
   attack(playerId: string, packet: PlayerAttackPacket) {
     this.ensureInitialized();
-    if (this.playerSystem.attack(playerId, packet, new Set(this.listeners.keys()))) {
+    if (
+      this.playerSystem.attack(playerId, packet, new Set(this.listeners.keys()), (attacker, attackPacket) =>
+        this.enemySystem.attack(attacker, attackPacket),
+      )
+    ) {
       this.needsBroadcast = true;
     }
   }

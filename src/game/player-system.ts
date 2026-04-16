@@ -296,27 +296,45 @@ export class PlayerSystem implements GameSystem {
     return true;
   }
 
-  attack(attackerId: string, packet: PlayerAttackPacket, onlinePlayerIds: ReadonlySet<string>): boolean {
+  attack(
+    attackerId: string,
+    packet: PlayerAttackPacket,
+    onlinePlayerIds: ReadonlySet<string>,
+    attackEnemy?: (attacker: Player, packet: PlayerAttackPacket) => boolean,
+  ): boolean {
     if (!this.isValidAttackPacket(packet)) return false;
     const attacker = this.players.get(attackerId);
     if (!attacker || attacker.state.health <= 0 || !onlinePlayerIds.has(attackerId)) return false;
     if (!this.isPlausibleAttack(attacker.state, packet, this.lastAcceptedAt.get(attackerId) ?? Date.now())) {
       return false;
     }
-    if (packet.targetPlayerId === attackerId) return false;
-
-    const target = this.players.get(packet.targetPlayerId);
-    if (!target || target.state.health <= 0 || !onlinePlayerIds.has(packet.targetPlayerId)) return false;
-    if (!canTargetPlayer(packet, target.state)) return false;
 
     const attackerTurned = attacker.state.yaw !== packet.yaw || attacker.state.pitch !== packet.pitch;
     attacker.state.yaw = packet.yaw;
     attacker.state.pitch = packet.pitch;
     if (attackerTurned) this.dirty.add(attackerId);
+
+    if (packet.targetEnemyId) {
+      return attackEnemy?.(attacker, packet) ?? false;
+    }
+
+    if (!packet.targetPlayerId || packet.targetPlayerId === attackerId) return false;
+    const target = this.players.get(packet.targetPlayerId);
+    if (!target || target.state.health <= 0 || !onlinePlayerIds.has(packet.targetPlayerId)) return false;
+    if (!canTargetPlayer(packet, target.state)) return false;
     if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
 
     this.dirty.add(target.id);
     this.pendingSelfStateSync.add(target.id);
+    return true;
+  }
+
+  damagePlayer(playerId: string, amount: number, onlinePlayerIds: ReadonlySet<string>): boolean {
+    const player = this.players.get(playerId);
+    if (!player || player.state.health <= 0 || !onlinePlayerIds.has(playerId)) return false;
+    if (!player.takeDamage(amount)) return false;
+    this.dirty.add(playerId);
+    this.pendingSelfStateSync.add(playerId);
     return true;
   }
 
@@ -437,9 +455,13 @@ export class PlayerSystem implements GameSystem {
   }
 
   private isValidAttackPacket(packet: PlayerAttackPacket): boolean {
+    const targetCount = Number(Boolean(packet.targetPlayerId)) + Number(Boolean(packet.targetEnemyId));
     return (
-      typeof packet.targetPlayerId === "string" &&
-      packet.targetPlayerId.length > 0 &&
+      targetCount === 1 &&
+      (packet.targetPlayerId === undefined ||
+        (typeof packet.targetPlayerId === "string" && packet.targetPlayerId.length > 0)) &&
+      (packet.targetEnemyId === undefined ||
+        (typeof packet.targetEnemyId === "string" && packet.targetEnemyId.length > 0)) &&
       Number.isFinite(packet.x) &&
       Number.isFinite(packet.y) &&
       Number.isFinite(packet.z) &&

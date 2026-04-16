@@ -1,36 +1,22 @@
 precision mediump float;
 
-uniform vec4 uLightPos;
-uniform vec3 uAmbient;
-uniform vec3 uSunColor;
-
-varying vec4 normal;
-varying vec4 wsPos;
 varying vec2 uv;
 
 void main() {
-  vec3 armor = vec3(0.72, 0.18, 0.16);
-  vec3 accent = vec3(0.18, 0.04, 0.03);
-  vec3 eye = vec3(1.0, 0.9, 0.55);
+  vec3 core = vec3(1.0, 0.08, 0.08);
+  vec3 stripe = vec3(1.0, 0.95, 0.2);
+  vec3 edge = vec3(1.0, 0.55, 0.0);
+  vec3 crown = vec3(1.0, 0.35, 0.35);
 
-  float eyes = 0.0;
-  if (gl_FrontFacing) {
-    float eyeR = 0.06;
-    eyes += step(length(uv - vec2(0.34, 0.72)), eyeR);
-    eyes += step(length(uv - vec2(0.66, 0.72)), eyeR);
-  }
+  float horizontalBand = step(0.35, uv.y) * step(uv.y, 0.7);
+  float verticalBand = step(0.42, uv.x) * step(uv.x, 0.58);
+  float crosshair = max(horizontalBand, verticalBand);
+  float border = step(uv.x, 0.08) + step(0.92, uv.x) + step(uv.y, 0.08) + step(0.92, uv.y);
+  float crownMask = step(0.84, uv.y);
 
-  float stripe = step(0.42, uv.y) * step(uv.y, 0.58);
-  vec3 kd = mix(armor, accent, stripe * 0.8);
-  kd = mix(kd, eye, clamp(eyes, 0.0, 1.0));
+  vec3 color = mix(core, stripe, crosshair * 0.95);
+  color = mix(color, crown, crownMask * 0.8);
+  color = mix(color, edge, clamp(border, 0.0, 1.0));
 
-  vec4 n = gl_FrontFacing ? normal : -normal;
-  vec4 lightDirection = uLightPos - wsPos;
-  float dot_nl = dot(normalize(lightDirection), normalize(n));
-  dot_nl = clamp(dot_nl, 0.0, 1.0);
-
-  vec3 ambient = uAmbient * kd;
-  vec3 diffuse = dot_nl * kd * uSunColor;
-
-  gl_FragColor = vec4(clamp(ambient + diffuse, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(min(color * 1.15, 1.0), 1.0);
 }

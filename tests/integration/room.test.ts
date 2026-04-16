@@ -487,6 +487,57 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(latest, "self")?.state.health).toBe(PLAYER_MAX_HEALTH - 2);
   });
 
+  it("applies player melee damage to server-side enemies", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const enemySurfaceY = sampleColumn(123, 6, 14).height;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      room.selectHotbarSlot("alice", 2);
+      room.teleportTo("alice", 6, enemySurfaceY, 16.5);
+      await room.runTick();
+
+      room.attack("alice", {
+        targetEnemyId: "enemy-1",
+        x: 6,
+        y: enemySurfaceY,
+        z: 16.5,
+        yaw: 0,
+        pitch: 0,
+      });
+      await room.runTick();
+    });
+
+    const latest = aliceTicks[aliceTicks.length - 1];
+    expect(findPacket(latest, "enemies")?.enemies["enemy-1"]?.health).toBe(4);
+  });
+
+  it("lets nearby enemies damage online players", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const enemySurfaceY = sampleColumn(123, 6, 14).height;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      room.teleportTo("alice", 6, enemySurfaceY, 15.2);
+      await room.runTick();
+      await room.runTick();
+    });
+
+    expect(
+      aliceTicks.some((tick) => {
+        const selfHealth = findPacket(tick, "self")?.state.health;
+        const reconcileHealth = findPacket(tick, "reconcile")?.state.health;
+        return selfHealth === PLAYER_MAX_HEALTH - 1 || reconcileHealth === PLAYER_MAX_HEALTH - 1;
+      }),
+    ).toBe(true);
+  });
+
   it("rejects attack snapshots that are implausibly far from the server player state", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
