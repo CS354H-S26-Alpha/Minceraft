@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
+import { sampleColumn } from "../../src/game/biome";
 import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, ServerPacket, ServerTick } from "../../src/game/protocol.ts";
 import type { GameRoom } from "../../src/game/room.ts";
@@ -288,7 +289,7 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(initialBobTick, "reconcile")?.state).toBeDefined();
   });
 
-  it("does not broadcast when a tick fires with no pending input", async () => {
+  it("broadcasts when enemy movement changes the world without player input", async () => {
     const stub = makeRoomStub(roomName);
     const received: ServerTick[] = [];
 
@@ -297,9 +298,9 @@ describe("GameRoom Durable Object", () => {
       // First tick flushes any dirty state
       await room.runTick();
       const beforeCount = received.length;
-      // Second tick: no input, no dirty, no broadcast
+      // Second tick: no input, but enemies are moving toward the player.
       await room.runTick();
-      expect(received.length).toBe(beforeCount);
+      expect(received.length).toBeGreaterThan(beforeCount);
     });
   });
 
@@ -342,7 +343,7 @@ describe("GameRoom Durable Object", () => {
     const enemies = findPacket(latest, "enemies")?.enemies;
     expect(enemies).toBeDefined();
     expect(Object.keys(enemies ?? {})).toHaveLength(3);
-    expect(enemies?.["enemy-1"]?.x).toBeCloseTo(6);
+    expect(enemies?.["enemy-1"]?.x).toBeCloseTo(6, 0);
     expect(enemies?.["enemy-1"]?.health).toBe(6);
   });
 
@@ -360,7 +361,32 @@ describe("GameRoom Durable Object", () => {
     const aliceEnemies = findPacket(aliceTicks[aliceTicks.length - 1], "enemies")?.enemies;
     const bobEnemies = findPacket(bobTicks[bobTicks.length - 1], "enemies")?.enemies;
     expect(aliceEnemies).toEqual(bobEnemies);
-    expect(aliceEnemies?.["enemy-2"]?.z).toBeCloseTo(18);
+    expect(aliceEnemies?.["enemy-2"]?.z).toBeCloseTo(18, 0);
+  });
+
+  it("moves enemies toward nearby online players while keeping them on terrain", async () => {
+    const stub = makeRoomStub(roomName);
+    const received: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => received.push(tick));
+      await room.runTick();
+      for (let i = 0; i < 10; i++) {
+        await room.runTick();
+      }
+    });
+
+    const firstEnemies = findPacket(received[0], "enemies")?.enemies;
+    const latestEnemies = findPacket(received[received.length - 1], "enemies")?.enemies;
+    expect(firstEnemies?.["enemy-1"]).toBeDefined();
+    expect(latestEnemies?.["enemy-1"]).toBeDefined();
+    expect(latestEnemies?.["enemy-1"]?.x).not.toBeCloseTo(firstEnemies?.["enemy-1"]?.x ?? 0);
+
+    const enemy = latestEnemies?.["enemy-1"];
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    const terrainHeight = sampleColumn(123, Math.round(enemy.x), Math.round(enemy.z)).height + 0.5;
+    expect(enemy.y).toBeCloseTo(terrainHeight, 5);
   });
 
   it("applies held-item combat damage to the client-selected player on the server", async () => {

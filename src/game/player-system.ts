@@ -325,6 +325,15 @@ export class PlayerSystem implements GameSystem {
     return this.dirty.size > 0;
   }
 
+  onlinePlayers(onlinePlayerIds: ReadonlySet<string>): PlayerPublicState[] {
+    const result: PlayerPublicState[] = [];
+    for (const [id, player] of this.players) {
+      if (!onlinePlayerIds.has(id)) continue;
+      result.push(player.publicState());
+    }
+    return result;
+  }
+
   /** UPSERTs all dirty players to SQLite and clears the dirty set. */
   flush(db: DrizzleSqliteDODatabase<typeof schema>): void {
     for (const id of this.dirty) {

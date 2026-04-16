@@ -66,8 +66,8 @@ function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
  */
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
-  private enemySystem = new EnemySystem();
   private playerSystem = new PlayerSystem();
+  private enemySystem = new EnemySystem(() => this.playerSystem.onlinePlayers(new Set(this.listeners.keys())));
   private systems: GameSystem[] = [this.playerSystem, this.enemySystem];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
