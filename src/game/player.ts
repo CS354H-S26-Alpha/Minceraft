@@ -112,15 +112,6 @@ export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) 
   };
 }
 
-export function getLookDirection(yaw: number, pitch: number) {
-  const cosPitch = Math.cos(pitch);
-  return {
-    x: cosPitch * Math.sin(yaw),
-    y: Math.sin(pitch),
-    z: -cosPitch * Math.cos(yaw),
-  };
-}
-
 export function createPlayerState(
   args: PlayerPublicState & {
     vy?: number;
@@ -194,6 +185,15 @@ export function addItemToInventory(inventory: InventorySlot[], stack: ItemStack)
 
 export interface PlayerPositionPacket {
   sequence: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+}
+
+export interface PlayerAttackPacket {
+  targetPlayerId: string;
   x: number;
   y: number;
   z: number;

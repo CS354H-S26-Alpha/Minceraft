@@ -18,8 +18,6 @@ import {
   createPlayerState,
   createStarterInventory,
   getHeldItemDamage,
-  getLookDirection,
-  getPlayerEyePosition,
   HOTBAR_SLOT_COUNT,
   INVENTORY_SLOT_COUNT,
   type InventorySlot,
@@ -28,11 +26,13 @@ import {
   PLAYER_MAX_FALL_SPEED,
   PLAYER_SPEED,
   Player,
+  type PlayerAttackPacket,
   type PlayerPositionPacket,
   type PlayerPublicState,
   type PlayerState,
   toPublicPlayerState,
 } from "./player";
+import { canTargetPlayer } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
@@ -296,16 +296,30 @@ export class PlayerSystem implements GameSystem {
     return true;
   }
 
-  attack(attackerId: string, onlinePlayerIds: ReadonlySet<string>): boolean {
+  attack(attackerId: string, packet: PlayerAttackPacket, onlinePlayerIds: ReadonlySet<string>): boolean {
+    if (!this.isValidAttackPacket(packet)) return false;
     const attacker = this.players.get(attackerId);
     if (!attacker || attacker.state.health <= 0 || !onlinePlayerIds.has(attackerId)) return false;
+    if (!this.isPlausibleAttack(attacker.state, packet, this.lastAcceptedAt.get(attackerId) ?? Date.now()))
+      return false;
+    if (packet.targetPlayerId === attackerId) return false;
 
-    const target = this.findAttackTarget(attackerId, attacker, onlinePlayerIds);
-    if (!target) return false;
+    const target = this.players.get(packet.targetPlayerId);
+    if (!target || target.state.health <= 0 || !onlinePlayerIds.has(packet.targetPlayerId)) return false;
+    if (!canTargetPlayer(packet, target.state)) return false;
+
+    const attackerTurned = attacker.state.yaw !== packet.yaw || attacker.state.pitch !== packet.pitch;
+    attacker.state.yaw = packet.yaw;
+    attacker.state.pitch = packet.pitch;
+    if (attackerTurned) this.dirty.add(attackerId);
     if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
 
     this.dirty.add(target.id);
-    this.pendingSelfStateSync.add(target.id);
+    if (target.state.health <= 0) {
+      this.respawnPlayer(target.id);
+    } else {
+      this.pendingSelfStateSync.add(target.id);
+    }
     return true;
   }
 
@@ -416,6 +430,21 @@ export class PlayerSystem implements GameSystem {
     );
   }
 
+  private isValidAttackPacket(packet: PlayerAttackPacket): boolean {
+    return (
+      typeof packet.targetPlayerId === "string" &&
+      packet.targetPlayerId.length > 0 &&
+      Number.isFinite(packet.x) &&
+      Number.isFinite(packet.y) &&
+      Number.isFinite(packet.z) &&
+      Number.isFinite(packet.yaw) &&
+      Number.isFinite(packet.pitch) &&
+      Math.abs(packet.x) <= MAX_COORDINATE &&
+      Math.abs(packet.y) <= MAX_COORDINATE &&
+      Math.abs(packet.z) <= MAX_COORDINATE
+    );
+  }
+
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
     const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
@@ -426,34 +455,35 @@ export class PlayerSystem implements GameSystem {
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
 
-  private findAttackTarget(
-    attackerId: string,
-    attacker: Player,
-    onlinePlayerIds: ReadonlySet<string>,
-  ): Player | undefined {
-    const origin = getPlayerEyePosition(attacker.state);
-    const direction = getLookDirection(attacker.state.yaw, attacker.state.pitch);
-    let nearestDistance = MELEE_RANGE;
-    let nearestTarget: Player | undefined;
+  private isPlausibleAttack(prev: PlayerState, packet: PlayerAttackPacket, lastAcceptedAt: number): boolean {
+    const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
+    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const dx = packet.x - prev.x;
+    const dy = packet.y - prev.y;
+    const dz = packet.z - prev.z;
+    return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
+  }
 
-    for (const [candidateId, candidate] of this.players) {
-      if (candidateId === attackerId) continue;
-      if (!onlinePlayerIds.has(candidateId)) continue;
-      if (candidate.state.health <= 0) continue;
+  private respawnPlayer(playerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
 
-      const hitDistance = intersectRayWithPlayerBounds(origin, direction, candidate.state, MELEE_RANGE);
-      if (hitDistance === undefined || hitDistance > nearestDistance) continue;
-
-      nearestDistance = hitDistance;
-      nearestTarget = candidate;
-    }
-
-    return nearestTarget;
+    Object.assign(
+      player.state,
+      createPlayerState({
+        id: player.id,
+        name: player.state.name,
+        ...SPAWN_POSITION,
+      }),
+    );
+    this.inventoryUi.set(playerId, createInventoryUiState());
+    this.pendingPackets.delete(playerId);
+    this.lastAcceptedAt.set(playerId, Date.now());
+    this.pendingSelfStateSync.delete(playerId);
+    this.pendingReconcile.add(playerId);
   }
 }
-
-const MELEE_RANGE = 3;
-const RAY_EPSILON = 1e-6;
 
 function clickSlot(
   ui: InventoryUiState,
@@ -517,79 +547,6 @@ function playerMoved(prev: PlayerPublicState, next: PlayerState): boolean {
   return (
     prev.x !== next.x || prev.y !== next.y || prev.z !== next.z || prev.yaw !== next.yaw || prev.pitch !== next.pitch
   );
-}
-
-function intersectRayWithPlayerBounds(
-  origin: { x: number; y: number; z: number },
-  direction: { x: number; y: number; z: number },
-  target: PlayerState,
-  maxDistance: number,
-): number | undefined {
-  return intersectRayWithAabb(
-    origin,
-    direction,
-    {
-      minX: target.x - Player.CYLINDER_RADIUS,
-      maxX: target.x + Player.CYLINDER_RADIUS,
-      minY: target.y,
-      maxY: target.y + Player.CYLINDER_HEIGHT,
-      minZ: target.z - Player.CYLINDER_RADIUS,
-      maxZ: target.z + Player.CYLINDER_RADIUS,
-    },
-    maxDistance,
-  );
-}
-
-function intersectRayWithAabb(
-  origin: { x: number; y: number; z: number },
-  direction: { x: number; y: number; z: number },
-  bounds: {
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-    minZ: number;
-    maxZ: number;
-  },
-  maxDistance: number,
-): number | undefined {
-  let entry = 0;
-  let exit = maxDistance;
-
-  const xHit = intersectAxis(origin.x, direction.x, bounds.minX, bounds.maxX);
-  if (!xHit) return undefined;
-  entry = Math.max(entry, xHit.entry);
-  exit = Math.min(exit, xHit.exit);
-
-  const yHit = intersectAxis(origin.y, direction.y, bounds.minY, bounds.maxY);
-  if (!yHit) return undefined;
-  entry = Math.max(entry, yHit.entry);
-  exit = Math.min(exit, yHit.exit);
-
-  const zHit = intersectAxis(origin.z, direction.z, bounds.minZ, bounds.maxZ);
-  if (!zHit) return undefined;
-  entry = Math.max(entry, zHit.entry);
-  exit = Math.min(exit, zHit.exit);
-
-  if (entry > exit || exit < 0 || entry > maxDistance) return undefined;
-  return Math.max(0, entry);
-}
-
-function intersectAxis(origin: number, direction: number, min: number, max: number) {
-  if (Math.abs(direction) < RAY_EPSILON) {
-    if (origin < min || origin > max) return undefined;
-    return { entry: -Infinity, exit: Infinity };
-  }
-
-  let entry = (min - origin) / direction;
-  let exit = (max - origin) / direction;
-  if (entry > exit) {
-    const swap = entry;
-    entry = exit;
-    exit = swap;
-  }
-
-  return { entry, exit };
 }
 
 function parsePersistedInventory(serialized: string): InventorySlot[] {

@@ -7,7 +7,7 @@ import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
 import type { InventoryClickTarget } from "./crafting";
 import type { GameSystem } from "./game-system";
-import type { PlayerPositionPacket } from "./player";
+import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
 import { PlayerSystem } from "./player-system";
 import type {
   AuthenticatedApi,
@@ -159,10 +159,10 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  /** Attempts a server-authoritative melee attack with the player's held item. */
-  attack(playerId: string) {
+  /** Attempts a melee attack from a client-authoritative snapshot. */
+  attack(playerId: string, packet: PlayerAttackPacket) {
     this.ensureInitialized();
-    if (this.playerSystem.attack(playerId, new Set(this.listeners.keys()))) {
+    if (this.playerSystem.attack(playerId, packet, new Set(this.listeners.keys()))) {
       this.needsBroadcast = true;
     }
   }
@@ -355,9 +355,9 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
   }
 
-  /** Attempts a server-authoritative melee attack with the held item. */
-  attack() {
-    return this.#room.attack(this.#playerId);
+  /** Attempts a melee attack from the local client snapshot. */
+  attack(packet: PlayerAttackPacket) {
+    return this.#room.attack(this.#playerId, packet);
   }
 
   /** Sets the server-authoritative time of day. */
