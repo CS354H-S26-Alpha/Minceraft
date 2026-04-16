@@ -243,8 +243,11 @@ export function createGame(args: CreateGameArgs): GameState {
     const projMatrix = camera.projMatrix();
     chunks.cull(viewMatrix, projMatrix);
 
-    // Compute the currently aimed-at block each frame for the white selection outline.
-    const highlightedBlock = raycastTargetedBlock(chunks, player.position, yaw, pitch, BLOCK_HIGHLIGHT_DISTANCE);
+    // Compute the currently aimed-at block each frame for the white selection outline,
+    // but only while first-person input is active.
+    const highlightedBlock = inputEnabled()
+      ? raycastTargetedBlock(chunks, player.position, yaw, pitch, BLOCK_HIGHLIGHT_DISTANCE)
+      : null;
 
     // --- Remote entities ---
     const tickInfo = room().tickInfo;
