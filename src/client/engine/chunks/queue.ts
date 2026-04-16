@@ -35,6 +35,7 @@ const CARDINAL_OFFSETS: [number, number][] = [
 /** Manages chunk caching and incremental terrain generation. */
 export class ChunkGenerationQueue {
   private readonly chunkMap = new Map<string, ChunkLike>();
+  private visibleKeys = new Set<string>();
   private activeSeed: number | undefined;
   private activeGenerationId = -1;
   private queuedChunks: QueuedChunk[] = [];
@@ -48,6 +49,7 @@ export class ChunkGenerationQueue {
   setVisibleChunks(args: ChunkQueueArgs): ChunkBatchData {
     this.ensureSeed(args.seed);
     this.activeGenerationId = args.generationId;
+    this.visibleKeys = new Set(args.chunkOrigins.map((o) => chunkKey(o.originX, o.originZ)));
     this.queuedChunks = this.buildQueue(args.chunkOrigins);
     return this.renderAllVisible(args);
   }
@@ -72,6 +74,7 @@ export class ChunkGenerationQueue {
     if (this.activeSeed === seed) return;
     this.chunkMap.clear();
     this.queuedChunks = [];
+    this.visibleKeys = new Set();
     this.activeSeed = seed;
     this.activeGenerationId = -1;
   }
@@ -119,24 +122,35 @@ export class ChunkGenerationQueue {
     return this.collectBatch(entries);
   }
 
-  /** Render only the new chunk + its cardinal neighbors, return only changed chunks. */
+  /**
+   * Render the new chunk + its cardinal neighbors (neighbors re-rendered for
+   * edge culling correctness), but only return chunks in the current visible
+   * set so stale cached chunks outside renderDistance can't leak back into the
+   * main thread's chunk map.
+   */
   private renderIncremental(newOriginX: number, newOriginZ: number): ChunkBatchData {
     const worldGetBlock = this.buildWorldGetBlock();
     const rendered: ChunkEntry[] = [];
 
-    const newChunk = this.chunkMap.get(chunkKey(newOriginX, newOriginZ));
+    const newKey = chunkKey(newOriginX, newOriginZ);
+    const newChunk = this.chunkMap.get(newKey);
     if (newChunk) {
       newChunk.renderChunk(worldGetBlock);
-      rendered.push({ chunkX: newOriginX, chunkZ: newOriginZ, chunk: newChunk });
+      if (this.visibleKeys.has(newKey)) {
+        rendered.push({ chunkX: newOriginX, chunkZ: newOriginZ, chunk: newChunk });
+      }
     }
 
     for (const [dx, dz] of CARDINAL_OFFSETS) {
       const nx = newOriginX + dx;
       const nz = newOriginZ + dz;
-      const neighbor = this.chunkMap.get(chunkKey(nx, nz));
+      const nkey = chunkKey(nx, nz);
+      const neighbor = this.chunkMap.get(nkey);
       if (neighbor) {
         neighbor.renderChunk(worldGetBlock);
-        rendered.push({ chunkX: nx, chunkZ: nz, chunk: neighbor });
+        if (this.visibleKeys.has(nkey)) {
+          rendered.push({ chunkX: nx, chunkZ: nz, chunk: neighbor });
+        }
       }
     }
 

@@ -1,4 +1,4 @@
-/** biome-ignore-all lint/style/noNonNullAssertion: gradient indices are bounded by hash output */
+/** biome-ignore-all lint/style/noNonNullAssertion: gradient indices are clamped to [0, 11] by gradientIndex */
 import { bilerp } from "./interpolations";
 
 /** Maps integer coordinates (x, z) to a pseudorandom value in [0, 1] */
@@ -26,6 +26,12 @@ const GRAD3 = new Int8Array([
   -1,
 ]);
 
+// hash3D can return exactly 1.0, so `(h * 12) | 0` can reach 12; clamp to [0, 11].
+function gradientIndex(seed: number, x: number, y: number, z: number): number {
+  const h = (hash3D(seed, x, y, z) * 12) | 0;
+  return (h < 12 ? h : 11) * 3;
+}
+
 /** 3D Perlin noise returning a value in approximately [-1, 1] */
 export function perlin3D(seed: number, x: number, y: number, z: number, frequency: number): number {
   const sx = x * frequency;
@@ -50,21 +56,21 @@ export function perlin3D(seed: number, x: number, y: number, z: number, frequenc
   const fy1 = fy - 1;
   const fz1 = fz - 1;
 
-  gi = ((hash3D(seed, x0, y0, z0) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0, y0, z0);
   const n000 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz;
-  gi = ((hash3D(seed, x0 + 1, y0, z0) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0 + 1, y0, z0);
   const n100 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz;
-  gi = ((hash3D(seed, x0, y0 + 1, z0) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0, y0 + 1, z0);
   const n010 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz;
-  gi = ((hash3D(seed, x0 + 1, y0 + 1, z0) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0 + 1, y0 + 1, z0);
   const n110 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz;
-  gi = ((hash3D(seed, x0, y0, z0 + 1) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0, y0, z0 + 1);
   const n001 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz1;
-  gi = ((hash3D(seed, x0 + 1, y0, z0 + 1) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0 + 1, y0, z0 + 1);
   const n101 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz1;
-  gi = ((hash3D(seed, x0, y0 + 1, z0 + 1) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0, y0 + 1, z0 + 1);
   const n011 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz1;
-  gi = ((hash3D(seed, x0 + 1, y0 + 1, z0 + 1) * 12) | 0) * 3;
+  gi = gradientIndex(seed, x0 + 1, y0 + 1, z0 + 1);
   const n111 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz1;
 
   // Trilinear interpolation

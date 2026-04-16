@@ -89,6 +89,18 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
   ];
 }
 
+// Shared scratch buffers reused across renderChunk calls. Grow on demand so
+// total resident footprint is O(max chunk) instead of O(chunks × max chunk).
+let scratchPositions = new Float32Array(0);
+let scratchColors = new Float32Array(0);
+let scratchAmbientOcclusion = new Uint8Array(0);
+
+function ensureScratchCapacity(maxCubes: number): void {
+  if (scratchPositions.length < 4 * maxCubes) scratchPositions = new Float32Array(4 * maxCubes);
+  if (scratchColors.length < 3 * maxCubes) scratchColors = new Float32Array(3 * maxCubes);
+  if (scratchAmbientOcclusion.length < 24 * maxCubes) scratchAmbientOcclusion = new Uint8Array(24 * maxCubes);
+}
+
 export class Chunk {
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
@@ -105,10 +117,7 @@ export class Chunk {
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
   private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
-  // Pre-allocated scratch buffers for renderChunk (sized after generation)
-  private scratchPositions: Float32Array = new Float32Array(0);
-  private scratchColors: Float32Array = new Float32Array(0);
-  private scratchAmbientOcclusion: Uint8Array = new Uint8Array(0);
+  private maxCubes: number = 0;
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -121,19 +130,17 @@ export class Chunk {
     this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
-    this.allocateScratchBuffers();
+    this.computeMaxCubes();
     this.renderChunk(); // render on creation, might not be necessary
   }
 
-  private allocateScratchBuffers(): void {
+  private computeMaxCubes(): void {
     let total = 0;
     const S = this.size;
     for (let i = 0; i < S * S; i++) {
       total += this.heightMap[i]! + 1;
     }
-    this.scratchPositions = new Float32Array(4 * total);
-    this.scratchColors = new Float32Array(3 * total);
-    this.scratchAmbientOcclusion = new Uint8Array(24 * total);
+    this.maxCubes = total;
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -277,9 +284,10 @@ export class Chunk {
       isAir(lx, ly, lz + 1) ||
       isAir(lx, ly, lz - 1);
 
-    const positions = this.scratchPositions;
-    const colors = this.scratchColors;
-    const ambientOcclusion = this.scratchAmbientOcclusion;
+    ensureScratchCapacity(this.maxCubes);
+    const positions = scratchPositions;
+    const colors = scratchColors;
+    const ambientOcclusion = scratchAmbientOcclusion;
     let count = 0;
 
     const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
@@ -333,7 +341,7 @@ export class Chunk {
     this.cubes = count;
     this.cubePositionsF32 = positions.slice(0, 4 * count);
     this.cubeColorsF32 = colors.slice(0, 3 * count);
-    this.cubeAmbientOcclusionU8 = ambientOcclusion.subarray(0, 24 * count);
+    this.cubeAmbientOcclusionU8 = ambientOcclusion.slice(0, 24 * count);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
