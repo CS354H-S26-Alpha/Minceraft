@@ -40,4 +40,5 @@ export const placedRockPassDef: EntityPassDef = {
     { name: "aOffset", size: 4 },
     { name: "aScale", size: 1 },
   ],
+  cullFace: true,
 };

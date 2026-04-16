@@ -5,14 +5,14 @@ uniform vec4 uLightPos;
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
 
-// Per-type LUT uniforms (indexed by CubeType, 12 entries each).
+// Per-type LUT uniforms (indexed by CubeType, 20 entries each).
 // col1 = mix(color,          uLut1Fixed[type], uLut1Blend[type])
 // col2 = mix(color * scale,  uLut2Fixed[type], uLut2Blend[type])
-uniform vec3 uLut1Fixed[12];
-uniform float uLut1Blend[12];
-uniform vec3 uLut2Fixed[12];
-uniform float uLut2Blend[12];
-uniform float uLut2Scale[12];
+uniform vec3 uLut1Fixed[20];
+uniform float uLut1Blend[20];
+uniform vec3 uLut2Fixed[20];
+uniform float uLut2Blend[20];
+uniform float uLut2Scale[20];
 
 in vec4 normal;
 in vec4 wsPos;

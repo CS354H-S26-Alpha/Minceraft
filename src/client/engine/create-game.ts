@@ -3,7 +3,7 @@ import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { PlacedObjectType } from "@/game/object-placement";
+import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { DAY_LENGTH_S } from "@/game/time";
@@ -253,7 +253,11 @@ export function createGame(args: CreateGameArgs): GameState {
         player.position.x,
         player.position.z,
       );
-      const foliageObjects = renderablePlacedObjects.filter((object) => object.type !== PlacedObjectType.Rock);
+      const foliageObjects = renderablePlacedObjects.filter(
+        (object) =>
+          object.type !== PlacedObjectType.Rock &&
+          (RENDERABLE_PLACED_OBJECT_TYPES as readonly PlacedObjectType[]).includes(object.type),
+      );
       const rockObjects = renderablePlacedObjects.filter((object) => object.type === PlacedObjectType.Rock);
       renderedFoliageCount = packPlacedObjects(foliageObjects, placedObjectBuffers);
       renderedRockCount = packPlacedRocks(rockObjects, placedRockBuffers);

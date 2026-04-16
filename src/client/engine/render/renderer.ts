@@ -157,46 +157,30 @@ export class Renderer {
     pass.setup();
   }
 
-  // LUT data — indexed by CubeType (0–11), must stay in sync with blankCube.frag
+  // LUT data — indexed by CubeType (0–19), must stay in sync with blankCube.frag
   // col1 = mix(vertexColor, lut1Fixed, lut1Blend)
   // col2 = mix(vertexColor * lut2Scale, lut2Fixed, lut2Blend)
   private static readonly LUT1_FIXED = new Float32Array([
-    0.0,
-    0.0,
-    0.0, // 0  Air         (unused)
-    0.0,
-    0.0,
-    0.0, // 1  Grass       (overridden by face logic)
-    0.0,
-    0.0,
-    0.0, // 2  Dirt
-    0.0,
-    0.0,
-    0.0, // 3  Stone
-    0.0,
-    0.0,
-    0.0, // 4  Sand
-    0.0,
-    0.0,
-    0.0, // 5  Snow
-    0.08,
-    0.08,
-    0.09, // 6  Bedrock
-    0.0,
-    0.0,
-    0.0, // 7  ForestGrass (overridden by face logic)
-    0.5,
-    0.5,
-    0.5, // 8  CoalOre
-    0.5,
-    0.5,
-    0.5, // 9  IronOre
-    0.5,
-    0.5,
-    0.5, // 10 GoldOre
-    0.5,
-    0.5,
-    0.5, // 11 DiamondOre
+    0.0,  0.0,  0.0,  // 0  Air         (unused)
+    0.0,  0.0,  0.0,  // 1  Grass       (overridden by face logic)
+    0.0,  0.0,  0.0,  // 2  Dirt
+    0.0,  0.0,  0.0,  // 3  Stone
+    0.0,  0.0,  0.0,  // 4  Sand
+    0.0,  0.0,  0.0,  // 5  Snow
+    0.08, 0.08, 0.09, // 6  Bedrock
+    0.0,  0.0,  0.0,  // 7  ForestGrass (overridden by face logic)
+    0.5,  0.5,  0.5,  // 8  CoalOre
+    0.5,  0.5,  0.5,  // 9  IronOre
+    0.5,  0.5,  0.5,  // 10 GoldOre
+    0.5,  0.5,  0.5,  // 11 DiamondOre
+    0.0,  0.0,  0.0,  // 12 Water
+    0.0,  0.0,  0.0,  // 13 Lava
+    0.0,  0.0,  0.0,  // 14 Permafrost  (overridden by face logic)
+    0.0,  0.0,  0.0,  // 15 OakLog
+    0.0,  0.0,  0.0,  // 16 OakLeaf
+    0.0,  0.0,  0.0,  // 17 ShrubLeaf
+    0.0,  0.0,  0.0,  // 18 ShrubStem
+    0.0,  0.0,  0.0,  // 19 Cactus
   ]);
   private static readonly LUT1_BLEND = new Float32Array([
     0, // Air
@@ -211,72 +195,80 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
+    0, // Water
+    0, // Lava
+    0, // Permafrost
+    0, // OakLog
+    0, // OakLeaf
+    0, // ShrubLeaf
+    0, // ShrubStem
+    0, // Cactus
   ]);
   private static readonly LUT2_FIXED = new Float32Array([
-    0.0,
-    0.0,
-    0.0, // 0  Air         (unused)
-    0.0,
-    0.0,
-    0.0, // 1  Grass       (overridden by face logic)
-    0.0,
-    0.0,
-    0.0, // 2  Dirt
-    0.3,
-    0.3,
-    0.335, // 3  Stone
-    0.53,
-    0.47,
-    0.18, // 4  Sand
-    0.8,
-    0.9,
-    1.0, // 5  Snow
-    0.02,
-    0.02,
-    0.03, // 6  Bedrock
-    0.0,
-    0.0,
-    0.0, // 7  ForestGrass (overridden by face logic)
-    0.12,
-    0.12,
-    0.13, // 8  CoalOre
-    0.72,
-    0.46,
-    0.3, // 9  IronOre
-    0.94,
-    0.82,
-    0.08, // 10 GoldOre
-    0.25,
-    0.88,
-    0.92, // 11 DiamondOre
+    0.0,  0.0,   0.0,  // 0  Air         (unused)
+    0.0,  0.0,   0.0,  // 1  Grass       (overridden by face logic)
+    0.0,  0.0,   0.0,  // 2  Dirt
+    0.3,  0.3,   0.335,// 3  Stone
+    0.53, 0.47,  0.18, // 4  Sand
+    0.8,  0.9,   1.0,  // 5  Snow
+    0.02, 0.02,  0.03, // 6  Bedrock
+    0.0,  0.0,   0.0,  // 7  ForestGrass (overridden by face logic)
+    0.12, 0.12,  0.13, // 8  CoalOre
+    0.72, 0.46,  0.3,  // 9  IronOre
+    0.94, 0.82,  0.08, // 10 GoldOre
+    0.25, 0.88,  0.92, // 11 DiamondOre
+    0.05, 0.15,  0.5,  // 12 Water       (deep blue dark variant)
+    0.6,  0.15,  0.01, // 13 Lava        (cooled/dark lava)
+    0.0,  0.0,   0.0,  // 14 Permafrost  (overridden by face logic)
+    0.28, 0.16,  0.07, // 15 OakLog      (dark bark)
+    0.1,  0.3,   0.05, // 16 OakLeaf     (dark leaf)
+    0.22, 0.34,  0.08, // 17 ShrubLeaf   (dark shrub leaf)
+    0.2,  0.14,  0.06, // 18 ShrubStem   (dark stem)
+    0.04, 0.28,  0.07, // 19 Cactus      (dark cactus)
   ]);
   private static readonly LUT2_BLEND = new Float32Array([
-    0, // Air
-    0, // Grass
-    0, // Dirt
-    1, // Stone
-    0.4, // Sand
-    1, // Snow
-    1, // Bedrock
-    0, // ForestGrass
-    1, // CoalOre
-    1, // IronOre
-    1, // GoldOre
-    1, // DiamondOre
+    0,    // Air
+    0,    // Grass
+    0,    // Dirt
+    1,    // Stone
+    0.4,  // Sand
+    1,    // Snow
+    1,    // Bedrock
+    0,    // ForestGrass
+    1,    // CoalOre
+    1,    // IronOre
+    1,    // GoldOre
+    1,    // DiamondOre
+    0.5,  // Water
+    0.4,  // Lava
+    0,    // Permafrost
+    0.35, // OakLog
+    0.3,  // OakLeaf
+    0.3,  // ShrubLeaf
+    0.3,  // ShrubStem
+    0.3,  // Cactus
   ]);
   private static readonly LUT2_SCALE = new Float32Array([
-    0.5, // Air
-    0.5, // Grass
-    0.5, // Dirt
-    0.5, // Stone
+    0.5,  // Air
+    0.5,  // Grass
+    0.5,  // Dirt
+    0.5,  // Stone
     0.85, // Sand
-    0.5, // Snow        (irrelevant, blend=1)
-    0.5, // Bedrock     (irrelevant, blend=1)
-    0.5, // ForestGrass
-    0.5, // CoalOre     (irrelevant, blend=1)
-    0.5, // IronOre     (irrelevant, blend=1)
-    0.5, // GoldOre     (irrelevant, blend=1)
-    0.5, // DiamondOre  (irrelevant, blend=1)
+    0.5,  // Snow        (irrelevant, blend=1)
+    0.5,  // Bedrock     (irrelevant, blend=1)
+    0.5,  // ForestGrass
+    0.5,  // CoalOre     (irrelevant, blend=1)
+    0.5,  // IronOre     (irrelevant, blend=1)
+    0.5,  // GoldOre     (irrelevant, blend=1)
+    0.5,  // DiamondOre  (irrelevant, blend=1)
+    0.65, // Water
+    0.8,  // Lava
+    0.5,  // Permafrost
+    0.55, // OakLog
+    0.6,  // OakLeaf
+    0.6,  // ShrubLeaf
+    0.55, // ShrubStem
+    0.6,  // Cactus
   ]);
 
   private initBlankCubePass(cube: Cube): void {
