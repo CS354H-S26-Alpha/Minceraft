@@ -27,6 +27,7 @@ out vec4 fragColor;
 // CubeType enum values — must stay in sync with cube-types.ts
 const int CUBE_GRASS       = 1;
 const int CUBE_FORESTGRASS = 7;
+const int CUBE_PERMAFROST  = 14;
 
 // Scalar hash: vec2 + seed → [0, 1]
 float hash(vec2 p, float seed) {
@@ -65,7 +66,7 @@ void main() {
   vec3 col2 = mix(color * uLut2Scale[type], uLut2Fixed[type], uLut2Blend[type]);
 
   // Grass/ForestGrass: face-dependent colour — unavoidable since it varies per fragment
-  if (type == CUBE_GRASS || type == CUBE_FORESTGRASS) {
+  if (type == CUBE_GRASS || type == CUBE_FORESTGRASS || type == CUBE_PERMAFROST) {
     vec3  dirt       = (type == CUBE_GRASS) ? vec3(0.55, 0.36, 0.18) : vec3(0.45, 0.30, 0.15);
     float topFace    = step(0.5,  normal.y);
     float bottomFace = step(0.5, -normal.y);

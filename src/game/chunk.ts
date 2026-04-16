@@ -1,10 +1,13 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
-import { BIOME_INFOS, sampleColumn, surfaceBlock } from "@/game/biome";
+import { BIOME_INFOS, Biome, sampleColumn, surfaceBlock } from "@/game/biome";
 import { perlin3D } from "@/utils/noise";
 
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
+export const SEA_LEVEL = 50; // water surface in non-desert biomes
+export const DESERT_LAVA_LEVEL = 55; // lava surface in desert biome
+export const CAVE_LAVA_LEVEL = 8; // deep lava fills cave air pockets at the bottom of the world
 
 type Direction = readonly [number, number, number];
 
@@ -172,13 +175,17 @@ export class Chunk {
     const topleftx = this.x - this.size / 2;
     const topleftz = this.y - this.size / 2;
 
+    // Local biome map used in Pass 4 to distinguish water vs. lava columns.
+    const biomeMap = new Uint8Array(this.size * this.size);
+
     // --- Pass 1: Base terrain fill ---
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const globalX = topleftx + j;
         const globalZ = topleftz + i;
 
-        const { biome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
+        const { biome, surfaceBiome, height: rawHeight } = sampleColumn(this.seed, globalX, globalZ);
+        biomeMap[this.size * i + j] = biome; // structural biome drives fluid fill
         const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
@@ -188,11 +195,19 @@ export class Chunk {
           this.setBlock(j, y, i, CubeType.Stone);
         }
         for (let y = Math.max(1, height - 3); y < height; y++) {
-          this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface);
+          this.setBlock(j, y, i, BIOME_INFOS[biome].subsurface); // subsurface follows structural biome
         }
-        const surfaceType = surfaceBlock(biome, height);
-        this.setBlock(j, height, i, surfaceType);
-        this.surfaceTypesMap[this.size * i + j] = surfaceType;
+        const surfaceType = surfaceBlock(surfaceBiome, height, this.seed, globalX, globalZ);
+        if (surfaceType === CubeType.Snow && height + 1 < CHUNK_HEIGHT) {
+          // Snow sits on top as its own block — base surface stays as stone/etc.
+          this.setBlock(j, height, i, BIOME_INFOS[surfaceBiome].surface);
+          this.setBlock(j, height + 1, i, CubeType.Snow);
+          this.heightMap[this.size * i + j] = height + 1;
+          this.surfaceTypesMap[this.size * i + j] = CubeType.Snow;
+        } else {
+          this.setBlock(j, height, i, surfaceType);
+          this.surfaceTypesMap[this.size * i + j] = surfaceType;
+        }
       }
     }
 
@@ -205,31 +220,83 @@ export class Chunk {
     const CAVE_STEP = 8;
     const CAVE_FREQ = 1 / 64;
     const CAVE_THRESHOLD = 0.12;
-    const CAVE_SKIP_THRESHOLD = CAVE_THRESHOLD + 2.0 * Math.ceil(CAVE_STEP / 2) * CAVE_FREQ;
+    const CAVE_CAP = 8;
+    const MOUNTAIN_CAVE_FREQ = 1 / 40;
+    const MOUNTAIN_CAVE_CAP = 0;
+    const caveSkipThreshold = (freq: number) => CAVE_THRESHOLD + 2.0 * Math.ceil(CAVE_STEP / 2) * freq;
 
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
-        const caveTop = (this.heightMap[this.size * i + j] as number) - 2;
+        const isMountain = (biomeMap[this.size * i + j] as Biome) === Biome.Mountain;
+        const caveCap = isMountain ? MOUNTAIN_CAVE_CAP : CAVE_CAP;
+        const caveFreq = isMountain ? MOUNTAIN_CAVE_FREQ : CAVE_FREQ;
+        const caveTop = (this.heightMap[this.size * i + j] as number) - caveCap;
+        const skipThreshold = caveSkipThreshold(caveFreq);
 
         for (let yBase = 1; yBase <= caveTop; yBase += CAVE_STEP) {
           const yEnd = Math.min(yBase + CAVE_STEP, caveTop + 1);
           const yMid = (yBase + yEnd - 1) >> 1;
 
-          const n1Coarse = perlin3D(this.seed + 100, gx, yMid, gz, CAVE_FREQ);
-          if (Math.abs(n1Coarse) >= CAVE_SKIP_THRESHOLD) continue;
+          const n1Coarse = perlin3D(this.seed + 100, gx, yMid, gz, caveFreq);
+          if (Math.abs(n1Coarse) >= skipThreshold) continue;
 
           for (let y = yBase; y < yEnd; y++) {
             if (this.getBlock(j, y, i) === CubeType.Air) continue;
 
-            const n1 = perlin3D(this.seed + 100, gx, y, gz, CAVE_FREQ);
+            const n1 = perlin3D(this.seed + 100, gx, y, gz, caveFreq);
             if (Math.abs(n1) >= CAVE_THRESHOLD) continue;
-            const n2 = perlin3D(this.seed + 200, gx, y, gz, CAVE_FREQ);
+            const n2 = perlin3D(this.seed + 200, gx, y, gz, caveFreq);
             if (Math.abs(n2) < CAVE_THRESHOLD) {
               this.setBlock(j, y, i, CubeType.Air);
+              if (this.getBlock(j, y + 1, i) === CubeType.Snow) {
+                this.setBlock(j, y + 1, i, CubeType.Air);
+              }
             }
           }
+        }
+      }
+    }
+
+    // --- Pass 2.5: Collapse floating mountain peak caps ---
+    // Cave carving (caveCap=0) can sever a thin peak tip from the main mountain body.
+    // Per column: scan down from the actual top, find the first air gap, and remove the
+    // cap above it if it is ≤5 blocks tall (thin spires are always floating artefacts).
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        if ((biomeMap[this.size * i + j] as Biome) !== Biome.Mountain) continue;
+        const idx = this.size * i + j;
+
+        // Find actual topmost solid block (heightMap is stale after cave carving)
+        let topY = this.heightMap[idx] as number;
+        while (topY > 0 && this.getBlock(j, topY, i) === CubeType.Air) topY--;
+
+        // Scan down through the top solid section looking for the first air gap
+        let gapAt = -1;
+        for (let y = topY; y > 1; y--) {
+          if (this.getBlock(j, y - 1, i) === CubeType.Air) {
+            gapAt = y; // lowest block of the floating cap
+            break;
+          }
+        }
+        if (gapAt < 0) {
+          this.heightMap[idx] = topY;
+          continue; // solid all the way down — stable
+        }
+
+        const capHeight = topY - gapAt + 1;
+        if (capHeight <= 5) {
+          // Thin cap — almost certainly a floating artefact; remove it
+          for (let y = gapAt; y <= topY; y++) {
+            this.setBlock(j, y, i, CubeType.Air);
+          }
+          // Find new surface below the removed section and the air gap
+          let newTop = gapAt - 1;
+          while (newTop > 0 && this.getBlock(j, newTop, i) === CubeType.Air) newTop--;
+          this.heightMap[idx] = newTop;
+        } else {
+          this.heightMap[idx] = topY;
         }
       }
     }
@@ -251,6 +318,107 @@ export class Chunk {
               break;
             }
           }
+        }
+      }
+    }
+
+    // --- Pass 3.5: Mountain cave wall ore clusters ---
+    // Stone blocks adjacent to air (cave surfaces) in mountain biome get extra ore density.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        if ((biomeMap[this.size * i + j] as Biome) !== Biome.Mountain) continue;
+        const gx = topleftx + j;
+        const gz = topleftz + i;
+
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+          if (this.getBlock(j, y, i) !== CubeType.Stone) continue;
+
+          // Only target cave wall blocks — stone that touches at least one air neighbour
+          const onCaveWall =
+            this.getBlock(j + 1, y, i) === CubeType.Air ||
+            this.getBlock(j - 1, y, i) === CubeType.Air ||
+            this.getBlock(j, y, i + 1) === CubeType.Air ||
+            this.getBlock(j, y, i - 1) === CubeType.Air ||
+            this.getBlock(j, y + 1, i) === CubeType.Air ||
+            this.getBlock(j, y - 1, i) === CubeType.Air;
+          if (!onCaveWall) continue;
+
+          for (const [oreType, seedOff, freq, threshold, minY, maxY] of Chunk.ORES) {
+            if (y < minY || y > maxY) continue;
+            // Lower threshold = more ore on cave walls
+            if (perlin3D(this.seed + seedOff + 700, gx, y, gz, freq) > threshold - 0.15) {
+              this.setBlock(j, y, i, oreType);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // --- Pass 4: Deep cave lava ---
+    // Any air pocket at or below CAVE_LAVA_LEVEL (above bedrock at Y=0) becomes lava,
+    // creating natural lava pools at the bottom of caves.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        for (let y = 1; y <= CAVE_LAVA_LEVEL; y++) {
+          if (this.getBlock(j, y, i) === CubeType.Air) {
+            this.setBlock(j, y, i, CubeType.Lava);
+          }
+        }
+      }
+    }
+
+    // --- Pass 5: Surface fluid fill ---
+    // Desert: coat low-lying surface blocks with Lava (follows terrain slope).
+    // All other biomes: fill low columns with Water up to SEA_LEVEL.
+    // heightMap is updated so renderChunk scans up to the fluid surface.
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const idx = this.size * i + j;
+        const terrainY = this.heightMap[idx] as number;
+        const biome = biomeMap[idx] as Biome;
+
+        if (biome === Biome.Desert) {
+          // Surface-coat low desert terrain with lava — follows the slope naturally.
+          // Skip if spillover replaced the surface, or if any adjacent column is a different
+          // biome (lava stays interior to the desert, never on biome edges).
+          if (terrainY >= DESERT_LAVA_LEVEL) continue;
+          if (this.getBlock(j, terrainY, i) !== CubeType.Sand) continue;
+          // Require a 5-block interior buffer — lava with physics must not reach biome edges.
+          const S = this.size;
+          const R = 5;
+          let onEdge = false;
+          outer: for (let di = -R; di <= R && !onEdge; di++) {
+            for (let dj = -R; dj <= R && !onEdge; dj++) {
+              if (Math.abs(di) + Math.abs(dj) > R) continue; // diamond/cross shape
+              const ni = i + di,
+                nj = j + dj;
+              if (ni < 0 || ni >= S || nj < 0 || nj >= S) {
+                onEdge = true;
+                break outer;
+              }
+              if ((biomeMap[ni * S + nj] as Biome) !== Biome.Desert) {
+                onEdge = true;
+                break outer;
+              }
+            }
+          }
+          if (onEdge) continue;
+          // Flood-fill lava up to DESERT_LAVA_LEVEL — flat lake surface, sand stays as floor
+          for (let y = terrainY + 1; y <= DESERT_LAVA_LEVEL; y++) {
+            this.setBlock(j, y, i, CubeType.Lava);
+          }
+          this.heightMap[idx] = DESERT_LAVA_LEVEL;
+          this.surfaceTypesMap[idx] = CubeType.Lava;
+        } else if (biome === Biome.Tundra || biome === Biome.Mountain) {
+          // Tundra is dry/frozen; Mountain valleys are rocky, not flooded
+        } else {
+          if (terrainY >= SEA_LEVEL) continue;
+          for (let y = terrainY + 1; y <= SEA_LEVEL; y++) {
+            this.setBlock(j, y, i, CubeType.Water);
+          }
+          this.heightMap[idx] = SEA_LEVEL;
+          this.surfaceTypesMap[idx] = CubeType.Water;
         }
       }
     }

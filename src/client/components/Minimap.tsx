@@ -3,7 +3,7 @@ import playerIcon from "@/assets/icons/player.png";
 import { CHUNK_HEIGHT } from "@/game/chunk";
 import type { Player, PlayerPublicState } from "@/game/player";
 import type { MinimapApi } from "../engine/create-game";
-import { CUBE_TYPE_INFO, CubeType } from "../engine/render/cube-types";
+import { CUBE_TYPE_INFO, type CubeType } from "../engine/render/cube-types";
 
 interface MinimapProps {
   player: () => Player | undefined;
@@ -15,8 +15,10 @@ interface MinimapProps {
 const MINIMAP_RESOLUTION = 128;
 const MINIMAP_RADIUS = MINIMAP_RESOLUTION / 2;
 const UNLOADED_PIXEL = [13, 21, 26] as const;
-const BLOCK_COLORS = Array.from({ length: CubeType.DiamondOre + 1 }, (_, index) => {
-  const [r, g, b] = CUBE_TYPE_INFO[index as CubeType].baseColor;
+const BLOCK_COLORS = Array.from({ length: Math.max(...Object.keys(CUBE_TYPE_INFO).map(Number)) + 1 }, (_, index) => {
+  const info = CUBE_TYPE_INFO[index as CubeType];
+  if (!info) return UNLOADED_PIXEL;
+  const [r, g, b] = info.baseColor;
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)] as const;
 });
 

@@ -124,11 +124,35 @@ export function valueNoise(seed: number, x: number, z: number, frequency: number
 }
 
 /**
+ * Multi-octave value noise (fBm) returning a value in [0, 1].
+ * Each octave uses a distinct seed offset to avoid correlation artifacts.
+ */
+export function valueNoiseFbm(
+  seed: number,
+  x: number,
+  z: number,
+  frequency: number,
+  octaves: number = 3,
+  lacunarity: number = 2.0,
+  persistence: number = 0.5,
+): number {
+  let value = 0;
+  let amp = 1;
+  let freq = frequency;
+  let maxAmp = 0;
+  for (let i = 0; i < octaves; i++) {
+    value += valueNoise(seed + i * 31, x, z, freq) * amp;
+    maxAmp += amp;
+    freq *= lacunarity;
+    amp *= persistence;
+  }
+  return value / maxAmp;
+}
+
+/**
  * 3-octave terrain height in [0, 100].
- * Octave weights: 50 / 25 / 12.5 (max sum = 87.5).
+ * Uses valueNoiseFbm so the full [0, 1] output range is normalized correctly.
  */
 export function terrainHeight(seed: number, x: number, z: number): number {
-  const h =
-    valueNoise(seed, x, z, 1 / 16) * 50 + valueNoise(seed, x, z, 1 / 8) * 25 + valueNoise(seed, x, z, 1 / 4) * 12.5;
-  return Math.floor((h / 87.5) * 100);
+  return Math.floor(valueNoiseFbm(seed, x, z, 1 / 16) * 100);
 }
