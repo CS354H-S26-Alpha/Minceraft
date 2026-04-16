@@ -62,7 +62,7 @@ export default function GameView() {
         hidden={inventoryOpen()}
         minimap={game.minimap}
         player={room.player}
-        players={() => room.snapshot.players}
+        players={() => room.remotePlayers}
       />
       <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
       <InventoryPanel
@@ -80,15 +80,15 @@ export default function GameView() {
             computeTimeHistory={game.diagnostics.client.computeTimeHistory}
             gpuTimeMs={game.diagnostics.client.gpuTimeMs}
             gpuTimeHistory={game.diagnostics.client.gpuTimeHistory}
-            tps={game.diagnostics.server.tps}
             mspt={game.diagnostics.server.mspt}
             msptHistory={game.diagnostics.server.msptHistory}
             snapsPerSec={game.diagnostics.server.snapsPerSec}
+            packetsPerSec={game.diagnostics.server.packetsPerSec}
             timeOfDayS={game.diagnostics.server.timeOfDayS}
             onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
-            onlinePlayers={Object.values(room.snapshot.players)}
+            onlinePlayers={Object.values(room.remotePlayers)}
             onTeleportTo={(id) => {
-              const target = room.snapshot.players[id];
+              const target = room.remotePlayers[id];
               const s = room.session();
               if (!target || !s) return;
               room.replicated()?.teleport({ x: target.x, y: target.y, z: target.z });

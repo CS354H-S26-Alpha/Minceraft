@@ -5,6 +5,7 @@ import { CubeType } from "../src/client/engine/render/cube-types";
 
 class FakeChunk {
   public renderCount = 0;
+  public blocks = new Uint8Array(0);
 
   constructor(
     private readonly x: number,

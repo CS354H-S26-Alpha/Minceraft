@@ -1,4 +1,5 @@
-import { bilerp, smoothstep } from "./interpolations";
+/** biome-ignore-all lint/style/noNonNullAssertion: gradient indices are clamped to [0, 11] by gradientIndex */
+import { bilerp } from "./interpolations";
 
 /** Maps integer coordinates (x, z) to a pseudorandom value in [0, 1] */
 export function hash2D(seed: number, x: number, z: number): number {
@@ -19,26 +20,16 @@ export function hash3D(seed: number, x: number, y: number, z: number): number {
   return hash / 0x7fffffff;
 }
 
-// 12 gradient vectors for 3D Perlin noise (edges of a cube)
-const GRAD3: [number, number, number][] = [
-  [1, 1, 0],
-  [-1, 1, 0],
-  [1, -1, 0],
-  [-1, -1, 0],
-  [1, 0, 1],
-  [-1, 0, 1],
-  [1, 0, -1],
-  [-1, 0, -1],
-  [0, 1, 1],
-  [0, -1, 1],
-  [0, 1, -1],
-  [0, -1, -1],
-];
+// Flat gradient table: 12 vectors × 3 components
+const GRAD3 = new Int8Array([
+  1, 1, 0, -1, 1, 0, 1, -1, 0, -1, -1, 0, 1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, -1, 0, 1, 1, 0, -1, 1, 0, 1, -1, 0, -1,
+  -1,
+]);
 
-/** Gradient dot product at a 3D lattice point */
-function grad3D(seed: number, ix: number, iy: number, iz: number, dx: number, dy: number, dz: number): number {
-  const g = GRAD3[Math.floor(hash3D(seed, ix, iy, iz) * 12)] as [number, number, number];
-  return g[0] * dx + g[1] * dy + g[2] * dz;
+// hash3D can return exactly 1.0, so `(h * 12) | 0` can reach 12; clamp to [0, 11].
+function gradientIndex(seed: number, x: number, y: number, z: number): number {
+  const h = (hash3D(seed, x, y, z) * 12) | 0;
+  return (h < 12 ? h : 11) * 3;
 }
 
 /** 3D Perlin noise returning a value in approximately [-1, 1] */
@@ -54,20 +45,33 @@ export function perlin3D(seed: number, x: number, y: number, z: number, frequenc
   const fy = sy - y0;
   const fz = sz - z0;
 
-  // Fade curves (smoothstep)
-  const u = smoothstep(fx);
-  const v = smoothstep(fy);
-  const w = smoothstep(fz);
+  // Inline smoothstep fade curves
+  const u = fx * fx * (3 - 2 * fx);
+  const v = fy * fy * (3 - 2 * fy);
+  const w = fz * fz * (3 - 2 * fz);
 
-  // Gradient dot products at 8 corners
-  const n000 = grad3D(seed, x0, y0, z0, fx, fy, fz);
-  const n100 = grad3D(seed, x0 + 1, y0, z0, fx - 1, fy, fz);
-  const n010 = grad3D(seed, x0, y0 + 1, z0, fx, fy - 1, fz);
-  const n110 = grad3D(seed, x0 + 1, y0 + 1, z0, fx - 1, fy - 1, fz);
-  const n001 = grad3D(seed, x0, y0, z0 + 1, fx, fy, fz - 1);
-  const n101 = grad3D(seed, x0 + 1, y0, z0 + 1, fx - 1, fy, fz - 1);
-  const n011 = grad3D(seed, x0, y0 + 1, z0 + 1, fx, fy - 1, fz - 1);
-  const n111 = grad3D(seed, x0 + 1, y0 + 1, z0 + 1, fx - 1, fy - 1, fz - 1);
+  // Inline gradient dot products at 8 corners (hash → gradient index → dot product)
+  let gi: number;
+  const fx1 = fx - 1;
+  const fy1 = fy - 1;
+  const fz1 = fz - 1;
+
+  gi = gradientIndex(seed, x0, y0, z0);
+  const n000 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz;
+  gi = gradientIndex(seed, x0 + 1, y0, z0);
+  const n100 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz;
+  gi = gradientIndex(seed, x0, y0 + 1, z0);
+  const n010 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz;
+  gi = gradientIndex(seed, x0 + 1, y0 + 1, z0);
+  const n110 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz;
+  gi = gradientIndex(seed, x0, y0, z0 + 1);
+  const n001 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz1;
+  gi = gradientIndex(seed, x0 + 1, y0, z0 + 1);
+  const n101 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy + GRAD3[gi + 2]! * fz1;
+  gi = gradientIndex(seed, x0, y0 + 1, z0 + 1);
+  const n011 = GRAD3[gi]! * fx + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz1;
+  gi = gradientIndex(seed, x0 + 1, y0 + 1, z0 + 1);
+  const n111 = GRAD3[gi]! * fx1 + GRAD3[gi + 1]! * fy1 + GRAD3[gi + 2]! * fz1;
 
   // Trilinear interpolation
   const nx00 = n000 + u * (n100 - n000);
