@@ -91,7 +91,6 @@ const FRAME_HISTORY_SIZE = 120;
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 /** How often fluid flow is advanced. Slow enough to be visible and cheap. */
-const FLUID_TICK_INTERVAL_MS = 400;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
@@ -254,11 +253,6 @@ export function createGame(args: CreateGameArgs): GameState {
     setInterval,
   );
 
-  // Advance fluid simulation in the background. The worker ticks every
-  // loaded chunk and ships only the changed ones back, which mergeBatch
-  // applies to the render + collision snapshots on the main thread.
-  makeTimer(() => void chunks.tickFluids(), FLUID_TICK_INTERVAL_MS, setInterval);
-
   let needsResize = true;
   createResizeObserver(args.glCanvas, () => {
     needsResize = true;
@@ -338,6 +332,7 @@ export function createGame(args: CreateGameArgs): GameState {
         pendingBlocks.delete(ack.seq);
         if (!ack.accepted) {
           chunks.modifyBlock(pending.x, pending.y, pending.z, pending.previousType);
+          chunks.clearLocalOverride(pending.x, pending.y, pending.z);
         }
       }
 

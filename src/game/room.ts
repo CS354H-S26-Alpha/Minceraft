@@ -108,7 +108,6 @@ export class GameRoom extends DurableObject<Env> {
       () => this.getChunkStoreStub(),
       this.playerSystem,
       this.blockSystemOptions,
-      this.ctx.id.toString(),
     );
     this.systems = [this.playerSystem, this.blockSystem];
 

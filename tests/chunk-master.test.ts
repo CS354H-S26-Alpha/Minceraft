@@ -24,9 +24,6 @@ function createMockClient(): ChunkClient {
     },
     syncBlock() {},
     async clearCache() {},
-    async tickFluids() {
-      return null;
-    },
     dispose() {},
   };
 }

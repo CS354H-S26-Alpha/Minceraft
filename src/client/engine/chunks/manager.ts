@@ -23,7 +23,6 @@ export interface ChunkClient {
   loadChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): Promise<ChunkBatchData>;
   syncBlock(wx: number, wy: number, wz: number, blockType: number): void;
   clearCache(): Promise<void>;
-  tickFluids(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
   dispose(): void;
 }
 
@@ -38,6 +37,7 @@ export class ChunkManager {
   private lastOriginZ = NaN;
 
   private chunkDataMap = new Map<string, SingleChunkData>();
+  private localOverrides = new Map<string, Map<number, CubeType>>();
   private ingestQueue: Array<{ originX: number; originZ: number; blocks: Uint8Array }> = [];
   private workerBusy = false;
   private resetGeneration = 0;
@@ -97,30 +97,11 @@ export class ChunkManager {
     this.lastOriginX = NaN;
     this.lastOriginZ = NaN;
     this.chunkDataMap.clear();
+    this.localOverrides.clear();
     this.ingestQueue.length = 0;
     this.resetGeneration++;
     void this.client.clearCache();
     this.dirty = true;
-  }
-
-  /**
-   * Asks the worker to advance fluid simulation by one tick. No-ops while
-   * the player hasn't yet entered a generation (e.g. during boot) or while
-   * a previous fluid tick is still in flight, so we never queue up work.
-   */
-  private fluidTickInFlight = false;
-  async tickFluids(): Promise<void> {
-    if (this.fluidTickInFlight) return;
-    if (!Number.isFinite(this.lastOriginX) || !Number.isFinite(this.lastOriginZ)) return;
-    const generationId = this.activeGeneration;
-    this.fluidTickInFlight = true;
-    try {
-      const args = this.buildArgs(generationId, this.lastOriginX, this.lastOriginZ);
-      const batch = await this.client.tickFluids(args);
-      if (batch && generationId === this.activeGeneration) this.mergeBatch(batch);
-    } finally {
-      this.fluidTickInFlight = false;
-    }
   }
 
   collisionQuery(wx: number, wz: number, currentY: number): number {
@@ -217,6 +198,13 @@ export class ChunkManager {
     const index = wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx;
     const previousType = (chunk.blocks[index] ?? CubeType.Air) as CubeType;
     chunk.blocks[index] = newType;
+
+    let overrides = this.localOverrides.get(key);
+    if (!overrides) {
+      overrides = new Map();
+      this.localOverrides.set(key, overrides);
+    }
+    overrides.set(index, newType);
 
     updateColumnSurface(chunk.blocks, chunk.surfaceHeights, chunk.surfaceTypes, lx, lz, wy, newType, CHUNK_SIZE);
 
@@ -399,10 +387,54 @@ export class ChunkManager {
 
   private mergeBatch(batch: ChunkBatchData): void {
     for (const chunk of batch.chunks) {
-      this.chunkDataMap.set(chunkKey(chunk.originX, chunk.originZ), chunk);
+      const key = chunkKey(chunk.originX, chunk.originZ);
+      this.chunkDataMap.set(key, chunk);
+      this.reapplyOverrides(chunk, key);
     }
     this.dirty = true;
     this.onChange?.();
+  }
+
+  private reapplyOverrides(chunk: SingleChunkData, key: string): void {
+    const overrides = this.localOverrides.get(key);
+    if (!overrides || overrides.size === 0) return;
+
+    const worldGet = (bwx: number, bwy: number, bwz: number) =>
+      this.getBlock(Math.floor(bwx), Math.floor(bwy), Math.floor(bwz));
+
+    const dirtySections = new Set<number>();
+    for (const [idx, type] of overrides) {
+      chunk.blocks[idx] = type;
+      const wy = Math.floor(idx / (CHUNK_SIZE * CHUNK_SIZE));
+      const rem = idx % (CHUNK_SIZE * CHUNK_SIZE);
+      const lz = Math.floor(rem / CHUNK_SIZE);
+      const lx = rem % CHUNK_SIZE;
+      updateColumnSurface(chunk.blocks, chunk.surfaceHeights, chunk.surfaceTypes, lx, lz, wy, type, CHUNK_SIZE);
+      dirtySections.add(sectionIndex(lx, wy, lz));
+      if (lx % SECTION_SIZE === 0 && lx > 0) dirtySections.add(sectionIndex(lx - 1, wy, lz));
+      if (lx % SECTION_SIZE === SECTION_SIZE - 1 && lx < CHUNK_SIZE - 1) dirtySections.add(sectionIndex(lx + 1, wy, lz));
+      if (lz % SECTION_SIZE === 0 && lz > 0) dirtySections.add(sectionIndex(lx, wy, lz - 1));
+      if (lz % SECTION_SIZE === SECTION_SIZE - 1 && lz < CHUNK_SIZE - 1) dirtySections.add(sectionIndex(lx, wy, lz + 1));
+      if (wy % SECTION_SIZE === 0 && wy > 0) dirtySections.add(sectionIndex(lx, wy - 1, lz));
+      if (wy % SECTION_SIZE === SECTION_SIZE - 1 && wy < CHUNK_HEIGHT - 1) dirtySections.add(sectionIndex(lx, wy + 1, lz));
+      const wx = chunk.originX - CHUNK_SIZE / 2 + lx;
+      const wz = chunk.originZ - CHUNK_SIZE / 2 + lz;
+      this.client.syncBlock(wx, wy, wz, type);
+    }
+
+    this.rebuildSections(chunk, chunk.originX, chunk.originZ, dirtySections, worldGet);
+  }
+
+  clearLocalOverride(wx: number, wy: number, wz: number): void {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const key = chunkKey(originX, originZ);
+    const lx = wx - (originX - CHUNK_SIZE / 2);
+    const lz = wz - (originZ - CHUNK_SIZE / 2);
+    const index = wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx;
+    const overrides = this.localOverrides.get(key);
+    if (!overrides) return;
+    overrides.delete(index);
+    if (overrides.size === 0) this.localOverrides.delete(key);
   }
 
   private evictDistant(playerOriginX: number, playerOriginZ: number): void {
@@ -415,7 +447,10 @@ export class ChunkManager {
       const dz = Math.abs(oz - playerOriginZ) / CHUNK_SIZE;
       if (Math.max(dx, dz) > EVICT_DISTANCE) toDelete.push(key);
     }
-    for (const key of toDelete) this.chunkDataMap.delete(key);
+    for (const key of toDelete) {
+      this.chunkDataMap.delete(key);
+      this.localOverrides.delete(key);
+    }
     if (toDelete.length > 0) this.dirty = true;
   }
 

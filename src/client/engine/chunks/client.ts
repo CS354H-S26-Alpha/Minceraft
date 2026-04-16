@@ -33,7 +33,6 @@ export interface ChunkWorkerApi {
   syncBlock(wx: number, wy: number, wz: number, blockType: number): void;
   /** Clear all cached block data. */
   clearCache(): Promise<void>;
-  tickFluids(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
 }
 
 /** Comlink wrapper for the chunk mesh-building web worker. */
@@ -51,10 +50,6 @@ export class ChunkWorkerClient {
 
   clearCache() {
     return this.remote.clearCache();
-  }
-
-  tickFluids(args: ChunkQueueArgs) {
-    return this.remote.tickFluids(args);
   }
 
   dispose(): void {

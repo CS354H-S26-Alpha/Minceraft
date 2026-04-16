@@ -32,12 +32,6 @@ const api: ChunkWorkerApi = {
   async clearCache() {
     builder.clearCache();
   },
-
-  async tickFluids(args) {
-    const data = queue.tickFluids(args);
-    if (!data) return null;
-    return transferBatchData(data);
-  },
 };
 
 expose(api);
