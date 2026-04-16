@@ -5,6 +5,8 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import * as schema from "../server/schema";
+import { BlockSystem } from "./block-system";
+import type { ChunkStore } from "./chunk-store";
 import type { InventoryClickTarget } from "./crafting";
 import type { GameSystem } from "./game-system";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
@@ -30,6 +32,7 @@ export type {
 
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
+const TEMP_START_SEED = 123; // TODO: persist seed per room
 const MAX_NAME_LENGTH = 32;
 const NAME_PATTERN = /^[\w\s-]+$/;
 const MIN_INPUT_INTERVAL_MS = 25;
@@ -66,7 +69,8 @@ function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
-  private systems: GameSystem[] = [this.playerSystem];
+  private blockSystem!: BlockSystem;
+  private systems!: GameSystem[];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
   private needsBroadcast = false;
@@ -84,12 +88,20 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Lazy one-time setup: runs DB migrations and hydrates all systems from
-   * SQLite. Called before any operation that needs entity state.
+   * Lazy one-time setup: runs DB migrations, creates the ChunkStore stub,
+   * and hydrates all systems from SQLite.
    */
   private ensureInitialized() {
     if (this.initialized) return;
     this.initialized = true;
+
+    const chunkStoreId = this.env.ChunkStore.idFromName(this.ctx.id.toString());
+    const chunkStoreStub = this.env.ChunkStore.get(chunkStoreId) as unknown as DurableObjectStub<ChunkStore>;
+    void chunkStoreStub.initialize(TEMP_START_SEED);
+
+    this.blockSystem = new BlockSystem(chunkStoreStub, this.playerSystem);
+    this.systems = [this.playerSystem, this.blockSystem];
+
     migrate(this.db, migrations);
     for (const system of this.systems) {
       system.hydrate(this.db);
@@ -125,6 +137,12 @@ export class GameRoom extends DurableObject<Env> {
     if (now - last < MIN_INPUT_INTERVAL_MS) return;
     this.lastInputTime.set(playerId, now);
     this.playerSystem.queuePosition(playerId, packet);
+    this.needsBroadcast = true;
+  }
+
+  sendBlockAction(playerId: string, action: import("./protocol").BlockActionPacket) {
+    this.ensureInitialized();
+    this.blockSystem.queueAction(playerId, action);
     this.needsBroadcast = true;
   }
 
@@ -208,7 +226,8 @@ export class GameRoom extends DurableObject<Env> {
     const tickStart = performance.now();
     this.gameTick++;
     for (const system of this.systems) {
-      if (system.tick()) this.needsBroadcast = true;
+      const changed = await system.tick();
+      if (changed) this.needsBroadcast = true;
     }
     this.lastTickTimeMs = performance.now() - tickStart;
 
@@ -328,6 +347,10 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Forwards client position packets to the authoritative `GameRoom`. */
   sendPosition(packet: PlayerPositionPacket) {
     return this.#room.sendPosition(this.#playerId, packet);
+  }
+
+  sendBlockAction(action: import("./protocol").BlockActionPacket) {
+    return this.#room.sendBlockAction(this.#playerId, action);
   }
 
   /** Asks the server to include own state in the next tick. */

@@ -3,6 +3,7 @@ import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
+import { CubeType } from "@/client/engine/render/cube-types";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
@@ -13,6 +14,8 @@ import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput, type InputOptions } from "./input";
+import type { RaycastHit } from "./raycast";
+import { raycastVoxels } from "./raycast";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 import { SceneLighting } from "./scene-lighting";
@@ -149,6 +152,10 @@ export function createGame(args: CreateGameArgs): GameState {
   // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
+  let latestHit: RaycastHit | null = null;
+  let blockSeq = 1;
+  const pendingBlocks = new Map<number, { x: number; y: number; z: number; previousType: CubeType }>();
+
   const handleReset = () => {
     ctx?.camera.reset();
     chunks.reset();
@@ -178,10 +185,44 @@ export function createGame(args: CreateGameArgs): GameState {
     });
   };
 
+  const handleLeftClick = () => {
+    const hit = latestHit;
+    const s = room().session();
+    if (!hit || !s || hit.blockType === CubeType.Bedrock) return;
+
+    const seq = blockSeq++;
+    const previousType = chunks.modifyBlock(hit.blockX, hit.blockY, hit.blockZ, CubeType.Air);
+    if (previousType == null) return;
+    pendingBlocks.set(seq, { x: hit.blockX, y: hit.blockY, z: hit.blockZ, previousType });
+    s.sendBlockAction({ seq, action: "break", x: hit.blockX, y: hit.blockY, z: hit.blockZ });
+  };
+
+  const handleRightClick = () => {
+    const hit = latestHit;
+    const s = room().session();
+    if (!hit || !s) return;
+
+    const placeX = hit.blockX + hit.faceNormal[0];
+    const placeY = hit.blockY + hit.faceNormal[1];
+    const placeZ = hit.blockZ + hit.faceNormal[2];
+
+    // Don't place if the target is already occupied
+    if (chunks.getBlock(placeX, placeY, placeZ) !== CubeType.Air) return;
+
+    const blockType = CubeType.Dirt; // TODO: use selected hotbar item
+    const seq = blockSeq++;
+    const previousType = chunks.modifyBlock(placeX, placeY, placeZ, blockType);
+    if (previousType == null) return;
+    pendingBlocks.set(seq, { x: placeX, y: placeY, z: placeZ, previousType });
+    s.sendBlockAction({ seq, action: "place", x: placeX, y: placeY, z: placeZ, blockType });
+  };
+
   const input = createInput(args.glCanvas, {
     onReset: handleReset,
-    ...args.shortcuts,
+    onLeftClick: handleLeftClick,
+    onRightClick: handleRightClick,
     onAttack: handleAttack,
+    ...args.shortcuts,
   });
 
   // TODO: refactor to be general packet handling rather than only inputs
@@ -260,17 +301,45 @@ export function createGame(args: CreateGameArgs): GameState {
       (replicated.entity as Player).collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
     }
 
+    // --- Raycast for block targeting ---
+    const eye = camera.eye();
+    const lookDir = camera.lookDirection();
+    const currentHit = raycastVoxels(eye.x, eye.y, eye.z, lookDir.x, lookDir.y, lookDir.z, 6.0, (wx, wy, wz) =>
+      chunks.getBlock(Math.floor(wx), Math.floor(wy), Math.floor(wz)),
+    );
+    latestHit = currentHit;
+
     const viewMatrix = camera.viewMatrix();
     const projMatrix = camera.projMatrix();
     chunks.cull(viewMatrix, projMatrix);
 
-    // --- Remote entities ---
+    // --- Remote entities + block acks ---
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
+
+      // Process block acks
+      for (const ack of room().blockAckQueue.splice(0)) {
+        const pending = pendingBlocks.get(ack.seq);
+        if (!pending) continue;
+        pendingBlocks.delete(ack.seq);
+        if (!ack.accepted) {
+          chunks.modifyBlock(pending.x, pending.y, pending.z, pending.previousType);
+        }
+      }
+
+      // Apply block changes from other players
+      for (const change of room().blockChangesQueue.splice(0)) {
+        const isOurs = [...pendingBlocks.values()].some(
+          (p) => p.x === change.x && p.y === change.y && p.z === change.z,
+        );
+        if (!isOurs) {
+          chunks.modifyBlock(change.x, change.y, change.z, change.blockType as CubeType);
+        }
+      }
     }
 
     const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
@@ -291,6 +360,7 @@ export function createGame(args: CreateGameArgs): GameState {
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
       entities,
+      highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
     });
 
     // --- Diagnostics (producers → store) ---

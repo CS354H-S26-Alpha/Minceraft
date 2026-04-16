@@ -22,11 +22,22 @@
           {
             "name": "GameRoom",
             "class_name": "GameRoom"
+          },
+          {
+            "name": "ChunkStore",
+            "class_name": "ChunkStore"
           }
         ]
       }
     }
   },
+  "services": [
+    {
+      "binding": "ChunkGen",
+      "service": "minceraft",
+      "entrypoint": "ChunkGen"
+    }
+  ],
   "assets": {
     "not_found_handling": "single-page-application"
   },
@@ -36,6 +47,10 @@
       {
         "name": "GameRoom",
         "class_name": "GameRoom"
+      },
+      {
+        "name": "ChunkStore",
+        "class_name": "ChunkStore"
       }
     ]
   },
@@ -52,6 +67,10 @@
           "to": "GameRoom"
         }
       ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["ChunkStore"]
     }
   ]
 }

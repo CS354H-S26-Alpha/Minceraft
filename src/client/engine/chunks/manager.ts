@@ -1,6 +1,6 @@
 import { Mat4, type Mat4Like } from "gl-matrix";
 import { CubeType } from "@/client/engine/render/cube-types";
-import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
+import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey, chunkOrigin, renderBlockData } from "@/game/chunk";
 import { Player } from "@/game/player";
 import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
@@ -144,6 +144,98 @@ export class ChunkManager {
     }
 
     return minCameraY;
+  }
+
+  /** Returns the block type at the given world coordinates, or Air if the chunk is not loaded. */
+  getBlock(wx: number, wy: number, wz: number): CubeType {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const chunk = this.chunkDataMap.get(chunkKey(originX, originZ));
+    if (!chunk) return CubeType.Air;
+    const lx = wx - (originX - CHUNK_SIZE / 2);
+    const lz = wz - (originZ - CHUNK_SIZE / 2);
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return CubeType.Air;
+    return (chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air) as CubeType;
+  }
+
+  /**
+   * Modifies a block at the given world coordinates and rebuilds the chunk's render arrays.
+   * Returns the previous block type, or `null` if the chunk is not loaded.
+   */
+  modifyBlock(wx: number, wy: number, wz: number, newType: CubeType): CubeType | null {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return null;
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const key = chunkKey(originX, originZ);
+    const chunk = this.chunkDataMap.get(key);
+    if (!chunk) return null;
+
+    const lx = wx - (originX - CHUNK_SIZE / 2);
+    const lz = wz - (originZ - CHUNK_SIZE / 2);
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return null;
+
+    const index = wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx;
+    const previousType = (chunk.blocks[index] ?? CubeType.Air) as CubeType;
+    chunk.blocks[index] = newType;
+
+    // Update surface height/type for the affected column
+    const colIdx = lz * CHUNK_SIZE + lx;
+    if (newType === CubeType.Air && wy === chunk.surfaceHeights[colIdx]) {
+      // Broke the surface block — scan down to find new surface
+      let newSurfY = 0;
+      for (let y = wy - 1; y >= 0; y--) {
+        if (chunk.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] !== CubeType.Air) {
+          newSurfY = y;
+          break;
+        }
+      }
+      chunk.surfaceHeights[colIdx] = newSurfY;
+      chunk.surfaceTypes[colIdx] =
+        chunk.blocks[newSurfY * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air;
+    } else if (newType !== CubeType.Air && wy > (chunk.surfaceHeights[colIdx] ?? 0)) {
+      // Placed above current surface
+      chunk.surfaceHeights[colIdx] = wy;
+      chunk.surfaceTypes[colIdx] = newType;
+    }
+
+    // Rebuild render arrays for this chunk
+    const worldGet = (bwx: number, bwy: number, bwz: number) =>
+      this.getBlock(Math.floor(bwx), Math.floor(bwy), Math.floor(bwz));
+    this.rebuildChunkRender(chunk, originX, originZ, worldGet);
+
+    // If block is at a chunk edge, also re-render the adjacent chunk
+    if (lx === 0) this.rebuildAdjacentChunk(originX - CHUNK_SIZE, originZ, worldGet);
+    else if (lx === CHUNK_SIZE - 1) this.rebuildAdjacentChunk(originX + CHUNK_SIZE, originZ, worldGet);
+    if (lz === 0) this.rebuildAdjacentChunk(originX, originZ - CHUNK_SIZE, worldGet);
+    else if (lz === CHUNK_SIZE - 1) this.rebuildAdjacentChunk(originX, originZ + CHUNK_SIZE, worldGet);
+
+    this.dirty = true;
+    this.onChange?.();
+    return previousType;
+  }
+
+  private rebuildChunkRender(
+    chunk: SingleChunkData,
+    originX: number,
+    originZ: number,
+    worldGet: (wx: number, wy: number, wz: number) => CubeType,
+  ): void {
+    const result = renderBlockData(chunk.blocks, chunk.surfaceHeights, originX, originZ, CHUNK_SIZE, worldGet);
+    chunk.cubePositions = result.cubePositions;
+    chunk.cubeColors = result.cubeColors;
+    chunk.cubeAmbientOcclusion = result.cubeAmbientOcclusion;
+    chunk.numCubes = result.numCubes;
+  }
+
+  private rebuildAdjacentChunk(
+    adjOriginX: number,
+    adjOriginZ: number,
+    worldGet: (wx: number, wy: number, wz: number) => CubeType,
+  ): void {
+    const adjKey = chunkKey(adjOriginX, adjOriginZ);
+    const adjChunk = this.chunkDataMap.get(adjKey);
+    if (adjChunk) {
+      this.rebuildChunkRender(adjChunk, adjOriginX, adjOriginZ, worldGet);
+    }
   }
 
   /** Frustum-cull chunks and concatenate visible ones into flat arrays. */
