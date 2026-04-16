@@ -19,7 +19,7 @@ import { SceneLighting } from "./scene-lighting";
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
-  /** Output of `joinWorld()` — provides player, snapshot, input, etc. */
+  /** Output of `joinWorld()` — provides player, remote players, tick info, input, etc. */
   room: ReturnType<typeof joinWorld>;
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
@@ -41,13 +41,13 @@ export interface ClientDiagnostics {
   pointerLocked: boolean;
 }
 
-/** Server-side performance metrics derived from room snapshots. */
+/** Server-side performance metrics derived from `ServerTick` packets. */
 export interface ServerDiagnostics {
-  /** Milliseconds per server tick (from the snapshot). */
+  /** Milliseconds per server tick (reported in the `WorldStatePacket`). */
   mspt: number;
   /** Rolling ring-buffer of recent mspt values. */
   msptHistory: number[];
-  /** How many snapshots we receive per second from the server. */
+  /** How many server ticks we receive per second. */
   snapsPerSec: number;
   /** How many position packets we send to the server per second. */
   packetsPerSec: number;

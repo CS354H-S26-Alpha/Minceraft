@@ -227,17 +227,18 @@ export class GameRoom extends DurableObject<Env> {
     const entries = [...this.listeners.entries()];
     const onlinePlayerIds = new Set(this.listeners.keys());
     const ctx = { onlinePlayerIds };
+    const worldPacket: ServerPacket = {
+      type: "world",
+      tickTimeMs: this.lastTickTimeMs,
+      timeOfDayS: (((Date.now() / 1000 + this.timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S,
+    };
     const results = await Promise.all(
       entries.map(([id, cb]) => {
         const packets: ServerPacket[] = [];
         for (const system of this.systems) {
           packets.push(...system.packetsFor(id, ctx));
         }
-        packets.push({
-          type: "world",
-          tickTimeMs: this.lastTickTimeMs,
-          timeOfDayS: (((Date.now() / 1000 + this.timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S,
-        });
+        packets.push(worldPacket);
         return notify(cb, { tick: this.gameTick, packets });
       }),
     );
@@ -254,17 +255,17 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Drops a player's transport-level session when the listener is gone.
-   * The client's packet sequence counter restarts at 1 on reconnect, so any
-   * retained ack would silently drop inbound packets until the counter caught
-   * back up — visible to the player as movement that stops replicating for
-   * seconds to minutes while the rest of the connection (time-of-day, remote
-   * players) keeps updating.
+   * Handles a transport-level disconnect. Tears down the listener and delegates
+   * to `PlayerSystem.leave` so crafting-grid/cursor items are returned to the
+   * player's inventory and per-player UI state does not leak across sessions.
+   * Also forces a re-broadcast so remaining clients observe the disconnect
+   * even if the room is otherwise idle.
    */
   private onListenerLost(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
-    this.playerSystem.resetSession(playerId);
+    this.playerSystem.leave(playerId);
+    this.needsBroadcast = true;
   }
 
   /** Returns `true` if any system has unsaved dirty state. */
