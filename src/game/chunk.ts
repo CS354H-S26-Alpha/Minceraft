@@ -128,6 +128,63 @@ function ensureScratchCapacity(maxCubes: number, paddedSize: number): void {
 
 export const SECTION_SIZE = 16;
 
+/**
+ * Derives per-column surface height and block type from raw block data.
+ * Returns heightMap and surfaceTypes arrays of length `size × size`.
+ */
+export function computeHeightData(
+  blocks: Uint8Array,
+  size: number,
+): { heightMap: Uint8Array; surfaceTypes: Uint8Array } {
+  const heightMap = new Uint8Array(size * size);
+  const surfaceTypes = new Uint8Array(size * size);
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      const colIdx = z * size + x;
+      for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+        const bt = blocks[y * size * size + z * size + x]!;
+        if (bt !== CubeType.Air) {
+          heightMap[colIdx] = y;
+          surfaceTypes[colIdx] = bt;
+          break;
+        }
+      }
+    }
+  }
+  return { heightMap, surfaceTypes };
+}
+
+/**
+ * Updates surface height and type for a single column after a block change.
+ * `lx`, `lz` are local chunk coordinates; `wy` is the world Y of the changed block.
+ */
+export function updateColumnSurface(
+  blocks: Uint8Array,
+  heightMap: Uint8Array,
+  surfaceTypes: Uint8Array,
+  lx: number,
+  lz: number,
+  wy: number,
+  newBlockType: number,
+  size: number,
+): void {
+  const colIdx = lz * size + lx;
+  if (newBlockType === CubeType.Air && wy === heightMap[colIdx]) {
+    let newSurfY = 0;
+    for (let y = wy - 1; y >= 0; y--) {
+      if (blocks[y * size * size + lz * size + lx] !== CubeType.Air) {
+        newSurfY = y;
+        break;
+      }
+    }
+    heightMap[colIdx] = newSurfY;
+    surfaceTypes[colIdx] = blocks[newSurfY * size * size + lz * size + lx] ?? CubeType.Air;
+  } else if (newBlockType !== CubeType.Air && wy > (heightMap[colIdx] ?? 0)) {
+    heightMap[colIdx] = wy;
+    surfaceTypes[colIdx] = newBlockType;
+  }
+}
+
 export interface RenderBlockResult {
   cubePositions: Float32Array;
   cubeColors: Float32Array;
@@ -189,40 +246,107 @@ export function renderBlockData(
   // Build padded array: index = (ly+1) * PX*PZ + (lz+1) * PX + (lx+1)
   // Default fill is 0 (Air) — borders are Air unless worldGet overrides.
   const padded = scratchPadded;
-  padded.fill(0, 0, paddedSize);
 
-  // Copy interior blocks
-  for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
-    for (let lz = 0; lz < S; lz++) {
-      const srcOff = ly * S * S + lz * S;
-      const dstOff = (ly + 1) * PX * PZ + (lz + 1) * PX + 1;
-      padded.set(blocks.subarray(srcOff, srcOff + S), dstOff);
-    }
-  }
-
-  // Fill Y=-1 border as solid (prevents false "air" below bedrock floor)
-  padded.fill(CubeType.Bedrock, 0, PX * PZ);
-
-  // Fill X/Z borders from worldGet if available
-  if (worldGet) {
-    for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
-      const py = ly + 1;
-      // X borders (lx = -1 and lx = S)
-      for (let lz = 0; lz < S; lz++) {
-        padded[py * PX * PZ + (lz + 1) * PX + 0] = worldGet(topleftx - 1, ly, topleftz + lz);
-        padded[py * PX * PZ + (lz + 1) * PX + (S + 1)] = worldGet(topleftx + S, ly, topleftz + lz);
-      }
-      // Z borders (lz = -1 and lz = S)
-      for (let lx = 0; lx < S; lx++) {
-        padded[py * PX * PZ + 0 * PX + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz - 1);
-        padded[py * PX * PZ + (S + 1) * PX + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz + S);
-      }
-    }
-  }
-
-  // Pre-computed strides for padded array: avoids per-call multiplication
+  // For region renders, only fill the sub-region ± 1-block border in the padded array.
+  // For full-chunk renders, fill the entire padded array.
   const strideY = PX * PZ;
   const strideZ = PX;
+
+  if (region) {
+    // Padded coords of the region ± 1 border (clamped to padded array bounds)
+    const py0 = Math.max(0, y0); // y-1 border: y0+1-1 = y0 in padded coords
+    const py1 = Math.min(PY - 1, y1 + 1); // y1+1 border in padded coords
+    const pz0 = Math.max(0, z0); // lz-1 border: pz = lz+1-1 = lz
+    const pz1 = Math.min(PZ - 1, z1 + 1);
+    const px0 = Math.max(0, x0);
+    const px1 = Math.min(PX - 1, x1 + 1);
+    // Zero only the needed rows
+    for (let py = py0; py <= py1; py++) {
+      for (let pz = pz0; pz <= pz1; pz++) {
+        const base = py * strideY + pz * strideZ + px0;
+        padded.fill(0, base, base + (px1 - px0 + 1));
+      }
+    }
+    // Copy interior blocks for the relevant rows only
+    const lyMin = Math.max(0, y0 - 1);
+    const lyMax = Math.min(CHUNK_HEIGHT - 1, y1);
+    const lzMin = Math.max(0, z0 - 1);
+    const lzMax = Math.min(S - 1, z1);
+    const lxMin = Math.max(0, x0 - 1);
+    const lxMax = Math.min(S - 1, x1);
+    for (let ly = lyMin; ly <= lyMax; ly++) {
+      for (let lz = lzMin; lz <= lzMax; lz++) {
+        const srcOff = ly * S * S + lz * S + lxMin;
+        const dstOff = (ly + 1) * strideY + (lz + 1) * strideZ + (lxMin + 1);
+        padded.set(blocks.subarray(srcOff, srcOff + (lxMax - lxMin + 1)), dstOff);
+      }
+    }
+    // Y=-1 border: mark as solid for columns in the region (prevents false "air" below bedrock floor)
+    if (y0 === 0) {
+      for (let lz = lzMin; lz <= lzMax; lz++) {
+        for (let lx = lxMin; lx <= lxMax; lx++) {
+          padded[(lz + 1) * strideZ + (lx + 1)] = CubeType.Bedrock;
+        }
+      }
+    }
+    // Fill X/Z borders from worldGet for the region's edges
+    if (worldGet) {
+      for (let ly = lyMin; ly <= lyMax; ly++) {
+        const py = ly + 1;
+        if (x0 === 0) {
+          for (let lz = lzMin; lz <= lzMax; lz++) {
+            padded[py * strideY + (lz + 1) * strideZ + 0] = worldGet(topleftx - 1, ly, topleftz + lz);
+          }
+        }
+        if (x1 === S) {
+          for (let lz = lzMin; lz <= lzMax; lz++) {
+            padded[py * strideY + (lz + 1) * strideZ + (S + 1)] = worldGet(topleftx + S, ly, topleftz + lz);
+          }
+        }
+        if (z0 === 0) {
+          for (let lx = lxMin; lx <= lxMax; lx++) {
+            padded[py * strideY + 0 * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz - 1);
+          }
+        }
+        if (z1 === S) {
+          for (let lx = lxMin; lx <= lxMax; lx++) {
+            padded[py * strideY + (S + 1) * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz + S);
+          }
+        }
+      }
+    }
+  } else {
+    padded.fill(0, 0, paddedSize);
+
+    // Copy all interior blocks
+    for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+      for (let lz = 0; lz < S; lz++) {
+        const srcOff = ly * S * S + lz * S;
+        const dstOff = (ly + 1) * strideY + (lz + 1) * strideZ + 1;
+        padded.set(blocks.subarray(srcOff, srcOff + S), dstOff);
+      }
+    }
+
+    // Fill Y=-1 border as solid (prevents false "air" below bedrock floor)
+    padded.fill(CubeType.Bedrock, 0, PX * PZ);
+
+    // Fill X/Z borders from worldGet if available
+    if (worldGet) {
+      for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+        const py = ly + 1;
+        // X borders (lx = -1 and lx = S)
+        for (let lz = 0; lz < S; lz++) {
+          padded[py * strideY + (lz + 1) * strideZ + 0] = worldGet(topleftx - 1, ly, topleftz + lz);
+          padded[py * strideY + (lz + 1) * strideZ + (S + 1)] = worldGet(topleftx + S, ly, topleftz + lz);
+        }
+        // Z borders (lz = -1 and lz = S)
+        for (let lx = 0; lx < S; lx++) {
+          padded[py * strideY + 0 * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz - 1);
+          padded[py * strideY + (S + 1) * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz + S);
+        }
+      }
+    }
+  }
 
   const positions = scratchPositions;
   const colors = scratchColors;

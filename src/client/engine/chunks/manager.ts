@@ -9,6 +9,7 @@ import {
   SECTION_SIZE,
   sectionIndex,
   sectionRegion,
+  updateColumnSurface,
 } from "@/game/chunk";
 import { Player } from "@/game/player";
 import type { ChunkBatchData, SingleChunkData } from "./client";
@@ -217,23 +218,7 @@ export class ChunkManager {
     const previousType = (chunk.blocks[index] ?? CubeType.Air) as CubeType;
     chunk.blocks[index] = newType;
 
-    // Update surface data for collision/minimap
-    const colIdx = lz * CHUNK_SIZE + lx;
-    if (newType === CubeType.Air && wy === chunk.surfaceHeights[colIdx]) {
-      let newSurfY = 0;
-      for (let y = wy - 1; y >= 0; y--) {
-        if (chunk.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] !== CubeType.Air) {
-          newSurfY = y;
-          break;
-        }
-      }
-      chunk.surfaceHeights[colIdx] = newSurfY;
-      chunk.surfaceTypes[colIdx] =
-        chunk.blocks[newSurfY * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air;
-    } else if (newType !== CubeType.Air && wy > (chunk.surfaceHeights[colIdx] ?? 0)) {
-      chunk.surfaceHeights[colIdx] = wy;
-      chunk.surfaceTypes[colIdx] = newType;
-    }
+    updateColumnSurface(chunk.blocks, chunk.surfaceHeights, chunk.surfaceTypes, lx, lz, wy, newType, CHUNK_SIZE);
 
     // Rebuild only the dirty section(s) and splice into chunk render arrays
     const worldGet = (bwx: number, bwy: number, bwz: number) =>

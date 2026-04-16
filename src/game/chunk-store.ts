@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey, chunkOrigin, rleDecodeBlocks, rleEncodeBlocks } from "@/game/chunk";
-import type { ChunkGen } from "@/server/chunk-gen";
 
 export interface BlockMutation {
   action: "place" | "break";
@@ -98,38 +97,14 @@ export class ChunkStore extends DurableObject<Env> {
       const key = chunkKey(originX, originZ);
       if (!this.chunks.has(key)) neededKeys.add(key);
     }
-    const startedAt = Date.now();
-    this.log("get_chunks_started", {
-      requestChunkCount: origins.length,
-      missingChunkCount: neededKeys.size,
-      sampleMissingChunkKeys: [...neededKeys].slice(0, 5),
-    });
-    try {
-      if (neededKeys.size > 0) {
-        await Promise.all([...neededKeys].map((key) => this.ensureChunk(key)));
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.log("get_chunks_failed", {
-        durationMs: Date.now() - startedAt,
-        requestChunkCount: origins.length,
-        missingChunkCount: neededKeys.size,
-        error: message,
-      });
-      throw error;
+    if (neededKeys.size > 0) {
+      await Promise.all([...neededKeys].map((key) => this.ensureChunk(key)));
     }
-    const result = origins.map(({ originX, originZ }) => {
+    return origins.map(({ originX, originZ }) => {
       const chunk = this.chunks.get(chunkKey(originX, originZ));
       if (!chunk) return { originX, originZ, blocks: new Uint8Array(0) };
       return { originX, originZ, blocks: rleEncodeBlocks(chunk.blocks, CHUNK_SIZE) };
     });
-    this.log("get_chunks_finished", {
-      durationMs: Date.now() - startedAt,
-      requestChunkCount: origins.length,
-      missingChunkCount: neededKeys.size,
-      returnedChunkCount: result.length,
-    });
-    return result;
   }
 
   getBlock(wx: number, wy: number, wz: number): number {
@@ -156,25 +131,17 @@ export class ChunkStore extends DurableObject<Env> {
 
     if (seed !== undefined) {
       this.seed = seed;
-      this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-        SEED_META_KEY,
-        String(seed),
-      );
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", SEED_META_KEY, String(seed));
     } else {
-      const rows = this.ctx.storage.sql
-        .exec("SELECT value FROM meta WHERE key = ?", SEED_META_KEY)
-        .toArray() as Array<{ value: string }>;
+      const rows = this.ctx.storage.sql.exec("SELECT value FROM meta WHERE key = ?", SEED_META_KEY).toArray() as Array<{
+        value: string;
+      }>;
       if (rows.length > 0) {
         this.seed = Number(rows[0]!.value);
       }
     }
 
     this.initialized = true;
-    this.log("chunk_store_initialized", {
-      seed: this.seed,
-      restoredFromMetadata: seed === undefined,
-    });
   }
 
   private async ensureChunk(key: string): Promise<void> {
@@ -200,35 +167,15 @@ export class ChunkStore extends DurableObject<Env> {
     // Dispatch to ChunkGen service worker for generation on a separate isolate
     const chunkGen = this.env.ChunkGen;
     if (chunkGen) {
-      const startedAt = Date.now();
-      this.log("generate_chunk_started", { chunkKey: key, originX, originZ });
       const encoded = await chunkGen.generateChunk(originX, originZ, this.seed);
       const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true);
       chunk.blocks.set(rleDecodeBlocks(new Uint8Array(encoded), CHUNK_SIZE));
       this.chunks.set(key, chunk);
-      this.log("generate_chunk_finished", {
-        chunkKey: key,
-        originX,
-        originZ,
-        durationMs: Date.now() - startedAt,
-      });
     } else {
       // Fallback: generate inline (no service binding available, e.g. in tests)
       const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true);
       this.chunks.set(key, chunk);
     }
-  }
-
-  private log(event: string, data: Record<string, unknown>): void {
-    console.info(
-      JSON.stringify({
-        message: "chunk_store",
-        event,
-        chunkStoreId: this.ctx.id.toString(),
-        cachedChunkCount: this.chunks.size,
-        ...data,
-      }),
-    );
   }
 
   /**
