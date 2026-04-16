@@ -125,6 +125,8 @@ export class Renderer {
       this.blockHighlight.draw(
         view.viewMatrix,
         view.projMatrix,
+        this.canvas.width,
+        this.canvas.height,
         view.highlightBlock.x,
         view.highlightBlock.y,
         view.highlightBlock.z,

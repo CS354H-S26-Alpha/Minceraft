@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { chunkOrigin } from "../../src/game/chunk";
 import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, ServerPacket, ServerTick } from "../../src/game/protocol.ts";
@@ -11,32 +11,12 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value?: T | PromiseLike<T>) => void } {
-  let resolve!: (value?: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((innerResolve) => {
-    resolve = innerResolve;
-  });
-  return { promise, resolve };
-}
-
-interface RoomChunkStoreBinding {
-  idFromName(name: string): string;
-  get(id: string): {
-    initialize(): Promise<void>;
-    getChunks: ReturnType<typeof vi.fn>;
-    processActions: ReturnType<typeof vi.fn>;
-  };
-}
-
 interface RoomBlockSystemInternals {
   pendingChunkRequests: Map<string, { origins: Array<{ originX: number; originZ: number }> }>;
   playerChunkOrigins: Map<string, string>;
 }
 
-interface RoomTestInternals extends GameRoom {
-  env: {
-    ChunkStore: RoomChunkStoreBinding;
-  };
+interface RoomTestInternals {
   blockSystem: RoomBlockSystemInternals;
 }
 
@@ -114,38 +94,6 @@ describe("GameRoom Durable Object", () => {
     expect(reconcile?.state.health).toBe(PLAYER_MAX_HEALTH);
     expect(reconcile?.state.inventory).toHaveLength(36);
     expect(findPacket(tick, "inventoryUi")?.ui.craftingGrid).toHaveLength(4);
-  });
-
-  it("waits for chunk store initialization before the first chunk tick work starts", async () => {
-    const stub = makeRoomStub(roomName);
-    const initializeGate = deferred<void>();
-    const getChunks = vi.fn(async () => []);
-
-    await runInDurableObject(stub, async (room: GameRoom) => {
-      room.configureBlockSystem(TEST_BLOCK_OPTS);
-      const roomInternals = room as unknown as RoomTestInternals;
-
-      const fakeChunkStore = {
-        initialize: () => initializeGate.promise,
-        getChunks,
-        processActions: vi.fn(async () => []),
-      };
-      roomInternals.env.ChunkStore = {
-        idFromName: () => "fake-chunk-store-id",
-        get: () => fakeChunkStore,
-      };
-
-      room.join("alice", "Alice", () => {});
-      const tickPromise = room.runTick();
-      await Promise.resolve();
-
-      expect(getChunks).not.toHaveBeenCalled();
-
-      initializeGate.resolve();
-      await tickPromise;
-
-      expect(getChunks).toHaveBeenCalledTimes(1);
-    });
   });
 
   it("applies buffered input on the next tick and broadcasts to listeners", async () => {
@@ -437,6 +385,7 @@ describe("GameRoom Durable Object", () => {
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
@@ -469,6 +418,7 @@ describe("GameRoom Durable Object", () => {
     const caraTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       room.join("cara", "Cara", (tick) => caraTicks.push(tick));
@@ -504,6 +454,7 @@ describe("GameRoom Durable Object", () => {
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
@@ -550,6 +501,7 @@ describe("GameRoom Durable Object", () => {
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
@@ -581,6 +533,7 @@ describe("GameRoom Durable Object", () => {
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();

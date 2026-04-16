@@ -5,9 +5,10 @@ import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
+import type { ChunkGen } from "../server/chunk-gen";
 import * as schema from "../server/schema";
 import { BlockSystem, type BlockSystemOptions } from "./block-system";
-import type { ChunkStore } from "./chunk-store";
+import { ChunkStorage } from "./chunk-storage";
 import type { InventoryClickTarget } from "./crafting";
 import type { GameSystem } from "./game-system";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
@@ -70,7 +71,7 @@ export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
   private blockSystem!: BlockSystem;
-  private chunkStoreId!: DurableObjectId;
+  private chunkStorage!: ChunkStorage;
   private systems!: GameSystem[];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
@@ -83,7 +84,6 @@ export class GameRoom extends DurableObject<Env> {
   private db: DrizzleSqliteDODatabase<typeof schema>;
   private initialized = false;
   private blockSystemOptions?: BlockSystemOptions;
-  private chunkStoreInitialization: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -92,8 +92,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Lazy one-time setup: runs DB migrations, creates the ChunkStore stub,
-   * and hydrates all systems from SQLite.
+   * Lazy one-time setup: runs DB migrations, hydrates chunk storage, and
+   * hydrates all systems from SQLite.
    */
   private ensureInitialized() {
     if (this.initialized) return;
@@ -102,14 +102,10 @@ export class GameRoom extends DurableObject<Env> {
     migrate(this.db, migrations);
     const seed = this.getOrCreateSeed();
 
-    this.chunkStoreId = this.env.ChunkStore.idFromName(this.ctx.id.toString());
-    this.chunkStoreInitialization = Promise.resolve(this.getChunkStoreStub().initialize(seed));
+    this.chunkStorage = new ChunkStorage(this.db, this.env.ChunkGen as Service<typeof ChunkGen> | undefined);
+    this.chunkStorage.hydrate(seed);
 
-    this.blockSystem = new BlockSystem(
-      () => this.getChunkStoreStub(),
-      this.playerSystem,
-      this.blockSystemOptions,
-    );
+    this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
     this.systems = [this.playerSystem, this.blockSystem];
 
     for (const system of this.systems) {
@@ -127,10 +123,6 @@ export class GameRoom extends DurableObject<Env> {
       .values({ key: "seed", value: String(seed) })
       .run();
     return seed;
-  }
-
-  private getChunkStoreStub(): DurableObjectStub<ChunkStore> {
-    return this.env.ChunkStore.get(this.chunkStoreId);
   }
 
   /**
@@ -260,7 +252,6 @@ export class GameRoom extends DurableObject<Env> {
     this.tickRunning = true;
     try {
       this.ensureInitialized();
-      await this.chunkStoreInitialization;
 
       const tickStart = performance.now();
       this.gameTick++;

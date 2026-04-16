@@ -33,8 +33,8 @@ const int CUBE_FORESTGRASS = 7;
 const int CUBE_COAL_ORE = 8;
 const int CUBE_DIAMOND_ORE = 11;
 const int CUBE_WATER = 12;
-const int CUBE_LAVA  = 13;
-const int CUBE_PERMAFROST  = 14;
+const int CUBE_LAVA = 13;
+const int CUBE_PERMAFROST = 14;
 
 // Scalar hash: vec2 + seed → [0, 1]
 float hash(vec2 p, float seed) {
@@ -71,6 +71,14 @@ float fbm(vec2 p, float seed) {
   return v;
 }
 
+// Animated scrolling-fbm for fluids — two counter-scrolling octaves summed so
+// the surface moves without tearing at block boundaries.
+float fluidNoise(vec2 p, float t) {
+  float slow = fbm(p * 0.9 + vec2(t * 0.35, -t * 0.27), 0.0);
+  float fast = fbm(p * 2.4 + vec2(-t * 0.65, t * 0.45), 3.7);
+  return 0.6 * slow + 0.5 * fast;
+}
+
 void main() {
   int type = int(cubeType + 0.5);
   float seed = cubeSeed;
@@ -85,8 +93,8 @@ void main() {
 
   // Grass/ForestGrass: face-dependent colour — unavoidable since it varies per fragment
   if (type == CUBE_GRASS || type == CUBE_FORESTGRASS || type == CUBE_PERMAFROST) {
-    vec3  dirt       = (type == CUBE_GRASS) ? vec3(0.55, 0.36, 0.18) : vec3(0.45, 0.30, 0.15);
-    float topFace    = step(0.5,  normal.y);
+    vec3 dirt = vec3(0.55, 0.36, 0.18);
+    float topFace = step(0.5, normal.y);
     float bottomFace = step(0.5, -normal.y);
     float sideFace = 1.0 - topFace - bottomFace;
     float fringe = 0.2 + 0.25 * noise1D(quv.x * 6.0, seed);
@@ -97,34 +105,28 @@ void main() {
 
   vec3 kd;
   if (type == CUBE_WATER || type == CUBE_LAVA) {
-    // Animated fluid surface. Two counter-scrolling FBM layers over world
-    // XZ give a moving caustics/crust look that is continuous across
-    // chunk boundaries (the noise only depends on world position, never on
-    // per-cube inputs). Fluids keep their own colour palette here.
-    vec2 wp = wsPos.xz;
-    // Fixed seeds (not per-cube) so ripples line up across adjacent water
-    // voxels — otherwise you'd see the noise "reset" at every cube border.
-    float slow = fbm(wp * 0.9 + vec2(uTime * 0.35, -uTime * 0.27), 0.0);
-    float fast = fbm(wp * 2.4 + vec2(-uTime * 0.65,  uTime * 0.45), 3.7);
-    float n = 0.6 * slow + 0.5 * fast;
-
+    // Pixelated and time-stepped: 16-texel-per-block spatial grid, 12 fps
+    // temporal grid. Matches the chunky aesthetic of solid-block surfaces.
+    vec2 wp = (floor(wsPos.xz * 16.0) + 0.5) / 16.0;
+    float qT = floor(uTime * 12.0) / 12.0;
+    float n = fluidNoise(wp, qT);
     if (type == CUBE_WATER) {
-      vec3 deep    = vec3(0.04, 0.14, 0.42);
-      vec3 mid     = vec3(0.15, 0.45, 0.88);
-      vec3 foam    = vec3(0.55, 0.80, 1.00);
-      kd = mix(deep, mid, clamp(n, 0.0, 1.0));
-      // Sparkle only on the top face — looks like sunlight on the surface.
-      float topMask = step(0.5, normal.y);
-      float sparkle = smoothstep(0.78, 0.98, n) * topMask;
-      kd = mix(kd, foam, sparkle * 0.75);
+      // Same fbm + 3-palette shape as lava, just blue: dark deep water,
+      // mid-range blue body, bright highlight on noise peaks.
+      vec3 deep   = vec3(0.03, 0.16, 0.48);
+      vec3 mid    = vec3(0.12, 0.50, 0.95);
+      vec3 bright = vec3(0.72, 0.92, 1.00);
+      float wave  = smoothstep(0.30, 0.80, n);
+      kd = mix(deep, mid, wave);
+      kd = mix(kd, bright, step(0.82, n));
     } else {
       // Lava crust: mostly dark with glowing cracks where the noise peaks.
-      vec3 crust   = vec3(0.32, 0.04, 0.01);
-      vec3 molten  = vec3(1.00, 0.55, 0.10);
-      vec3 bright  = vec3(1.00, 0.88, 0.45);
-      float heat   = smoothstep(0.30, 0.80, n);
+      vec3 crust  = vec3(0.22, 0.03, 0.01);
+      vec3 molten = vec3(1.00, 0.48, 0.06);
+      vec3 bright = vec3(1.00, 0.92, 0.55);
+      float heat  = smoothstep(0.30, 0.80, n);
       kd = mix(crust, molten, heat);
-      kd = mix(kd, bright, smoothstep(0.82, 0.98, n));
+      kd = mix(kd, bright, step(0.82, n));
     }
   } else if (type >= CUBE_COAL_ORE && type <= CUBE_DIAMOND_ORE) {
     // Sharper, higher-frequency speckles — ore tint reads as distinct spots on stone.
@@ -159,8 +161,8 @@ void main() {
     // dimmer than daylight but never pitch-black-black.
     lit = kd * (0.85 + 0.25 * uAmbient);
   } else if (type == CUBE_WATER) {
-    // Water is still lit by the sun but skips the heavy AO — dark cave
-    // water otherwise reads as ink.
+    // Water is lit by the sun but skips the heavy AO — dark cave water
+    // otherwise reads as ink.
     float waterAO = mix(0.65, 1.0, aoFactor);
     lit = kd * (uAmbient + dot_nl * uSunColor) * waterAO;
   } else {

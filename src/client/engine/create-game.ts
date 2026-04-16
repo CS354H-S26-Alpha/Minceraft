@@ -4,7 +4,7 @@ import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { CubeType } from "@/client/engine/render/cube-types";
-import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
@@ -207,6 +207,10 @@ export function createGame(args: CreateGameArgs): GameState {
     // Don't place if the target is already occupied
     if (chunks.getBlock(placeX, placeY, placeZ) !== CubeType.Air) return;
 
+    // Don't place inside the local player's own cylinder
+    const player = room().player();
+    if (player && blockIntersectsPlayer(placeX, placeY, placeZ, player.state)) return;
+
     const blockType = CubeType.Dirt; // TODO: use selected hotbar item
     const seq = blockSeq++;
     const previousType = chunks.modifyBlock(placeX, placeY, placeZ, blockType);
@@ -297,7 +301,9 @@ export function createGame(args: CreateGameArgs): GameState {
 
     const replicated = room().replicated();
     if (replicated) {
-      (replicated.entity as Player).collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
+      const entity = replicated.entity as Player;
+      entity.collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
+      entity.headQuery = (cx, cz, cy) => chunks.headQuery(cx, cz, cy);
     }
 
     // --- Raycast for block targeting ---

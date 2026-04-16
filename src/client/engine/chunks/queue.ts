@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/style/noNonNullAssertion: typed-array hot path with bounded indices */
 import { CubeType } from "@/client/engine/render/cube-types";
 import {
   CHUNK_HEIGHT,

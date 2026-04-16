@@ -2,7 +2,6 @@ import { Entrypoint, handler } from "@cloudflare/actors";
 import { newWorkersRpcResponse } from "capnweb";
 import { GameRoom, GameServer } from "../game/room";
 
-export { ChunkStore } from "../game/chunk-store";
 export { ChunkGen } from "./chunk-gen";
 export { GameRoom };
 

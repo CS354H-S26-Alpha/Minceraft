@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/style/noNonNullAssertion: typed-array hot path with bounded indices */
 import { Mat4, type Mat4Like } from "gl-matrix";
 import { CubeType } from "@/client/engine/render/cube-types";
 import {
@@ -142,7 +143,6 @@ export class ChunkManager {
         if (!cachedChunk) continue;
         const lx = bx - (ox - CHUNK_SIZE / 2);
         const lz = bz - (oz - CHUNK_SIZE / 2);
-        // biome-ignore lint/style/noNonNullAssertion: guaranteed to exist for valid coordinates
         const surface = cachedChunk.surfaceHeights[lz * CHUNK_SIZE + lx]!;
         const start = surface < scanCap ? surface : scanCap;
         const blocks = cachedChunk.blocks;
@@ -159,6 +159,65 @@ export class ChunkManager {
     }
 
     return minCameraY;
+  }
+
+  /**
+   * Max eye Y allowed at (wx, wz) given current eye height. Scans upward from
+   * the current head top within the cylinder footprint; the first solid block's
+   * bottom caps the head. Returns +Infinity when no ceiling is in range.
+   */
+  headQuery(wx: number, wz: number, eyeY: number): number {
+    const r = Player.CYLINDER_RADIUS;
+    const r2 = r * r;
+    const eye = Player.EYE_OFFSET;
+    const headOffset = Player.CYLINDER_HEIGHT - eye;
+    const scanFrom = Math.floor(eyeY + headOffset);
+    if (scanFrom >= CHUNK_HEIGHT) return Number.POSITIVE_INFINITY;
+
+    const x0 = Math.floor(wx - r);
+    const x1 = Math.floor(wx + r);
+    const z0 = Math.floor(wz - r);
+    const z1 = Math.floor(wz + r);
+
+    let maxEyeY = Number.POSITIVE_INFINITY;
+    let cachedOx = Number.NaN;
+    let cachedOz = Number.NaN;
+    let cachedChunk: SingleChunkData | undefined;
+
+    for (let bx = x0; bx <= x1; bx++) {
+      const cellX = wx < bx ? bx : wx > bx + 1 ? bx + 1 : wx;
+      const ddx = wx - cellX;
+      const ddx2 = ddx * ddx;
+      if (ddx2 >= r2) continue;
+
+      for (let bz = z0; bz <= z1; bz++) {
+        const cellZ = wz < bz ? bz : wz > bz + 1 ? bz + 1 : wz;
+        const ddz = wz - cellZ;
+        if (ddx2 + ddz * ddz >= r2) continue;
+
+        const [ox, oz] = chunkOrigin(bx, bz);
+        if (ox !== cachedOx || oz !== cachedOz) {
+          cachedOx = ox;
+          cachedOz = oz;
+          cachedChunk = this.chunkDataMap.get(chunkKey(ox, oz));
+        }
+        if (!cachedChunk) continue;
+        const lx = bx - (ox - CHUNK_SIZE / 2);
+        const lz = bz - (oz - CHUNK_SIZE / 2);
+        const blocks = cachedChunk.blocks;
+        const colOffset = lz * CHUNK_SIZE + lx;
+        const stride = CHUNK_SIZE * CHUNK_SIZE;
+        for (let by = scanFrom; by < CHUNK_HEIGHT; by++) {
+          if (blocks[by * stride + colOffset] !== CubeType.Air) {
+            const allowed = by - headOffset;
+            if (allowed < maxEyeY) maxEyeY = allowed;
+            break;
+          }
+        }
+      }
+    }
+
+    return maxEyeY;
   }
 
   /** Returns true if the chunk containing the given world coordinates is loaded. */
@@ -412,11 +471,14 @@ export class ChunkManager {
       updateColumnSurface(chunk.blocks, chunk.surfaceHeights, chunk.surfaceTypes, lx, lz, wy, type, CHUNK_SIZE);
       dirtySections.add(sectionIndex(lx, wy, lz));
       if (lx % SECTION_SIZE === 0 && lx > 0) dirtySections.add(sectionIndex(lx - 1, wy, lz));
-      if (lx % SECTION_SIZE === SECTION_SIZE - 1 && lx < CHUNK_SIZE - 1) dirtySections.add(sectionIndex(lx + 1, wy, lz));
+      if (lx % SECTION_SIZE === SECTION_SIZE - 1 && lx < CHUNK_SIZE - 1)
+        dirtySections.add(sectionIndex(lx + 1, wy, lz));
       if (lz % SECTION_SIZE === 0 && lz > 0) dirtySections.add(sectionIndex(lx, wy, lz - 1));
-      if (lz % SECTION_SIZE === SECTION_SIZE - 1 && lz < CHUNK_SIZE - 1) dirtySections.add(sectionIndex(lx, wy, lz + 1));
+      if (lz % SECTION_SIZE === SECTION_SIZE - 1 && lz < CHUNK_SIZE - 1)
+        dirtySections.add(sectionIndex(lx, wy, lz + 1));
       if (wy % SECTION_SIZE === 0 && wy > 0) dirtySections.add(sectionIndex(lx, wy - 1, lz));
-      if (wy % SECTION_SIZE === SECTION_SIZE - 1 && wy < CHUNK_HEIGHT - 1) dirtySections.add(sectionIndex(lx, wy + 1, lz));
+      if (wy % SECTION_SIZE === SECTION_SIZE - 1 && wy < CHUNK_HEIGHT - 1)
+        dirtySections.add(sectionIndex(lx, wy + 1, lz));
       const wx = chunk.originX - CHUNK_SIZE / 2 + lx;
       const wz = chunk.originZ - CHUNK_SIZE / 2 + lz;
       this.client.syncBlock(wx, wy, wz, type);

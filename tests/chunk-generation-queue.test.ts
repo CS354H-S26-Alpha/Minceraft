@@ -29,8 +29,8 @@ describe("ChunkMeshBuilder", () => {
 
     const chunk = batch.chunks.find((c) => c.originX === 0 && c.originZ === 0);
     expect(chunk).toBeDefined();
-    expect(chunk!.numCubes).toBeGreaterThan(0);
-    expect(chunk!.blocks.length).toBe(CHUNK_SIZE * CHUNK_SIZE * 128);
+    expect(chunk?.numCubes).toBeGreaterThan(0);
+    expect(chunk?.blocks.length).toBe(CHUNK_SIZE * CHUNK_SIZE * 128);
   });
 
   it("returns surfaceHeights and surfaceTypes", () => {
@@ -39,9 +39,10 @@ describe("ChunkMeshBuilder", () => {
     const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
 
     const batch = builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
-    const chunk = batch.chunks.find((c) => c.originX === 0 && c.originZ === 0)!;
-    expect(chunk.surfaceHeights[0]).toBe(50);
-    expect(chunk.surfaceTypes[0]).toBe(CubeType.Grass);
+    const chunk = batch.chunks.find((c) => c.originX === 0 && c.originZ === 0);
+    expect(chunk).toBeDefined();
+    expect(chunk?.surfaceHeights[0]).toBe(50);
+    expect(chunk?.surfaceTypes[0]).toBe(CubeType.Grass);
   });
 
   it("caches blocks and re-renders neighbors on new chunk load", () => {

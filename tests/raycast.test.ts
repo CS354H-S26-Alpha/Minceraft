@@ -12,11 +12,11 @@ describe("raycastVoxels", () => {
     blocks.set("5,0,0", CubeType.Stone);
     const hit = raycastVoxels(0.5, 0.5, 0.5, 1, 0, 0, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockX).toBe(5);
-    expect(hit!.blockY).toBe(0);
-    expect(hit!.blockZ).toBe(0);
-    expect(hit!.faceNormal).toEqual([-1, 0, 0]);
-    expect(hit!.blockType).toBe(CubeType.Stone);
+    expect(hit?.blockX).toBe(5);
+    expect(hit?.blockY).toBe(0);
+    expect(hit?.blockZ).toBe(0);
+    expect(hit?.faceNormal).toEqual([-1, 0, 0]);
+    expect(hit?.blockType).toBe(CubeType.Stone);
   });
 
   it("hits a block in negative direction", () => {
@@ -24,8 +24,8 @@ describe("raycastVoxels", () => {
     blocks.set("-3,0,0", CubeType.Dirt);
     const hit = raycastVoxels(0.5, 0.5, 0.5, -1, 0, 0, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockX).toBe(-3);
-    expect(hit!.faceNormal).toEqual([1, 0, 0]);
+    expect(hit?.blockX).toBe(-3);
+    expect(hit?.faceNormal).toEqual([1, 0, 0]);
   });
 
   it("hits a block on the Y axis", () => {
@@ -33,8 +33,8 @@ describe("raycastVoxels", () => {
     blocks.set("0,-2,0", CubeType.Grass);
     const hit = raycastVoxels(0.5, 0.5, 0.5, 0, -1, 0, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockY).toBe(-2);
-    expect(hit!.faceNormal).toEqual([0, 1, 0]);
+    expect(hit?.blockY).toBe(-2);
+    expect(hit?.faceNormal).toEqual([0, 1, 0]);
   });
 
   it("hits a block on the Z axis", () => {
@@ -42,8 +42,8 @@ describe("raycastVoxels", () => {
     blocks.set("0,0,4", CubeType.Sand);
     const hit = raycastVoxels(0.5, 0.5, 0.5, 0, 0, 1, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockZ).toBe(4);
-    expect(hit!.faceNormal).toEqual([0, 0, -1]);
+    expect(hit?.blockZ).toBe(4);
+    expect(hit?.faceNormal).toEqual([0, 0, -1]);
   });
 
   it("returns null when no block is within range", () => {
@@ -64,11 +64,11 @@ describe("raycastVoxels", () => {
     const d = 1 / Math.sqrt(3);
     const hit = raycastVoxels(0.5, 0.5, 0.5, d, d, d, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockX).toBe(3);
-    expect(hit!.blockY).toBe(3);
-    expect(hit!.blockZ).toBe(3);
+    expect(hit?.blockX).toBe(3);
+    expect(hit?.blockY).toBe(3);
+    expect(hit?.blockZ).toBe(3);
     // The face normal should be axis-aligned (one of the three axes)
-    const nonZero = hit!.faceNormal.filter((v) => v !== 0);
+    const nonZero = hit?.faceNormal.filter((v) => v !== 0);
     expect(nonZero.length).toBe(1);
   });
 
@@ -78,8 +78,8 @@ describe("raycastVoxels", () => {
     blocks.set("5,0,0", CubeType.Dirt);
     const hit = raycastVoxels(0.5, 0.5, 0.5, 1, 0, 0, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockX).toBe(2);
-    expect(hit!.blockType).toBe(CubeType.Stone);
+    expect(hit?.blockX).toBe(2);
+    expect(hit?.blockType).toBe(CubeType.Stone);
   });
 
   it("detects block at origin when standing inside it", () => {
@@ -87,8 +87,8 @@ describe("raycastVoxels", () => {
     blocks.set("0,0,0", CubeType.Stone);
     const hit = raycastVoxels(0.5, 0.5, 0.5, 1, 0, 0, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
-    expect(hit!.blockX).toBe(0);
-    expect(hit!.distance).toBe(0);
+    expect(hit?.blockX).toBe(0);
+    expect(hit?.distance).toBe(0);
   });
 
   it("reports correct distance", () => {
@@ -97,6 +97,6 @@ describe("raycastVoxels", () => {
     const hit = raycastVoxels(0.5, 0.5, 0.5, 1, 0, 0, 10, makeGetBlock(blocks));
     expect(hit).not.toBeNull();
     // Distance from x=0.5 to the face at x=5 is 4.5
-    expect(hit!.distance).toBeCloseTo(4.5, 5);
+    expect(hit?.distance).toBeCloseTo(4.5, 5);
   });
 });

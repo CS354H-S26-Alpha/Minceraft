@@ -1,5 +1,10 @@
 import { DAY_LENGTH_S } from "@/game/time";
 
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
 export class SceneLighting {
   readonly lightPosition = new Float32Array(4);
   readonly backgroundColor = new Float32Array(4);
@@ -17,9 +22,15 @@ export class SceneLighting {
     this.lightPosition[2] = 600;
     this.lightPosition[3] = 1;
 
-    const day = Math.max(0, sinA);
-    const night = Math.max(0, -sinA);
-    const horizon = Math.max(0, 1 - Math.abs(sinA) / 0.35) * 0.35;
+    // Gamified day/night curve: snappy transitions at the horizon, long
+    // plateaus of "full day" and "full night". Smoothstep gives an S-shaped
+    // ramp that avoids the slow linear fade of raw max(0, sinA).
+    const day = smoothstep(-0.08, 0.22, sinA);
+    const night = smoothstep(-0.08, 0.22, -sinA);
+    // Horizon glow — bell-shaped, peaks at sinA=0 (sunrise/sunset), wide window
+    // so the warm palette reads clearly. Squared for a gentler roll-off.
+    const horizonShape = Math.max(0, 1 - Math.abs(sinA) / 0.4);
+    const horizon = horizonShape * horizonShape * 0.55;
 
     this.backgroundColor[0] = Math.min(1, day * 0.4 + horizon * 0.92 + night * 0.02);
     this.backgroundColor[1] = Math.min(1, day * 0.62 + horizon * 0.42 + night * 0.02);

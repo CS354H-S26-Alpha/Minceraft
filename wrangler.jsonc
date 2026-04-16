@@ -22,10 +22,6 @@
           {
             "name": "GameRoom",
             "class_name": "GameRoom"
-          },
-          {
-            "name": "ChunkStore",
-            "class_name": "ChunkStore"
           }
         ]
       },
@@ -54,10 +50,6 @@
       {
         "name": "GameRoom",
         "class_name": "GameRoom"
-      },
-      {
-        "name": "ChunkStore",
-        "class_name": "ChunkStore"
       }
     ]
   },
@@ -74,10 +66,6 @@
           "to": "GameRoom"
         }
       ]
-    },
-    {
-      "tag": "v3",
-      "new_sqlite_classes": ["ChunkStore"]
     }
   ]
 }

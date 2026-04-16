@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { createStarterInventory, PLAYER_MAX_HEALTH } from "../game/player";
 
 const STARTER_INVENTORY_JSON = JSON.stringify(createStarterInventory());
@@ -6,6 +6,11 @@ const STARTER_INVENTORY_JSON = JSON.stringify(createStarterInventory());
 export const roomConfig = sqliteTable("room_config", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
+});
+
+export const chunks = sqliteTable("chunks", {
+  key: text("key").primaryKey(),
+  data: blob("data").notNull().$type<Uint8Array>(),
 });
 
 export const players = sqliteTable("players", {
