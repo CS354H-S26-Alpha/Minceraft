@@ -43,21 +43,21 @@ type TickListener = ((tick: ServerTick) => unknown) & {
 };
 
 /**
- * Calls a tick listener, catching synchronous throws and rejected promises.
- * Returns `false` if the call failed, signalling a broken connection.
+ * Fires a tick listener without waiting for the client ack. capnweb's
+ * WebSocket transport sends the call synchronously, so we don't need to
+ * await the returned promise for delivery. Returns `false` if the call
+ * threw synchronously (a dead stub); async rejections are silenced and
+ * detected separately via `onRpcBroken`.
  */
-function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
+function notify(cb: TickListener, tick: ServerTick): boolean {
   try {
     const result = cb(tick);
     if (result && typeof (result as Promise<unknown>).then === "function") {
-      return (result as Promise<unknown>).then(
-        () => true,
-        () => false,
-      );
+      (result as Promise<unknown>).catch(() => {});
     }
-    return Promise.resolve(true);
+    return true;
   } catch {
-    return Promise.resolve(false);
+    return false;
   }
 }
 
@@ -75,6 +75,7 @@ export class GameRoom extends DurableObject<Env> {
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
   private needsBroadcast = false;
+  private tickRunning = false;
   private gameTick = 0;
   private timeOffsetS = 0;
   private lastTickTimeMs = 0;
@@ -255,37 +256,44 @@ export class GameRoom extends DurableObject<Env> {
    * notifications to connected clients, and persists dirty state.
    */
   private async tick() {
-    this.ensureInitialized();
-    await this.chunkStoreInitialization;
+    if (this.tickRunning) return;
+    this.tickRunning = true;
+    try {
+      this.ensureInitialized();
+      await this.chunkStoreInitialization;
 
-    const tickStart = performance.now();
-    this.gameTick++;
-    for (const system of this.systems) {
-      const changed = await system.tick();
-      if (changed) this.needsBroadcast = true;
-    }
-    this.lastTickTimeMs = performance.now() - tickStart;
+      const tickStart = performance.now();
+      this.gameTick++;
+      for (const system of this.systems) {
+        const changed = await system.tick();
+        if (changed) this.needsBroadcast = true;
+      }
+      this.lastTickTimeMs = performance.now() - tickStart;
 
-    if (this.needsBroadcast && this.listeners.size > 0) {
-      this.needsBroadcast = false;
-      await this.broadcast();
-    }
-    if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
-      this.flushAll();
-    }
-    if (this.listeners.size === 0) {
-      this.stopTickLoop();
-      if (this.hasDirty()) this.flushAll();
+      if (this.needsBroadcast && this.listeners.size > 0) {
+        this.needsBroadcast = false;
+        this.broadcast();
+      }
+      if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
+        this.flushAll();
+      }
+      if (this.listeners.size === 0) {
+        this.stopTickLoop();
+        if (this.hasDirty()) this.flushAll();
+      }
+    } finally {
+      this.tickRunning = false;
     }
   }
 
   /**
    * Sends a per-client `ServerTick` to all registered listeners. Each listener
    * receives the packets produced by every system for that specific player,
-   * plus a room-level `WorldStatePacket`. Broken listeners are removed and a
-   * re-broadcast is queued for the next tick.
+   * plus a room-level `WorldStatePacket`. Fires notifications without awaiting
+   * client acks — capnweb's WebSocket transport sends synchronously and
+   * disconnect detection is handled separately via `onRpcBroken`.
    */
-  private async broadcast(): Promise<void> {
+  private broadcast(): void {
     const entries = [...this.listeners.entries()];
     const onlinePlayerIds = new Set(this.listeners.keys());
     const ctx = { onlinePlayerIds };
@@ -294,20 +302,20 @@ export class GameRoom extends DurableObject<Env> {
       tickTimeMs: this.lastTickTimeMs,
       timeOfDayS: (((Date.now() / 1000 + this.timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S,
     };
-    const results = await Promise.all(
-      entries.map(([id, cb]) => {
-        const packets: ServerPacket[] = [];
-        for (const system of this.systems) {
-          packets.push(...system.packetsFor(id, ctx));
-        }
-        packets.push(worldPacket);
-        return notify(cb, { tick: this.gameTick, packets });
-      }),
-    );
+    const broken: string[] = [];
+    for (const [id, cb] of entries) {
+      const packets: ServerPacket[] = [];
+      for (const system of this.systems) {
+        packets.push(...system.packetsFor(id, ctx));
+      }
+      packets.push(worldPacket);
+      if (!notify(cb, { tick: this.gameTick, packets })) {
+        broken.push(id);
+      }
+    }
     for (const system of this.systems) {
       system.clearPending();
     }
-    const broken = entries.filter((_, i) => !results[i]).map(([id]) => id);
     for (const id of broken) {
       this.onListenerLost(id);
     }

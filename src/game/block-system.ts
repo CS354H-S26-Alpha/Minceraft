@@ -33,6 +33,7 @@ export class BlockSystem implements GameSystem {
   private readonly initialLoadRadius: number;
   private readonly loadRadius: number;
   private inFlightChunkFetch = false;
+  private inFlightBlockAction = false;
   private chunkFetchStartedAtMs = 0;
   private lastSlowFetchLogAtMs = 0;
 
@@ -90,9 +91,7 @@ export class BlockSystem implements GameSystem {
     this.pendingChunkRequests.delete(playerId);
   }
 
-  async tick(): Promise<boolean> {
-    let changed = this.pendingChunkData.size > 0;
-
+  tick(): boolean {
     if (this.inFlightChunkFetch) {
       const now = Date.now();
       const elapsedMs = now - this.chunkFetchStartedAtMs;
@@ -106,11 +105,11 @@ export class BlockSystem implements GameSystem {
       this.startChunkFetch();
     }
 
-    if (this.pendingActions.size > 0) {
-      changed = (await this.processBlockActions()) || changed;
+    if (this.pendingActions.size > 0 && !this.inFlightBlockAction) {
+      this.startBlockActionProcessing();
     }
 
-    return changed;
+    return this.pendingChunkData.size > 0 || this.pendingAcks.size > 0 || this.pendingChanges.length > 0;
   }
 
   packetsFor(playerId: string, _ctx: SystemContext): ServerPacket[] {
@@ -247,7 +246,7 @@ export class BlockSystem implements GameSystem {
     }
   }
 
-  private async processBlockActions(): Promise<boolean> {
+  private startBlockActionProcessing(): void {
     const validActions: Array<{ playerId: string; seq: number; mutation: BlockMutation }> = [];
 
     for (const [playerId, actions] of this.pendingActions) {
@@ -287,22 +286,33 @@ export class BlockSystem implements GameSystem {
     }
     this.pendingActions.clear();
 
-    if (validActions.length === 0) return this.pendingAcks.size > 0;
+    if (validActions.length === 0) return;
 
+    this.inFlightBlockAction = true;
     const mutations = validActions.map((a) => a.mutation);
-    const results = await this.getChunkStore().processActions(mutations);
-
-    for (let i = 0; i < validActions.length; i++) {
-      const { playerId, seq, mutation } = validActions[i]!;
-      const result = results[i]!;
-      this.pushAck(playerId, seq, result.accepted);
-      if (result.accepted) {
-        const blockType = mutation.action === "break" ? CubeType.Air : (mutation.blockType ?? CubeType.Dirt);
-        this.pendingChanges.push({ x: mutation.x, y: mutation.y, z: mutation.z, blockType });
-      }
-    }
-
-    return true;
+    void this.getChunkStore()
+      .processActions(mutations)
+      .then((results) => {
+        for (let i = 0; i < validActions.length; i++) {
+          const { playerId, seq, mutation } = validActions[i]!;
+          const result = results[i]!;
+          this.pushAck(playerId, seq, result.accepted);
+          if (result.accepted) {
+            const blockType = mutation.action === "break" ? CubeType.Air : (mutation.blockType ?? CubeType.Dirt);
+            this.pendingChanges.push({ x: mutation.x, y: mutation.y, z: mutation.z, blockType });
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[BlockSystem] processActions failed: ${message}`);
+        for (const { playerId, seq } of validActions) {
+          this.pushAck(playerId, seq, false);
+        }
+      })
+      .finally(() => {
+        this.inFlightBlockAction = false;
+      });
   }
 
   private pushAck(playerId: string, seq: number, accepted: boolean): void {
