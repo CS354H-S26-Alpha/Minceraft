@@ -20,7 +20,9 @@ export interface EnemyState extends EnemyPublicState {
   attackCooldownMs: number;
 }
 
-export function createEnemyState(args: EnemyPublicState & { wanderTimer?: number; attackCooldownMs?: number }): EnemyState {
+export function createEnemyState(
+  args: EnemyPublicState & { wanderTimer?: number; attackCooldownMs?: number },
+): EnemyState {
   return {
     ...args,
     health: normalizeHealth(args.health),

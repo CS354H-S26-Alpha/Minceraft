@@ -1,6 +1,6 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
-import { Mat4, Vec3 } from "gl-matrix";
+import { type Mat4, Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
@@ -14,16 +14,26 @@ import { ChunkWorkerClient } from "./chunks/client";
 import {
   createEnemySnapshotTracker,
   createEntityPipeline,
-  enemyPassDef,
-  enemyPipelineConfig,
   type EntityDrawData,
+  enemyPipelineConfig,
   playerPassDef,
   playerPipelineConfig,
 } from "./entities";
+import {
+  ATTACK_ANIM_RANGE,
+  ATTACK_CYCLE_MS,
+  computeFootOffset,
+  loadRobotMesh,
+  poseAttackArms,
+  poseSkeletonForPhase,
+  WALK_CYCLE_HZ,
+} from "./entities/enemy-skinning";
 import { createInput, type InputOptions } from "./input";
+import type { EnemyDrawState } from "./render/enemy-pass";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 import { SceneLighting } from "./scene-lighting";
+import type { Mesh } from "./skinning/Mesh";
 
 export interface CreateGameArgs {
   /** WebGL rendering canvas (resolved lazily via accessor). */
@@ -103,7 +113,7 @@ const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef, enemyPassDef]);
+  const renderer = new Renderer(gl, [playerPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -150,6 +160,19 @@ export function createGame(args: CreateGameArgs): GameState {
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const remoteEnemies = createEntityPipeline(enemyPipelineConfig);
   const enemySnapshots = createEnemySnapshotTracker();
+
+  // Robot mesh for skinned enemy rendering. Loaded async; until it resolves
+  // enemies are invisible (the cube pass was removed).
+  let robotMesh: Mesh | undefined;
+  let robotMeshUploaded = false;
+  let footOffset = 0;
+  const enemyPhaseOffsets = new Map<string, number>();
+  loadRobotMesh()
+    .then((mesh) => {
+      robotMesh = mesh;
+      footOffset = computeFootOffset(mesh);
+    })
+    .catch((err) => console.error("Failed to load enemy robot mesh", err));
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const packetMeter = createRateMeter(FPS_WINDOW_MS);
@@ -305,11 +328,51 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Render ---
     const { buffers: playerBuffers, count: playerCount } = remotePlayers.frame(now);
-    const { buffers: enemyBuffers, count: enemyCount } = remoteEnemies.frame(now);
-    const entities: EntityDrawData[] = [
-      { key: "players", buffers: playerBuffers, count: playerCount },
-      { key: "enemies", buffers: enemyBuffers, count: enemyCount },
-    ];
+    const entities: EntityDrawData[] = [{ key: "players", buffers: playerBuffers, count: playerCount }];
+
+    // Upload robot mesh to the GPU the first frame it's available.
+    if (robotMesh && !robotMeshUploaded) {
+      renderer.loadEnemyMesh(robotMesh);
+      robotMeshUploaded = true;
+    }
+
+    // Build skinned draw states from the interpolated server snapshots.
+    let skinnedEnemies: EnemyDrawState[] | undefined;
+    if (robotMesh && robotMeshUploaded) {
+      const enemyStates = remoteEnemies.states(now);
+      skinnedEnemies = [];
+      for (const enemy of enemyStates) {
+        // Per-enemy phase offset so they don't walk in lockstep.
+        if (!enemyPhaseOffsets.has(enemy.id)) enemyPhaseOffsets.set(enemy.id, Math.random());
+        const phaseOffset = enemyPhaseOffsets.get(enemy.id) ?? 0;
+        const phase = ((now / 1000) * WALK_CYCLE_HZ + phaseOffset) % 1;
+
+        poseSkeletonForPhase(robotMesh, phase);
+
+        // If the enemy is within attack range, override arm bones with a slam.
+        const dx = enemy.x - player.state.x;
+        const dz = enemy.z - player.state.z;
+        const distToPlayer = Math.sqrt(dx * dx + dz * dz);
+        if (distToPlayer < ATTACK_ANIM_RANGE) {
+          const attackPhase = (now % ATTACK_CYCLE_MS) / ATTACK_CYCLE_MS;
+          poseAttackArms(robotMesh, attackPhase);
+        }
+
+        skinnedEnemies.push({
+          viewMatrix,
+          projMatrix,
+          lightPosition: lighting.lightPosition,
+          ambientColor: lighting.ambientColor,
+          sunColor: lighting.sunColor,
+          offset: new Float32Array([enemy.x, enemy.y + 0.7 + footOffset, enemy.z]),
+          yaw: enemy.yaw,
+          flash: enemy.flash,
+          boneTranslations: robotMesh.getBoneTranslations(),
+          boneRotations: robotMesh.getBoneRotations(),
+        });
+      }
+    }
+
     renderer.render({
       viewMatrix,
       projMatrix,
@@ -322,6 +385,7 @@ export function createGame(args: CreateGameArgs): GameState {
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
       entities,
+      skinnedEnemies,
     });
 
     // --- Diagnostics (producers → store) ---
@@ -438,8 +502,8 @@ function projectWorldToScreen(
   if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2 || ndcZ < -1 || ndcZ > 1) return undefined;
 
   return {
-    x: ((ndcX + 1) * 0.5) * viewportWidth,
-    y: ((1 - ndcY) * 0.5) * viewportHeight,
+    x: (ndcX + 1) * 0.5 * viewportWidth,
+    y: (1 - ndcY) * 0.5 * viewportHeight,
     depth: ndcZ,
   };
 }

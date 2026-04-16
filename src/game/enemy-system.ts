@@ -1,8 +1,8 @@
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import type * as schema from "../server/schema";
 import { sampleColumn } from "./biome";
+import { createEnemyState, Enemy, type EnemyPublicState } from "./enemy";
 import type { GameSystem, SystemContext } from "./game-system";
-import { Enemy, createEnemyState, type EnemyPublicState } from "./enemy";
 import { getHeldItemDamage, type Player, type PlayerPublicState } from "./player";
 import { canTargetEnemy } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
@@ -101,7 +101,10 @@ export class EnemySystem implements GameSystem {
     return result;
   }
 
-  attack(attacker: Player, packet: { targetEnemyId?: string; x: number; y: number; z: number; yaw: number; pitch: number }): boolean {
+  attack(
+    attacker: Player,
+    packet: { targetEnemyId?: string; x: number; y: number; z: number; yaw: number; pitch: number },
+  ): boolean {
     const targetEnemyId = packet.targetEnemyId;
     if (!targetEnemyId) return false;
     const enemy = this.enemies.get(targetEnemyId);
@@ -172,7 +175,11 @@ export class EnemySystem implements GameSystem {
     }
 
     return (
-      attacked || enemy.state.x !== prevX || enemy.state.y !== prevY || enemy.state.z !== prevZ || enemy.state.yaw !== prevYaw
+      attacked ||
+      enemy.state.x !== prevX ||
+      enemy.state.y !== prevY ||
+      enemy.state.z !== prevZ ||
+      enemy.state.yaw !== prevYaw
     );
   }
 
