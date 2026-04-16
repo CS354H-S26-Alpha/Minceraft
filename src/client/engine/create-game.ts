@@ -331,6 +331,7 @@ export function createGame(args: CreateGameArgs): GameState {
         pendingBlocks.delete(ack.seq);
         if (!ack.accepted) {
           chunks.modifyBlock(pending.x, pending.y, pending.z, pending.previousType);
+          chunks.clearLocalOverride(pending.x, pending.y, pending.z);
         }
       }
 
