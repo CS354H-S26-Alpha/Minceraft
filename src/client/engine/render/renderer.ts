@@ -171,7 +171,7 @@ export class Renderer {
     pass.setup();
   }
 
-  // LUT data — indexed by CubeType (0–11), must stay in sync with blankCube.frag
+  // LUT data — indexed by CubeType (0–14), must stay in sync with blankCube.frag
   // col1 = mix(vertexColor, lut1Fixed, lut1Blend)
   // col2 = mix(vertexColor * lut2Scale, lut2Fixed, lut2Blend)
   private static readonly LUT1_FIXED = new Float32Array([
@@ -211,6 +211,15 @@ export class Renderer {
     0.5,
     0.5,
     0.5, // 11 DiamondOre
+    0.0,
+    0.0,
+    0.0, // 12 Water
+    1.0,
+    0.7,
+    0.1, // 13 Lava
+    0.0,
+    0.0,
+    0.0, // 14 Permafrost  (overridden by face logic)
   ]);
   private static readonly LUT1_BLEND = new Float32Array([
     0, // Air
@@ -225,6 +234,9 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
+    0, // Water
+    0.3, // Lava
+    0, // Permafrost
   ]);
   private static readonly LUT2_FIXED = new Float32Array([
     0.0,
@@ -263,6 +275,15 @@ export class Renderer {
     0.25,
     0.88,
     0.92, // 11 DiamondOre
+    0.0,
+    0.0,
+    0.0, // 12 Water
+    0.7,
+    0.1,
+    0.0, // 13 Lava
+    0.0,
+    0.0,
+    0.0, // 14 Permafrost  (overridden by face logic)
   ]);
   private static readonly LUT2_BLEND = new Float32Array([
     0, // Air
@@ -277,6 +298,9 @@ export class Renderer {
     1, // IronOre
     1, // GoldOre
     1, // DiamondOre
+    0, // Water
+    0.6, // Lava
+    0, // Permafrost
   ]);
   private static readonly LUT2_SCALE = new Float32Array([
     0.5, // Air
@@ -291,6 +315,9 @@ export class Renderer {
     0.5, // IronOre     (irrelevant, blend=1)
     0.5, // GoldOre     (irrelevant, blend=1)
     0.5, // DiamondOre  (irrelevant, blend=1)
+    0.7, // Water
+    0.5, // Lava        (irrelevant, blend=0.6)
+    0.5, // Permafrost  (overridden by face logic)
   ]);
 
   private initBlankCubePass(cube: Cube): void {
