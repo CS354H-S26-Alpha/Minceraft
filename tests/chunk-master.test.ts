@@ -16,8 +16,9 @@ function renderData(value: number): ChunkBatchData {
         cubePositions: new Float32Array([value, 0, 0, 0]),
         cubeColors: new Float32Array([value, 0, 0]),
         blocks: new Uint8Array(0),
-        surfaceHeights: new Uint8Array(0),
-        surfaceTypes: new Uint8Array(0),
+        cubeAmbientOcclusion: new Uint8Array(24).fill(3),
+        surfaceHeights: new Uint8Array([1]),
+        surfaceTypes: new Uint8Array([1]),
         numCubes: 1,
       },
     ],
@@ -61,6 +62,7 @@ describe("ChunkManager", () => {
     chunkManager.cull(identity, identity);
     expect(Array.from(chunkManager.positions)).toEqual([3, 0, 0, 0]);
     expect(Array.from(chunkManager.colors)).toEqual([3, 0, 0]);
+    expect(chunkManager.ambientOcclusion.length).toBe(24);
     expect(chunkManager.count).toBe(1);
   });
 
@@ -96,6 +98,7 @@ describe("ChunkManager", () => {
     chunkManager.cull(identity, identity);
     expect(Array.from(chunkManager.positions)).toEqual([2, 0, 0, 0]);
     expect(Array.from(chunkManager.colors)).toEqual([2, 0, 0]);
+    expect(chunkManager.ambientOcclusion.length).toBe(24);
     expect(chunkManager.count).toBe(1);
   });
 });

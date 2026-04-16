@@ -3,62 +3,90 @@ import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
 import { createInventoryUiState } from "@/game/crafting";
-import { Player } from "@/game/player";
-import type { RoomSessionApi, RoomSnapshot } from "@/game/protocol";
+import { Player, type PlayerPublicState } from "@/game/player";
+import type { RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
+
+/** Reactive server-side diagnostics derived from every tick. */
+export interface TickInfo {
+  tick: number;
+  tickTimeMs: number;
+  timeOfDayS: number;
+}
 
 /**
  * SolidJS primitive that connects to a game room over capnweb WebSocket RPC.
  *
- * Joins the server room and waits for the first snapshot to construct the
- * local `Player` from authoritative state. Returns reactive accessors
- * consumed by `createGame`. Must be called inside a Solid reactive scope.
+ * Joins the server room and waits for the first tick to construct the local
+ * `Player` from authoritative state. Returns reactive accessors consumed by
+ * `createGame`. Must be called inside a Solid reactive scope.
  */
 export function joinWorld(roomId: string) {
-  const { join, credentials } = useSession();
-  const playerId = credentials.playerId;
+  const { join } = useSession();
   const [player, setPlayer] = createSignal<Player>();
   const replicated = createMemo(() => {
     const p = player();
     return p ? new LocalPrediction(p) : undefined;
   });
 
-  const [snapshot, setSnapshot] = createStore<RoomSnapshot>({
-    tick: 0,
-    players: {},
-    acks: {},
-    tickTimeMs: 0,
-    timeOfDayS: 0,
-  });
+  const [remotePlayers, setRemotePlayers] = createStore<Record<string, PlayerPublicState>>({});
+  const [tickInfo, setTickInfo] = createStore<TickInfo>({ tick: 0, tickTimeMs: 0, timeOfDayS: 0 });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
 
-  // The snapshot callback fires from capnweb (outside Solid's reactive scope).
+  // The tick callback fires from capnweb (outside Solid's reactive scope).
   // batch coalesces the store + signal writes into a single reactive flush.
-  join(roomId, (snap: RoomSnapshot) => {
+  join(roomId, (serverTick: ServerTick) => {
     batch(() => {
       setSnapCount((c) => c + 1);
-      setSnapshot(reconcile(snap));
-      if (snap.inventoryUi) {
-        setInventoryUi(reconcile(snap.inventoryUi));
-      }
-      replicated()?.acknowledge(snap.acks[playerId] ?? 0);
-      const currentPlayer = player();
-
-      if (snap.self) {
-        if (!currentPlayer) {
-          setPlayer(new Player(snap.self));
-        } else {
-          replicated()?.initialize(snap.self);
-        }
+      setTickInfo("tick", serverTick.tick);
+      for (const packet of serverTick.packets) {
+        applyPacket(packet);
       }
     });
   }).then((s) => setSession(() => s));
+
+  function applyPacket(packet: ServerPacket) {
+    switch (packet.type) {
+      case "players":
+        setRemotePlayers(reconcile(packet.players));
+        return;
+      case "ack":
+        replicated()?.acknowledge(packet.sequence);
+        return;
+      case "reconcile": {
+        const current = player();
+        if (!current) {
+          setPlayer(new Player(packet.state));
+        } else {
+          replicated()?.initialize(packet.state);
+        }
+        return;
+      }
+      case "self": {
+        const current = player();
+        if (!current) {
+          setPlayer(new Player(packet.state));
+        } else {
+          const { x, y, z, yaw, pitch, ...rest } = packet.state;
+          Object.assign(current.state, rest);
+        }
+        return;
+      }
+      case "inventoryUi":
+        setInventoryUi(reconcile(packet.ui));
+        return;
+      case "world":
+        setTickInfo("tickTimeMs", packet.tickTimeMs);
+        setTickInfo("timeOfDayS", packet.timeOfDayS);
+        return;
+    }
+  }
 
   onCleanup(() => {
     session()?.leave();
   });
 
-  return { player, snapshot, snapCount, session, replicated, inventoryUi } as const;
+  return { player, remotePlayers, tickInfo, snapCount, session, replicated, inventoryUi } as const;
 }

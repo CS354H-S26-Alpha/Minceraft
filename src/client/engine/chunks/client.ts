@@ -9,6 +9,7 @@ export interface SingleChunkData {
   cubeColors: Float32Array;
   /** Packed block grid (CubeType per voxel), indexed `y*S*S + z*S + x`. */
   blocks: Uint8Array;
+  cubeAmbientOcclusion: Uint8Array;
   /** Detached copy of surface Y per column, indexed `z*S + x`. */
   surfaceHeights: Uint8Array;
   /** Detached copy of surface block type per column, indexed `z*S + x`. */

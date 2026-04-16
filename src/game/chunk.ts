@@ -6,6 +6,78 @@ import { perlin3D } from "@/utils/noise";
 export const CHUNK_SIZE = 64;
 export const CHUNK_HEIGHT = 128;
 
+type Direction = readonly [number, number, number];
+
+interface FaceAmbientOcclusionSpec {
+  normal: Direction;
+  corners: readonly (readonly [Direction, Direction])[];
+}
+
+// Face order matches Cube geometry: top, left, right, front, back, bottom.
+const FACE_AMBIENT_OCCLUSION_SPECS: readonly FaceAmbientOcclusionSpec[] = buildFaceAmbientOcclusionSpecs();
+
+/**
+ * Generates AO specs for all 6 axis-aligned cube faces.
+ *
+ * Each face is defined by its outward normal and two tangent axes (t1, t2).
+ * The four corners sample neighbours at (n ± s1*t1, n ± s2*t2); the sign
+ * pairs are ordered to match the quad-vertex winding of the cube geometry so
+ * that bilinear AO interpolation in the shader maps to the correct corners.
+ *
+ * Three winding patterns arise from the three tangent-axis families:
+ *   XZ (Y-axis normals):  (−,−),(−,+),(+,+),(+,−)
+ *   YZ (X-axis normals):  (+,+),(−,+),(−,−),(+,−)
+ *   XY (Z-axis normals):  (+,+),(+,−),(−,−),(−,+)
+ */
+function buildFaceAmbientOcclusionSpecs(): readonly FaceAmbientOcclusionSpec[] {
+  // Sign pairs [s1, s2] → sideA = s1*t1, sideB = s2*t2.
+  const XZ: readonly (readonly [number, number])[] = [
+    [-1, -1],
+    [-1, 1],
+    [1, 1],
+    [1, -1],
+  ];
+  const YZ: readonly (readonly [number, number])[] = [
+    [1, 1],
+    [-1, 1],
+    [-1, -1],
+    [1, -1],
+  ];
+  const XY: readonly (readonly [number, number])[] = [
+    [1, 1],
+    [1, -1],
+    [-1, -1],
+    [-1, 1],
+  ];
+
+  const makeFace = (
+    normal: Direction,
+    t1: Direction,
+    t2: Direction,
+    signs: readonly (readonly [number, number])[],
+  ): FaceAmbientOcclusionSpec => ({
+    normal,
+    corners: signs.map(([s1, s2]): readonly [Direction, Direction] => [
+      [s1 * t1[0], s1 * t1[1], s1 * t1[2]] as Direction,
+      [s2 * t2[0], s2 * t2[1], s2 * t2[2]] as Direction,
+    ]),
+  });
+
+  return [
+    makeFace([0, 1, 0], [1, 0, 0], [0, 0, 1], XZ), // top
+    makeFace([-1, 0, 0], [0, 1, 0], [0, 0, 1], YZ), // left
+    makeFace([1, 0, 0], [0, 1, 0], [0, 0, 1], YZ), // right
+    makeFace([0, 0, 1], [1, 0, 0], [0, 1, 0], XY), // front
+    makeFace([0, 0, -1], [1, 0, 0], [0, 1, 0], XY), // back
+    makeFace([0, -1, 0], [1, 0, 0], [0, 0, 1], XZ), // bottom
+  ];
+}
+
+function vertexAmbientOcclusion(side1: boolean, side2: boolean, corner: boolean): number {
+  if (side1 && side2) return 0;
+  return 3 - Number(side1) - Number(side2) - Number(corner);
+}
+
 export function chunkKey(originX: number, originZ: number): string {
   return `${originX},${originZ}`;
 }
@@ -15,6 +87,18 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
     Math.floor((wx + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE,
     Math.floor((wz + CHUNK_SIZE / 2) / CHUNK_SIZE) * CHUNK_SIZE,
   ];
+}
+
+// Shared scratch buffers reused across renderChunk calls. Grow on demand so
+// total resident footprint is O(max chunk) instead of O(chunks × max chunk).
+let scratchPositions = new Float32Array(0);
+let scratchColors = new Float32Array(0);
+let scratchAmbientOcclusion = new Uint8Array(0);
+
+function ensureScratchCapacity(maxCubes: number): void {
+  if (scratchPositions.length < 4 * maxCubes) scratchPositions = new Float32Array(4 * maxCubes);
+  if (scratchColors.length < 3 * maxCubes) scratchColors = new Float32Array(3 * maxCubes);
+  if (scratchAmbientOcclusion.length < 24 * maxCubes) scratchAmbientOcclusion = new Uint8Array(24 * maxCubes);
 }
 
 export class Chunk {
@@ -32,6 +116,8 @@ export class Chunk {
   private cubes: number = 0;
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
+  private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
+  private maxCubes: number = 0;
 
   constructor(centerX: number, centerY: number, size: number, seed: number) {
     this.x = centerX;
@@ -44,7 +130,17 @@ export class Chunk {
     this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     this.generateCubes();
+    this.computeMaxCubes();
     this.renderChunk(); // render on creation, might not be necessary
+  }
+
+  private computeMaxCubes(): void {
+    let total = 0;
+    const S = this.size;
+    for (let i = 0; i < S * S; i++) {
+      total += this.heightMap[i]! + 1;
+    }
+    this.maxCubes = total;
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -101,22 +197,38 @@ export class Chunk {
     }
 
     // --- Pass 2: Spaghetti cave carving (tunnel-like, follows noise zero-crossings) ---
+    // Coarse Y-span skipping: sample n1 at span midpoints to eliminate regions
+    // where no cave can exist. Uses Lipschitz bound (K=2.0) on perlin3D for
+    // correctness: over half a CAVE_STEP span at freq 1/64, noise changes by
+    // at most CAVE_SKIP_MARGIN, so if |n1_mid| >= threshold + margin, the
+    // entire span is cave-free.
+    const CAVE_STEP = 8;
+    const CAVE_FREQ = 1 / 64;
+    const CAVE_THRESHOLD = 0.12;
+    const CAVE_SKIP_THRESHOLD = CAVE_THRESHOLD + 2.0 * Math.ceil(CAVE_STEP / 2) * CAVE_FREQ;
+
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
-        const surfaceY = this.heightMap[this.size * i + j] as number;
+        const caveTop = (this.heightMap[this.size * i + j] as number) - 2;
 
-        for (let y = 1; y <= surfaceY - 2; y++) {
-          if (this.getBlock(j, y, i) === CubeType.Air) continue;
+        for (let yBase = 1; yBase <= caveTop; yBase += CAVE_STEP) {
+          const yEnd = Math.min(yBase + CAVE_STEP, caveTop + 1);
+          const yMid = (yBase + yEnd - 1) >> 1;
 
-          const threshold = 0.12;
+          const n1Coarse = perlin3D(this.seed + 100, gx, yMid, gz, CAVE_FREQ);
+          if (Math.abs(n1Coarse) >= CAVE_SKIP_THRESHOLD) continue;
 
-          const n1 = perlin3D(this.seed + 100, gx, y, gz, 1 / 64);
-          if (Math.abs(n1) >= threshold) continue;
-          const n2 = perlin3D(this.seed + 200, gx, y, gz, 1 / 64);
-          if (Math.abs(n2) < threshold) {
-            this.setBlock(j, y, i, CubeType.Air);
+          for (let y = yBase; y < yEnd; y++) {
+            if (this.getBlock(j, y, i) === CubeType.Air) continue;
+
+            const n1 = perlin3D(this.seed + 100, gx, y, gz, CAVE_FREQ);
+            if (Math.abs(n1) >= CAVE_THRESHOLD) continue;
+            const n2 = perlin3D(this.seed + 200, gx, y, gz, CAVE_FREQ);
+            if (Math.abs(n2) < CAVE_THRESHOLD) {
+              this.setBlock(j, y, i, CubeType.Air);
+            }
           }
         }
       }
@@ -127,8 +239,9 @@ export class Chunk {
       for (let j = 0; j < this.size; j++) {
         const gx = topleftx + j;
         const gz = topleftz + i;
+        const stoneTop = Math.max(1, this.heightMap[this.size * i + j]! - 3);
 
-        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+        for (let y = 1; y < stoneTop; y++) {
           if (this.getBlock(j, y, i) !== CubeType.Stone) continue;
 
           for (const [oreType, seedOff, freq, threshold, minY, maxY] of Chunk.ORES) {
@@ -171,19 +284,15 @@ export class Chunk {
       isAir(lx, ly, lz + 1) ||
       isAir(lx, ly, lz - 1);
 
-    // Upper-bound count: surfaceY+1 blocks per column
-    let total = 0;
-    for (let i = 0; i < S; i++) {
-      for (let j = 0; j < S; j++) {
-        total += hm[i * S + j]! + 1;
-      }
-    }
-
-    const positions = new Float32Array(4 * total);
-    const colors = new Float32Array(3 * total);
+    ensureScratchCapacity(this.maxCubes);
+    const positions = scratchPositions;
+    const colors = scratchColors;
+    const ambientOcclusion = scratchAmbientOcclusion;
     let count = 0;
 
-    const writeCube = (blockType: CubeType, wx: number, y: number, wz: number): void => {
+    const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
+
+    const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
       const info = CUBE_TYPE_INFO[blockType];
       const c = info.baseColor;
 
@@ -195,6 +304,21 @@ export class Chunk {
       colors[3 * count] = c[0];
       colors[3 * count + 1] = c[1];
       colors[3 * count + 2] = c[2];
+
+      let aoOffset = 24 * count;
+      for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
+        const n = face.normal;
+        for (const [sideA, sideB] of face.corners) {
+          const side1 = isSolid(lx + n[0] + sideA[0], y + n[1] + sideA[1], lz + n[2] + sideA[2]);
+          const side2 = isSolid(lx + n[0] + sideB[0], y + n[1] + sideB[1], lz + n[2] + sideB[2]);
+          const corner = isSolid(
+            lx + n[0] + sideA[0] + sideB[0],
+            y + n[1] + sideA[1] + sideB[1],
+            lz + n[2] + sideA[2] + sideB[2],
+          );
+          ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(side1, side2, corner);
+        }
+      }
 
       count++;
     };
@@ -209,15 +333,15 @@ export class Chunk {
         for (let y = 0; y <= surfY; y++) {
           const blockType = this.getBlock(j, y, i);
           if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-          writeCube(blockType, wx, y, wz);
+          writeCube(blockType, j, y, i, wx, wz);
         }
       }
     }
 
     this.cubes = count;
-    // Edge culling may reduce count below total; subarray trims to exact size
-    this.cubePositionsF32 = positions.subarray(0, 4 * count);
-    this.cubeColorsF32 = colors.subarray(0, 3 * count);
+    this.cubePositionsF32 = positions.slice(0, 4 * count);
+    this.cubeColorsF32 = colors.slice(0, 3 * count);
+    this.cubeAmbientOcclusionU8 = ambientOcclusion.slice(0, 24 * count);
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
@@ -227,6 +351,10 @@ export class Chunk {
 
   public cubeColors(): Float32Array {
     return this.cubeColorsF32;
+  }
+
+  public cubeAmbientOcclusion(): Uint8Array {
+    return this.cubeAmbientOcclusionU8;
   }
 
   /** Returns a detached copy of the chunk's surface heights for minimap rendering. */

@@ -8,6 +8,7 @@ interface ChunkLike {
   cubePositions(): Float32Array;
   cubeColors(): Float32Array;
   blocks: Uint8Array;
+  cubeAmbientOcclusion(): Uint8Array;
   surfaceHeights(): Uint8Array;
   surfaceTypes(): Uint8Array;
   numCubes(): number;
@@ -114,9 +115,23 @@ class LRUCache {
   }
 }
 
+interface ChunkEntry {
+  chunkX: number;
+  chunkZ: number;
+  chunk: ChunkLike;
+}
+
+const CARDINAL_OFFSETS: [number, number][] = [
+  [CHUNK_SIZE, 0],
+  [-CHUNK_SIZE, 0],
+  [0, CHUNK_SIZE],
+  [0, -CHUNK_SIZE],
+];
+
 /** Manages chunk caching and incremental terrain generation. */
 export class ChunkGenerationQueue {
   private readonly cache: LRUCache;
+  private visibleKeys = new Set<string>();
   private activeSeed: number | undefined;
   private activeGenerationId = -1;
   private queuedChunks: QueuedChunk[] = [];
@@ -132,12 +147,13 @@ export class ChunkGenerationQueue {
   setVisibleChunks(args: ChunkQueueArgs): ChunkBatchData {
     this.ensureSeed(args.seed);
     this.activeGenerationId = args.generationId;
+    this.visibleKeys = new Set(args.chunkOrigins.map((o) => chunkKey(o.originX, o.originZ)));
     this.queuedChunks = this.buildQueue(args.chunkOrigins);
     this.evictDistantChunks(args);
-    return this.renderVisible(args);
+    return this.renderAllVisible(args);
   }
 
-  /** Generates one queued chunk and returns an updated render, or `null` if done or stale. */
+  /** Generates one queued chunk and returns only the changed chunks, or `null` if done or stale. */
   generateNext(args: ChunkQueueArgs): ChunkBatchData | null {
     this.ensureSeed(args.seed);
     if (args.generationId !== this.activeGenerationId) return null;
@@ -147,7 +163,7 @@ export class ChunkGenerationQueue {
       if (!next) return null;
       if (this.cache.has(next.key)) continue;
       this.cache.set(next.key, this.chunkFactory(next.originX, next.originZ, CHUNK_SIZE, args.seed));
-      return this.renderVisible(args);
+      return this.renderIncremental(next.originX, next.originZ);
     }
 
     return null;
@@ -163,6 +179,7 @@ export class ChunkGenerationQueue {
     if (this.activeSeed === seed) return;
     this.cache.clear();
     this.queuedChunks = [];
+    this.visibleKeys = new Set();
     this.activeSeed = seed;
     this.activeGenerationId = -1;
   }
@@ -197,8 +214,17 @@ export class ChunkGenerationQueue {
     return queue;
   }
 
-  private renderVisible({ originX, originZ, renderDistance }: ChunkQueueArgs): ChunkBatchData {
-    const entries: { chunkX: number; chunkZ: number; chunk: ChunkLike }[] = [];
+  private buildWorldGetBlock(): (wx: number, wy: number, wz: number) => CubeType {
+    return (wx, wy, wz) => {
+      const [ox, oz] = chunkOrigin(wx, wz);
+      const chunk = this.cache.get(chunkKey(ox, oz));
+      return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone;
+    };
+  }
+
+  /** Render all visible cached chunks — used on initial setVisibleChunks. */
+  private renderAllVisible({ originX, originZ, renderDistance }: ChunkQueueArgs): ChunkBatchData {
+    const entries: ChunkEntry[] = [];
 
     for (let cx = -renderDistance; cx <= renderDistance; cx++) {
       for (let cz = -renderDistance; cz <= renderDistance; cz++) {
@@ -210,14 +236,48 @@ export class ChunkGenerationQueue {
       }
     }
 
-    const worldGetBlock = (wx: number, wy: number, wz: number): CubeType => {
-      const [ox, oz] = chunkOrigin(wx, wz);
-      const chunk = this.cache.get(chunkKey(ox, oz));
-      return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone;
-    };
-
+    const worldGetBlock = this.buildWorldGetBlock();
     for (const { chunk } of entries) chunk.renderChunk(worldGetBlock);
 
+    return this.collectBatch(entries);
+  }
+
+  /**
+   * Render the new chunk + its cardinal neighbors (neighbors re-rendered for
+   * edge culling correctness), but only return chunks in the current visible
+   * set so stale cached chunks outside renderDistance can't leak back into the
+   * main thread's chunk map.
+   */
+  private renderIncremental(newOriginX: number, newOriginZ: number): ChunkBatchData {
+    const worldGetBlock = this.buildWorldGetBlock();
+    const rendered: ChunkEntry[] = [];
+
+    const newKey = chunkKey(newOriginX, newOriginZ);
+    const newChunk = this.cache.get(newKey);
+    if (newChunk) {
+      newChunk.renderChunk(worldGetBlock);
+      if (this.visibleKeys.has(newKey)) {
+        rendered.push({ chunkX: newOriginX, chunkZ: newOriginZ, chunk: newChunk });
+      }
+    }
+
+    for (const [dx, dz] of CARDINAL_OFFSETS) {
+      const nx = newOriginX + dx;
+      const nz = newOriginZ + dz;
+      const nkey = chunkKey(nx, nz);
+      const neighbor = this.cache.get(nkey);
+      if (neighbor) {
+        neighbor.renderChunk(worldGetBlock);
+        if (this.visibleKeys.has(nkey)) {
+          rendered.push({ chunkX: nx, chunkZ: nz, chunk: neighbor });
+        }
+      }
+    }
+
+    return this.collectBatch(rendered);
+  }
+
+  private collectBatch(entries: ChunkEntry[]): ChunkBatchData {
     const chunks: SingleChunkData[] = [];
     for (const { chunkX, chunkZ, chunk } of entries) {
       const numCubes = chunk.numCubes();
@@ -228,12 +288,12 @@ export class ChunkGenerationQueue {
         cubePositions: chunk.cubePositions(),
         cubeColors: chunk.cubeColors(),
         blocks: chunk.blocks,
+        cubeAmbientOcclusion: chunk.cubeAmbientOcclusion(),
         surfaceHeights: chunk.surfaceHeights(),
         surfaceTypes: chunk.surfaceTypes(),
         numCubes,
       });
     }
-
     return { chunks };
   }
 

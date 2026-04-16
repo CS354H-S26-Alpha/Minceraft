@@ -29,9 +29,13 @@ export class ChunkManager {
   private chunkDataMap = new Map<string, SingleChunkData>();
   private positionBuffer = new Float32Array(0);
   private colorBuffer = new Float32Array(0);
+  private ambientOcclusionBuffer = new Uint8Array(0);
+  private dirty = true;
+  private lastVisibleChunks: SingleChunkData[] = [];
 
   positions = new Float32Array(0);
   colors = new Float32Array(0);
+  ambientOcclusion = new Uint8Array(0);
   count = 0;
 
   constructor(
@@ -157,41 +161,61 @@ export class ChunkManager {
       }
     }
 
+    if (
+      !this.dirty &&
+      visible.length === this.lastVisibleChunks.length &&
+      visible.every((c, i) => c === this.lastVisibleChunks[i])
+    ) {
+      return;
+    }
+
+    this.lastVisibleChunks = visible;
+    this.dirty = false;
+
     if (this.positionBuffer.length < totalCubes * 4) {
       this.positionBuffer = new Float32Array(totalCubes * 4);
     }
     if (this.colorBuffer.length < totalCubes * 3) {
       this.colorBuffer = new Float32Array(totalCubes * 3);
     }
+    if (this.ambientOcclusionBuffer.length < totalCubes * 24) {
+      this.ambientOcclusionBuffer = new Uint8Array(totalCubes * 24);
+    }
 
     let posOffset = 0;
     let colOffset = 0;
+    let aoOffset = 0;
     for (const chunk of visible) {
       this.positionBuffer.set(chunk.cubePositions, posOffset);
       posOffset += chunk.cubePositions.length;
       this.colorBuffer.set(chunk.cubeColors, colOffset);
       colOffset += chunk.cubeColors.length;
+      this.ambientOcclusionBuffer.set(chunk.cubeAmbientOcclusion, aoOffset);
+      aoOffset += chunk.cubeAmbientOcclusion.length;
     }
 
     this.positions = this.positionBuffer.subarray(0, totalCubes * 4);
     this.colors = this.colorBuffer.subarray(0, totalCubes * 3);
+    this.ambientOcclusion = this.ambientOcclusionBuffer.subarray(0, totalCubes * 24);
     this.count = totalCubes;
   }
   private async load(args: ChunkQueueArgs): Promise<void> {
-    this.applyBatch(await this.client.setVisibleChunks(args), args.generationId);
+    const initialBatch = await this.client.setVisibleChunks(args);
+    if (args.generationId !== this.activeGeneration) return;
+    this.chunkDataMap.clear();
+    this.mergeBatch(initialBatch);
     while (args.generationId === this.activeGeneration) {
       const next = await this.client.generateNext(args);
-      if (!next) return;
-      this.applyBatch(next, args.generationId);
+      if (!next || args.generationId !== this.activeGeneration) return;
+      this.mergeBatch(next);
     }
   }
 
-  private applyBatch(batch: ChunkBatchData, generationId: number): void {
-    if (generationId !== this.activeGeneration) return;
-    this.chunkDataMap.clear();
+  private mergeBatch(batch: ChunkBatchData): void {
     for (const chunk of batch.chunks) {
       this.chunkDataMap.set(chunkKey(chunk.originX, chunk.originZ), chunk);
     }
+    this.dirty = true;
     this.onChange?.();
   }
 

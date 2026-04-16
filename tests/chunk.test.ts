@@ -17,6 +17,17 @@ describe("Chunk", () => {
     expect(positions.length).toBe(4 * chunk.numCubes());
   });
 
+  it("returns voxel ambient occlusion values for every cube face vertex", () => {
+    const chunk = new Chunk(0, 0, 8, 123);
+    const ao = chunk.cubeAmbientOcclusion();
+    expect(ao).toBeInstanceOf(Uint8Array);
+    expect(ao.length).toBe(24 * chunk.numCubes());
+    for (const value of ao) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(3);
+    }
+  });
+
   it("produces deterministic output from seeded RNG", () => {
     const seed = 42;
     const chunk1 = new Chunk(0, 0, 8, seed);
