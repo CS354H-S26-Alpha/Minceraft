@@ -64,6 +64,14 @@ export default function GameView() {
         player={room.player}
         players={() => room.remotePlayers}
       />
+      <Show when={!inventoryOpen()}>
+        <div class="pointer-events-none absolute inset-0 z-20">
+          <div class="absolute top-1/2 left-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2">
+            <div class="absolute top-1/2 left-0 h-px w-full -translate-y-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
+            <div class="absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
+          </div>
+        </div>
+      </Show>
       <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
       <InventoryPanel
         player={room.player}
