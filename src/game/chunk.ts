@@ -475,6 +475,23 @@ export class Chunk {
     });
     this.placedObjectsData = this.applyVegetationStructures(placedObjectAnchors, topleftx, topleftz);
 
+    // Extend heightMap to include vegetation blocks placed above terrain.
+    // Scan from the top of the chunk downward to find the actual highest solid block —
+    // a consecutive upward walk would stop at the first air gap and miss floating leaves.
+    // VERY SIMPLE, can probably add this logic to applyVegetationStructures to directly update heightMap
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const idx = this.size * i + j;
+        const terrainY = this.heightMap[idx] as number;
+        for (let y = CHUNK_HEIGHT - 1; y > terrainY; y--) {
+          if (this.getBlock(j, y, i) !== CubeType.Air) {
+            this.heightMap[idx] = y;
+            break;
+          }
+        }
+      }
+    }
+
     // --- Pass 5: Deep cave lava ---
     // Any air pocket at or below CAVE_LAVA_LEVEL (above bedrock at Y=0) becomes lava,
     // creating natural lava pools at the bottom of caves.
