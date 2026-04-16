@@ -19,8 +19,6 @@ export interface InputOptions {
   onCloseInventory?: () => void;
   onSelectHotbarSlot?: (slotIndex: number) => void;
   onCycleHotbar?: (direction: 1 | -1) => void;
-  /** Press P to skip forward one phase in the day/night cycle. */
-  onCycleDayPhase?: () => void;
 }
 
 export interface InputHandle {
@@ -41,7 +39,6 @@ export interface InputHandle {
  */
 export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opts: InputOptions = {}): InputHandle {
   if (opts.onReset) createShortcut(["R"], opts.onReset);
-  if (opts.onCycleDayPhase) createShortcut(["P"], opts.onCycleDayPhase);
   if (opts.onToggleInventory) createShortcut(["E"], opts.onToggleInventory);
   if (opts.onCloseInventory) createShortcut(["Escape"], opts.onCloseInventory);
   if (opts.onSelectHotbarSlot) {

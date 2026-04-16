@@ -1,11 +1,12 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
-import { onCleanup } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { PlacedObjectType } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
+import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -25,9 +26,11 @@ import {
 import { createInput, type InputOptions } from "./input";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
+import { SceneLighting } from "./scene-lighting";
 
 export interface CreateGameArgs {
   glCanvas: () => HTMLCanvasElement | undefined;
+  /** Output of `joinWorld()` — provides player, remote players, tick info, input, etc. */
   room: ReturnType<typeof joinWorld>;
   inputEnabled?: () => boolean;
   shortcuts?: Omit<InputOptions, "onReset">;
@@ -43,11 +46,17 @@ export interface ClientDiagnostics {
   pointerLocked: boolean;
 }
 
+/** Server-side performance metrics derived from `ServerTick` packets. */
 export interface ServerDiagnostics {
-  tps: number;
+  /** Milliseconds per server tick (reported in the `WorldStatePacket`). */
   mspt: number;
   msptHistory: number[];
+  /** How many server ticks we receive per second. */
   snapsPerSec: number;
+  /** How many position packets we send to the server per second. */
+  packetsPerSec: number;
+  /** Server-authoritative time of day in seconds. */
+  timeOfDayS: number;
 }
 
 interface MutableGameState {
@@ -58,47 +67,23 @@ interface MutableGameState {
   };
 }
 
-export type GameState = Readonly<MutableGameState>;
-
-const DAY_LENGTH_S = 60;
-const PHASE_MS = (DAY_LENGTH_S / 4) * 1000;
-
-const _lightPos = new Float32Array(4);
-const _bgColor = new Float32Array(4);
-const _ambient = new Float32Array(3);
-const _sunColor = new Float32Array(3);
-
-let _timeOffset = 0;
-
-function computeDayNight(nowMs: number): void {
-  const t = ((nowMs + _timeOffset) / 1000) % DAY_LENGTH_S;
-  const angle = (t / DAY_LENGTH_S) * Math.PI * 2;
-  const sinA = Math.sin(angle);
-  const cosA = Math.cos(angle);
-
-  _lightPos[0] = cosA * 2000;
-  _lightPos[1] = sinA * 2000;
-  _lightPos[2] = 600;
-  _lightPos[3] = 1;
-
-  const day = Math.max(0, sinA);
-  const night = Math.max(0, -sinA);
-  const horizon = Math.max(0, 1 - Math.abs(sinA) / 0.35) * 0.35;
-
-  _bgColor[0] = Math.min(1, day * 0.4 + horizon * 0.92 + night * 0.02);
-  _bgColor[1] = Math.min(1, day * 0.62 + horizon * 0.42 + night * 0.02);
-  _bgColor[2] = Math.min(1, day * 0.96 + horizon * 0.12 + night * 0.1);
-  _bgColor[3] = 1;
-
-  _ambient[0] = day * 0.28 + horizon * 0.35 + night * 0.04;
-  _ambient[1] = day * 0.28 + horizon * 0.18 + night * 0.04;
-  _ambient[2] = day * 0.32 + horizon * 0.06 + night * 0.1;
-
-  _sunColor[0] = day * 1.0 + horizon * 1.0 + night * 0.3;
-  _sunColor[1] = day * 0.96 + horizon * 0.52 + night * 0.32;
-  _sunColor[2] = day * 0.82 + horizon * 0.1 + night * 0.5;
+export interface MinimapApi {
+  /** Increments whenever chunk surface data changes. */
+  terrainVersion: () => number;
+  /** Number of world blocks available from player center to one map edge. */
+  radiusBlocks: number;
+  /**
+   * Highest loaded block sample for world-space (x, z).
+   * High byte = `CubeType`, low byte = surface Y.
+   */
+  sampleSurface: (wx: number, wz: number) => number | undefined;
 }
 
+export interface GameState extends Readonly<MutableGameState> {
+  readonly minimap: MinimapApi;
+}
+
+/** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
 const FRAME_HISTORY_SIZE = 120;
 const TEMP_START_SEED = 123;
@@ -130,23 +115,28 @@ export function createGame(args: CreateGameArgs): GameState {
         pointerLocked: false,
       },
       server: {
-        tps: 0,
         mspt: 0,
         msptHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         snapsPerSec: 0,
+        packetsPerSec: 0,
+        timeOfDayS: 0,
       },
     },
   });
 
-  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient());
+  const [terrainVersion, setTerrainVersion] = createSignal(0);
+  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient(), () =>
+    setTerrainVersion((version) => version + 1),
+  );
+  const lighting = new SceneLighting();
   onCleanup(() => {
     chunks.dispose();
   });
 
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
-  const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
+  const packetMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
@@ -155,29 +145,48 @@ export function createGame(args: CreateGameArgs): GameState {
   let frame = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
-  let tickDelta = 0;
+  let lastPacketCount = 0;
+  let timeOffsetS = 0;
   let lastPlacedObjects = chunks.getVisiblePlacedObjects();
   let lastRenderCenterX = NaN;
   let lastRenderCenterZ = NaN;
   let renderedFoliageCount = 0;
   let renderedRockCount = 0;
 
+  const handleReset = () => {
+    ctx?.camera.reset();
+    chunks.reset();
+  };
+
   const input = createInput(args.glCanvas, {
-    onReset: () => ctx?.camera.reset(),
-    onCycleDayPhase: () => {
-      _timeOffset += PHASE_MS;
-    },
+    onReset: handleReset,
     ...args.shortcuts,
   });
 
   let nextPacketSequence = 1;
-  let pendingPacket: PlayerPositionPacket | undefined;
+  let pendingPacket: Omit<PlayerPositionPacket, "sequence"> | undefined;
+
+  // track player position changes to send to server
+  createEffect(() => {
+    const player = room().player();
+    if (!player) return;
+    pendingPacket = {
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw: player.state.yaw,
+      pitch: player.state.pitch,
+    };
+  });
+
+  let packetCount = 0;
   makeTimer(
     () => {
       const session = room().session();
       if (!pendingPacket || !session) return;
-      session.sendPosition(pendingPacket);
+      session.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
       pendingPacket = undefined;
+      packetCount++;
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -211,30 +220,23 @@ export function createGame(args: CreateGameArgs): GameState {
 
     const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
     camera.rotate(mouse.dx, mouse.dy);
-    const walk = inputEnabled()
-      ? camera.walkDir(input.walkKeys())
-      : {
-          x: 0,
-          y: 0,
-          z: 0,
-        };
+    const keys = input.walkKeys();
+    const walk = inputEnabled() ? camera.walkDir(keys) : { x: 0, z: 0 };
+    const jump = inputEnabled() && keys.space;
     const yaw = camera.yaw();
     const pitch = camera.pitch();
     if (inputEnabled()) {
-      const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
+      const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump };
       room().replicated()?.predict(next);
-      pendingPacket = {
-        sequence: nextPacketSequence++,
-        x: player.state.x,
-        y: player.state.y,
-        z: player.state.z,
-        yaw: player.state.yaw,
-        pitch: player.state.pitch,
-      };
     }
     camera.setPosition(player.position);
 
     chunks.update(player.position.x, player.position.z);
+
+    const replicated = room().replicated();
+    if (replicated) {
+      (replicated.entity as Player).collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
+    }
 
     const viewMatrix = camera.viewMatrix();
     const projMatrix = camera.projMatrix();
@@ -260,15 +262,16 @@ export function createGame(args: CreateGameArgs): GameState {
       lastRenderCenterZ = player.position.z;
     }
 
-    const snap = room().snapshot;
-    if (snap.tick !== lastTick) {
-      remotePlayers.onSnapshot(unwrap(snap.players), now);
-      tickDelta = snap.tick - lastTick;
-      lastTick = snap.tick;
-      msptHistory.push(snap.tickTimeMs);
+    const tickInfo = room().tickInfo;
+    if (tickInfo.tick !== lastTick) {
+      remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
+      lastTick = tickInfo.tick;
+      msptHistory.push(tickInfo.tickTimeMs);
+      timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
     }
 
-    computeDayNight(now);
+    const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
+    lighting.update(timeOfDayS);
 
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [
@@ -281,11 +284,12 @@ export function createGame(args: CreateGameArgs): GameState {
       projMatrix,
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
+      cubeAmbientOcclusion: chunks.ambientOcclusion,
       numCubes: chunks.count,
-      lightPosition: _lightPos,
-      backgroundColor: _bgColor,
-      ambientColor: _ambient,
-      sunColor: _sunColor,
+      lightPosition: lighting.lightPosition,
+      backgroundColor: lighting.backgroundColor,
+      ambientColor: lighting.ambientColor,
+      sunColor: lighting.sunColor,
       entities,
     });
 
@@ -295,11 +299,11 @@ export function createGame(args: CreateGameArgs): GameState {
     fpsMeter.sample(dt, 1);
     computeHistory.push(computeTimeMs);
     gpuHistory.push(gpuTimeMs);
-    tpsMeter.sample(dt, tickDelta);
-    tickDelta = 0;
     const currentSnapCount = room().snapCount();
     snapMeter.sample(dt, currentSnapCount - lastSnapCount);
     lastSnapCount = currentSnapCount;
+    packetMeter.sample(dt, packetCount - lastPacketCount);
+    lastPacketCount = packetCount;
 
     setState("playerPosition", player.position);
     setState("diagnostics", "client", {
@@ -312,12 +316,25 @@ export function createGame(args: CreateGameArgs): GameState {
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {
-      tps: tpsMeter.rate,
-      mspt: snap.tickTimeMs,
+      mspt: tickInfo.tickTimeMs,
       msptHistory: msptHistory.ordered(),
       snapsPerSec: snapMeter.rate,
+      packetsPerSec: packetMeter.rate,
+      timeOfDayS,
     });
   });
 
-  return state;
+  return {
+    get playerPosition() {
+      return state.playerPosition;
+    },
+    get diagnostics() {
+      return state.diagnostics;
+    },
+    minimap: {
+      terrainVersion,
+      radiusBlocks: chunks.minimapRadiusBlocks,
+      sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
+    },
+  };
 }

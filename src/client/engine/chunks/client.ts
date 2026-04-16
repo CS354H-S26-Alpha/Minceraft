@@ -8,6 +8,13 @@ export interface SingleChunkData {
   originZ: number;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  /** Packed block grid (CubeType per voxel), indexed `y*S*S + z*S + x`. */
+  blocks: Uint8Array;
+  cubeAmbientOcclusion: Uint8Array;
+  /** Detached copy of surface Y per column, indexed `z*S + x`. */
+  surfaceHeights: Uint8Array;
+  /** Detached copy of surface block type per column, indexed `z*S + x`. */
+  surfaceTypes: Uint8Array;
   numCubes: number;
   placedObjects: readonly PlacedObject[];
   placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
@@ -33,6 +40,8 @@ export interface ChunkQueueArgs {
   originX: number;
   originZ: number;
   renderDistance: number;
+  loadDistance?: number;
+  evictDistance?: number;
   seed: number;
   chunkOrigins: ChunkOrigin[];
 }
