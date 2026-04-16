@@ -6,7 +6,7 @@ import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } fro
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
 const RENDER_DISTANCE = 4;
-const LOAD_DISTANCE = RENDER_DISTANCE + 1;
+const LOAD_DISTANCE = RENDER_DISTANCE;
 const EVICT_DISTANCE = LOAD_DISTANCE + 2;
 
 export interface ChunkClient {

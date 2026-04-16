@@ -357,7 +357,7 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
 
   /** Attempts a melee attack from the local client snapshot. */
   attack(packet: PlayerAttackPacket) {
-    return this.#room.attack(this.#playerId, packet);
+    return this.#getRoom().attack(this.#playerId, packet);
   }
 
   /** Sets the server-authoritative time of day. */
