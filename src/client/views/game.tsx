@@ -21,6 +21,7 @@ export default function GameView() {
       onToggleInventory: toggleInventory,
       onCloseInventory: closeInventory,
       onSelectHotbarSlot: selectHotbarSlot,
+      onAttack: () => room.session()?.attack(),
       onCycleHotbar: (direction) => {
         const player = room.player();
         if (!player) return;

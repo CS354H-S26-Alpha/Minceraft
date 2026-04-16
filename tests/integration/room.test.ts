@@ -329,6 +329,30 @@ describe("GameRoom Durable Object", () => {
     expect("health" in (alicePlayers?.bob ?? {})).toBe(false);
   });
 
+  it("applies held-item combat damage to the hit player on the server", async () => {
+    const stub = makeRoomStub(roomName);
+    const bobTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", () => {});
+      room.join("bob", "Bob", (tick) => bobTicks.push(tick));
+      await room.runTick();
+
+      await wait(50);
+      room.sendPosition("bob", { sequence: 1, x: 0, y: 70, z: 18, yaw: Math.PI, pitch: 0 });
+      await room.runTick();
+
+      room.selectHotbarSlot("alice", 2);
+      await room.runTick();
+
+      room.attack("alice");
+      await room.runTick();
+    });
+
+    const latest = bobTicks[bobTicks.length - 1];
+    expect(findPacket(latest, "self")?.state.health).toBe(PLAYER_MAX_HEALTH - 2);
+  });
+
   it("crafts through the personal 2x2 grid and returns temporary items on close", async () => {
     const stub = makeRoomStub(roomName);
     const received: ServerTick[] = [];

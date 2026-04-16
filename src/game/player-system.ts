@@ -17,6 +17,9 @@ import {
   clonePlayerState,
   createPlayerState,
   createStarterInventory,
+  getHeldItemDamage,
+  getLookDirection,
+  getPlayerEyePosition,
   HOTBAR_SLOT_COUNT,
   INVENTORY_SLOT_COUNT,
   type InventorySlot,
@@ -54,7 +57,7 @@ export class PlayerSystem implements GameSystem {
   private inventoryUi = new Map<string, InventoryUiState>();
   private lastAcceptedAt = new Map<string, number>();
   private pendingReconcile = new Set<string>();
-  private pendingInventorySync = new Set<string>();
+  private pendingSelfStateSync = new Set<string>();
 
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
@@ -110,7 +113,7 @@ export class PlayerSystem implements GameSystem {
     }
     this.inventoryUi.delete(playerId);
     this.pendingReconcile.delete(playerId);
-    this.pendingInventorySync.delete(playerId);
+    this.pendingSelfStateSync.delete(playerId);
   }
 
   /**
@@ -212,18 +215,18 @@ export class PlayerSystem implements GameSystem {
     packets.push({ type: "ack", sequence: this.acks.get(playerId) ?? 0 });
 
     const reconcile = this.pendingReconcile.has(playerId);
-    const inventorySync = this.pendingInventorySync.has(playerId);
+    const selfStateSync = this.pendingSelfStateSync.has(playerId);
     const player = this.players.get(playerId);
 
     if (player) {
       if (reconcile) {
         packets.push({ type: "reconcile", state: clonePlayerState(player.state) });
-      } else if (inventorySync) {
+      } else if (selfStateSync) {
         packets.push({ type: "self", state: clonePlayerState(player.state) });
       }
     }
 
-    if (reconcile || inventorySync) {
+    if (reconcile || selfStateSync) {
       const ui = this.inventoryUi.get(playerId);
       if (ui) packets.push({ type: "inventoryUi", ui: cloneInventoryUiState(ui) });
     }
@@ -234,7 +237,7 @@ export class PlayerSystem implements GameSystem {
   /** Resets pending flags after a broadcast has been delivered. */
   clearPending(): void {
     this.pendingReconcile.clear();
-    this.pendingInventorySync.clear();
+    this.pendingSelfStateSync.clear();
   }
 
   interactInventory(playerId: string, target: InventoryClickTarget): boolean {
@@ -268,7 +271,7 @@ export class PlayerSystem implements GameSystem {
 
     if (!changed) return false;
     this.dirty.add(playerId);
-    this.pendingInventorySync.add(playerId);
+    this.pendingSelfStateSync.add(playerId);
     return true;
   }
 
@@ -279,7 +282,7 @@ export class PlayerSystem implements GameSystem {
     const changed = this.returnCraftingItems(player, ui);
     if (changed) {
       this.dirty.add(playerId);
-      this.pendingInventorySync.add(playerId);
+      this.pendingSelfStateSync.add(playerId);
     }
     return changed;
   }
@@ -289,7 +292,20 @@ export class PlayerSystem implements GameSystem {
     const player = this.players.get(playerId);
     if (!player?.setSelectedHotbarSlot(slotIndex)) return false;
     this.dirty.add(playerId);
-    this.pendingInventorySync.add(playerId);
+    this.pendingSelfStateSync.add(playerId);
+    return true;
+  }
+
+  attack(attackerId: string, onlinePlayerIds: ReadonlySet<string>): boolean {
+    const attacker = this.players.get(attackerId);
+    if (!attacker || attacker.state.health <= 0 || !onlinePlayerIds.has(attackerId)) return false;
+
+    const target = this.findAttackTarget(attackerId, attacker, onlinePlayerIds);
+    if (!target) return false;
+    if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
+
+    this.dirty.add(target.id);
+    this.pendingSelfStateSync.add(target.id);
     return true;
   }
 
@@ -409,7 +425,35 @@ export class PlayerSystem implements GameSystem {
     const dz = packet.z - prev.z;
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
+
+  private findAttackTarget(
+    attackerId: string,
+    attacker: Player,
+    onlinePlayerIds: ReadonlySet<string>,
+  ): Player | undefined {
+    const origin = getPlayerEyePosition(attacker.state);
+    const direction = getLookDirection(attacker.state.yaw, attacker.state.pitch);
+    let nearestDistance = MELEE_RANGE;
+    let nearestTarget: Player | undefined;
+
+    for (const [candidateId, candidate] of this.players) {
+      if (candidateId === attackerId) continue;
+      if (!onlinePlayerIds.has(candidateId)) continue;
+      if (candidate.state.health <= 0) continue;
+
+      const hitDistance = intersectRayWithPlayerBounds(origin, direction, candidate.state, MELEE_RANGE);
+      if (hitDistance === undefined || hitDistance > nearestDistance) continue;
+
+      nearestDistance = hitDistance;
+      nearestTarget = candidate;
+    }
+
+    return nearestTarget;
+  }
 }
+
+const MELEE_RANGE = 3;
+const RAY_EPSILON = 1e-6;
 
 function clickSlot(
   ui: InventoryUiState,
@@ -473,6 +517,79 @@ function playerMoved(prev: PlayerPublicState, next: PlayerState): boolean {
   return (
     prev.x !== next.x || prev.y !== next.y || prev.z !== next.z || prev.yaw !== next.yaw || prev.pitch !== next.pitch
   );
+}
+
+function intersectRayWithPlayerBounds(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  target: PlayerState,
+  maxDistance: number,
+): number | undefined {
+  return intersectRayWithAabb(
+    origin,
+    direction,
+    {
+      minX: target.x - Player.CYLINDER_RADIUS,
+      maxX: target.x + Player.CYLINDER_RADIUS,
+      minY: target.y,
+      maxY: target.y + Player.CYLINDER_HEIGHT,
+      minZ: target.z - Player.CYLINDER_RADIUS,
+      maxZ: target.z + Player.CYLINDER_RADIUS,
+    },
+    maxDistance,
+  );
+}
+
+function intersectRayWithAabb(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  bounds: {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  },
+  maxDistance: number,
+): number | undefined {
+  let entry = 0;
+  let exit = maxDistance;
+
+  const xHit = intersectAxis(origin.x, direction.x, bounds.minX, bounds.maxX);
+  if (!xHit) return undefined;
+  entry = Math.max(entry, xHit.entry);
+  exit = Math.min(exit, xHit.exit);
+
+  const yHit = intersectAxis(origin.y, direction.y, bounds.minY, bounds.maxY);
+  if (!yHit) return undefined;
+  entry = Math.max(entry, yHit.entry);
+  exit = Math.min(exit, yHit.exit);
+
+  const zHit = intersectAxis(origin.z, direction.z, bounds.minZ, bounds.maxZ);
+  if (!zHit) return undefined;
+  entry = Math.max(entry, zHit.entry);
+  exit = Math.min(exit, zHit.exit);
+
+  if (entry > exit || exit < 0 || entry > maxDistance) return undefined;
+  return Math.max(0, entry);
+}
+
+function intersectAxis(origin: number, direction: number, min: number, max: number) {
+  if (Math.abs(direction) < RAY_EPSILON) {
+    if (origin < min || origin > max) return undefined;
+    return { entry: -Infinity, exit: Infinity };
+  }
+
+  let entry = (min - origin) / direction;
+  let exit = (max - origin) / direction;
+  if (entry > exit) {
+    const swap = entry;
+    entry = exit;
+    exit = swap;
+  }
+
+  return { entry, exit };
 }
 
 function parsePersistedInventory(serialized: string): InventorySlot[] {

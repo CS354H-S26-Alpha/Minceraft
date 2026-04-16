@@ -1,6 +1,6 @@
 import { Vec3 } from "gl-matrix";
 import { Entity } from "./entity";
-import { ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
+import { getItemDamage, ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
 
 // minceraft yoinked
 export const PLAYER_SPEED = 4.317;
@@ -8,6 +8,7 @@ export const PLAYER_GRAVITY = 32;
 export const PLAYER_JUMP_VELOCITY = 8.944;
 export const PLAYER_MAX_FALL_SPEED = 78.4;
 export const PLAYER_MAX_HEALTH = 20;
+export const PLAYER_EYE_OFFSET = 1.62;
 export const HOTBAR_SLOT_COUNT = 9;
 export const MAIN_INVENTORY_SLOT_COUNT = 27;
 export const INVENTORY_SLOT_COUNT = MAIN_INVENTORY_SLOT_COUNT + HOTBAR_SLOT_COUNT;
@@ -89,6 +90,37 @@ export function normalizeInventory(inventory?: readonly InventorySlot[] | null):
 export function clampHotbarSlot(slotIndex: number): number {
   if (!Number.isFinite(slotIndex)) return DEFAULT_SELECTED_HOTBAR_SLOT;
   return Math.min(HOTBAR_SLOT_COUNT - 1, Math.max(0, Math.trunc(slotIndex)));
+}
+
+export function getSelectedHotbarInventoryIndex(selectedHotbarSlot: number): number {
+  return HOTBAR_START_INDEX + clampHotbarSlot(selectedHotbarSlot);
+}
+
+export function getSelectedHotbarItem(
+  state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">,
+): InventorySlot {
+  return state.inventory[getSelectedHotbarInventoryIndex(state.selectedHotbarSlot)] ?? null;
+}
+
+export function getHeldItemDamage(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): number {
+  return getItemDamage(getSelectedHotbarItem(state)?.itemId);
+}
+
+export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) {
+  return {
+    x: state.x,
+    y: state.y + PLAYER_EYE_OFFSET,
+    z: state.z,
+  };
+}
+
+export function getLookDirection(yaw: number, pitch: number) {
+  const cosPitch = Math.cos(pitch);
+  return {
+    x: cosPitch * Math.sin(yaw),
+    y: Math.sin(pitch),
+    z: -cosPitch * Math.cos(yaw),
+  };
 }
 
 export function createPlayerState(
@@ -176,7 +208,7 @@ export class Player extends Entity<PlayerState, PlayerInput> {
   public static readonly CYLINDER_RADIUS = 0.3;
   public static readonly CYLINDER_HEIGHT = 1.8;
   /** Distance from feet to camera — Minecraft eye height. */
-  public static readonly EYE_OFFSET = 1.62;
+  public static readonly EYE_OFFSET = PLAYER_EYE_OFFSET;
 
   public collisionQuery: CollisionQuery | undefined = undefined;
 
@@ -203,6 +235,16 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
   addItem(stack: ItemStack): ItemStack | null {
     return addItemToInventory(this.state.inventory, stack);
+  }
+
+  takeDamage(amount: number): boolean {
+    if (!Number.isFinite(amount)) return false;
+    const damage = Math.max(0, Math.trunc(amount));
+    if (damage <= 0 || this.state.health <= 0) return false;
+    const nextHealth = Math.max(0, this.state.health - damage);
+    if (nextHealth === this.state.health) return false;
+    this.state.health = nextHealth;
+    return true;
   }
 
   publicState(): PlayerPublicState {

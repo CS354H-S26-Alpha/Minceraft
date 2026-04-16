@@ -159,6 +159,14 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /** Attempts a server-authoritative melee attack with the player's held item. */
+  attack(playerId: string) {
+    this.ensureInitialized();
+    if (this.playerSystem.attack(playerId, new Set(this.listeners.keys()))) {
+      this.needsBroadcast = true;
+    }
+  }
+
   setTimeOfDay(timeS: number) {
     if (!Number.isFinite(timeS)) return;
     const normalizedTimeS = ((timeS % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
@@ -345,6 +353,11 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Changes the selected hotbar slot. */
   selectHotbarSlot(slotIndex: number) {
     return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
+  }
+
+  /** Attempts a server-authoritative melee attack with the held item. */
+  attack() {
+    return this.#room.attack(this.#playerId);
   }
 
   /** Sets the server-authoritative time of day. */

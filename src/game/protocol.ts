@@ -78,6 +78,8 @@ export interface RoomSessionApi {
   closeInventory(): void;
   /** Changes the active hotbar slot. */
   selectHotbarSlot(slotIndex: number): void;
+  /** Attempts a server-authoritative melee attack with the held item. */
+  attack(): void;
   /** Sets the server-authoritative time of day (seconds within the day cycle). */
   setTimeOfDay(timeS: number): void;
   /** Leaves the room and disposes the session. */
