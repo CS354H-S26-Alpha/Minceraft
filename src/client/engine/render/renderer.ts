@@ -2,6 +2,7 @@ import type { Mat4 } from "gl-matrix";
 import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
+import { BlockHighlight } from "./block-highlight";
 import { Cube } from "./cube";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
@@ -25,6 +26,7 @@ export interface RenderView {
   /** Wall-clock seconds since game start; drives fluid surface animation. */
   timeS: number;
   entities: EntityDrawData[];
+  highlightBlock?: { x: number; y: number; z: number };
 }
 
 interface EntityPass {
@@ -39,6 +41,7 @@ export class Renderer {
   private readonly skyboxRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
+  private readonly blockHighlight: BlockHighlight;
   readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
@@ -58,6 +61,7 @@ export class Renderer {
     this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
+    this.blockHighlight = new BlockHighlight(this.ctx);
     this.entityPasses = new Map();
     for (const def of entityDefs) {
       const pass = new RenderPass(this.ctx, def.vertexShader, def.fragmentShader);
@@ -115,6 +119,16 @@ export class Renderer {
       }
       ep.pass.drawInstanced(entity.count);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
+    }
+
+    if (view.highlightBlock) {
+      this.blockHighlight.draw(
+        view.viewMatrix,
+        view.projMatrix,
+        view.highlightBlock.x,
+        view.highlightBlock.y,
+        view.highlightBlock.z,
+      );
     }
 
     this.gpuTimer.end();

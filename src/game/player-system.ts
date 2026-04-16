@@ -83,6 +83,12 @@ export class PlayerSystem implements GameSystem {
     }
   }
 
+  getPlayerPosition(playerId: string): { x: number; y: number; z: number } | null {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+    return { x: player.state.x, y: player.state.y, z: player.state.z };
+  }
+
   /** Adds a new player at the spawn position if they aren't already tracked. */
   join(playerId: string, name: string): void {
     if (!this.players.has(playerId)) {

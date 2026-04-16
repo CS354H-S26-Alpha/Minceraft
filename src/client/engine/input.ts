@@ -19,6 +19,8 @@ export interface InputOptions {
   onCloseInventory?: () => void;
   onSelectHotbarSlot?: (slotIndex: number) => void;
   onCycleHotbar?: (direction: 1 | -1) => void;
+  onLeftClick?: () => void;
+  onRightClick?: () => void;
   onAttack?: () => void;
 }
 
@@ -106,6 +108,11 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   }
   createEventListener(document, "contextmenu", (e) => {
     if (document.pointerLockElement === canvas()) e.preventDefault();
+  });
+  createEventListener(document, "mousedown", (e) => {
+    if (document.pointerLockElement !== canvas()) return;
+    if (e.button === 0) opts.onLeftClick?.();
+    else if (e.button === 2) opts.onRightClick?.();
   });
   if (opts.onCycleHotbar) {
     const onCycle = opts.onCycleHotbar;

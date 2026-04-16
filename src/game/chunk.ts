@@ -123,6 +123,180 @@ function ensureScratchCapacity(maxCubes: number): void {
   if (scratchAmbientOcclusion.length < 24 * maxCubes) scratchAmbientOcclusion = new Uint8Array(24 * maxCubes);
 }
 
+export interface RenderBlockResult {
+  cubePositions: Float32Array;
+  cubeColors: Float32Array;
+  cubeAmbientOcclusion: Uint8Array;
+  numCubes: number;
+}
+
+/**
+ * Builds render arrays (positions, colors, AO) from raw block and height data.
+ * Environment-agnostic — callable from both the worker and the main thread.
+ */
+export function renderBlockData(
+  blocks: Uint8Array,
+  heightMap: Uint8Array,
+  originX: number,
+  originZ: number,
+  size: number,
+  worldGet?: (wx: number, wy: number, wz: number) => CubeType,
+): RenderBlockResult {
+  const topleftx = originX - size / 2;
+  const topleftz = originZ - size / 2;
+  const S = size;
+  const hm = heightMap;
+
+  const getBlock = (lx: number, ly: number, lz: number): CubeType => {
+    if (lx < 0 || lx >= S || lz < 0 || lz >= S || ly < 0 || ly >= CHUNK_HEIGHT) return CubeType.Air;
+    return blocks[ly * S * S + lz * S + lx] as CubeType;
+  };
+
+  const isAir = (nlx: number, nly: number, nlz: number): boolean => {
+    if (nly < 0) return false;
+    if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
+      return getBlock(nlx, nly, nlz) === CubeType.Air;
+    }
+    if (worldGet) {
+      return worldGet(topleftx + nlx, nly, topleftz + nlz) === CubeType.Air;
+    }
+    return true;
+  };
+
+  const touchesAir = (lx: number, ly: number, lz: number): boolean =>
+    isAir(lx + 1, ly, lz) ||
+    isAir(lx - 1, ly, lz) ||
+    isAir(lx, ly + 1, lz) ||
+    isAir(lx, ly - 1, lz) ||
+    isAir(lx, ly, lz + 1) ||
+    isAir(lx, ly, lz - 1);
+
+  // Compute max cubes for scratch buffer sizing
+  let maxCubes = 0;
+  for (let i = 0; i < S * S; i++) {
+    maxCubes += (hm[i] ?? 0) + 1;
+  }
+  ensureScratchCapacity(maxCubes);
+  const positions = scratchPositions;
+  const colors = scratchColors;
+  const ambientOcclusion = scratchAmbientOcclusion;
+  let count = 0;
+
+  const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
+
+  const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
+    const info = CUBE_TYPE_INFO[blockType];
+    const c = info.baseColor;
+
+    positions[4 * count] = wx;
+    positions[4 * count + 1] = y;
+    positions[4 * count + 2] = wz;
+    positions[4 * count + 3] = blockType;
+
+    colors[3 * count] = c[0];
+    colors[3 * count + 1] = c[1];
+    colors[3 * count + 2] = c[2];
+
+    let aoOffset = 24 * count;
+    for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
+      const n = face.normal;
+      for (const [sideA, sideB] of face.corners) {
+        const side1 = isSolid(lx + n[0] + sideA[0], y + n[1] + sideA[1], lz + n[2] + sideA[2]);
+        const side2 = isSolid(lx + n[0] + sideB[0], y + n[1] + sideB[1], lz + n[2] + sideB[2]);
+        const corner = isSolid(
+          lx + n[0] + sideA[0] + sideB[0],
+          y + n[1] + sideA[1] + sideB[1],
+          lz + n[2] + sideA[2] + sideB[2],
+        );
+        ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(side1, side2, corner);
+      }
+    }
+
+    count++;
+  };
+
+  for (let i = 0; i < S; i++) {
+    for (let j = 0; j < S; j++) {
+      const idx = i * S + j;
+      const surfY = hm[idx] ?? 0;
+      const wx = topleftx + j;
+      const wz = topleftz + i;
+
+      for (let y = 0; y <= surfY; y++) {
+        const blockType = getBlock(j, y, i);
+        if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
+        writeCube(blockType, j, y, i, wx, wz);
+      }
+    }
+  }
+
+  return {
+    cubePositions: positions.slice(0, 4 * count),
+    cubeColors: colors.slice(0, 3 * count),
+    cubeAmbientOcclusion: ambientOcclusion.slice(0, 24 * count),
+    numCubes: count,
+  };
+}
+
+/**
+ * Column-major RLE encoding for chunk block data. Iterates each (x,z) column
+ * along the Y axis, emitting (blockType, runLength) pairs. Typical chunks
+ * compress from 512 KB to ~40-50 KB.
+ */
+export function rleEncodeBlocks(blocks: Uint8Array, size: number): Uint8Array {
+  const maxPairs = size * size * CHUNK_HEIGHT; // absolute worst case
+  const buf = new Uint8Array(maxPairs * 2);
+  let writeIdx = 0;
+
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      let runType = blocks[0 * size * size + z * size + x]!;
+      let runLen = 1;
+
+      for (let y = 1; y < CHUNK_HEIGHT; y++) {
+        const bt = blocks[y * size * size + z * size + x]!;
+        if (bt === runType && runLen < 255) {
+          runLen++;
+        } else {
+          buf[writeIdx++] = runType;
+          buf[writeIdx++] = runLen;
+          runType = bt;
+          runLen = 1;
+        }
+      }
+      buf[writeIdx++] = runType;
+      buf[writeIdx++] = runLen;
+    }
+  }
+
+  return buf.slice(0, writeIdx);
+}
+
+/**
+ * Decodes column-major RLE data back into a flat blocks array.
+ * Returns the blocks Uint8Array (size × size × CHUNK_HEIGHT).
+ */
+export function rleDecodeBlocks(encoded: Uint8Array, size: number): Uint8Array {
+  const blocks = new Uint8Array(size * size * CHUNK_HEIGHT);
+  let readIdx = 0;
+
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      let y = 0;
+      while (y < CHUNK_HEIGHT) {
+        const blockType = encoded[readIdx++]!;
+        const runLen = encoded[readIdx++]!;
+        for (let i = 0; i < runLen; i++) {
+          blocks[y * size * size + z * size + x] = blockType;
+          y++;
+        }
+      }
+    }
+  }
+
+  return blocks;
+}
+
 export class Chunk {
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
@@ -141,7 +315,6 @@ export class Chunk {
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
   private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
-  private maxCubes: number = 0;
 
   // Packed (y<<16)|(z<<8)|x positions of fluid blocks that may still flow on
   // the next tick. A Set gives O(1) add/remove and natural de-duplication —
@@ -154,7 +327,7 @@ export class Chunk {
   // adjacent cell opens up later (e.g. via mining).
   private activeFluids: Set<number> = new Set();
 
-  constructor(centerX: number, centerY: number, size: number, seed: number) {
+  constructor(centerX: number, centerY: number, size: number, seed: number, skipRender = false) {
     this.x = centerX;
     this.y = centerY;
     this.size = size;
@@ -167,8 +340,7 @@ export class Chunk {
 
     this.generateCubes();
     this.seedActiveFluids();
-    this.computeMaxCubes();
-    this.renderChunk(); // render on creation, might not be necessary
+    if (!skipRender) this.renderChunk();
   }
 
   /**
@@ -192,15 +364,6 @@ export class Chunk {
         }
       }
     }
-  }
-
-  private computeMaxCubes(): void {
-    let total = 0;
-    const S = this.size;
-    for (let i = 0; i < S * S; i++) {
-      total += this.heightMap[i]! + 1;
-    }
-    this.maxCubes = total;
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -791,96 +954,12 @@ export class Chunk {
     return anyChange;
   }
 
-  // worldGet: optional cross-chunk block lookup for accurate edge culling.
-  // Without it, chunk-boundary faces are always treated as exposed (safe but over-renders).
   public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
-    // The fluid simulator can push heightMap above the value cached by
-    // computeMaxCubes(), which would otherwise overflow the scratch buffers.
-    this.computeMaxCubes();
-
-    const topleftx = this.x - this.size / 2;
-    const topleftz = this.y - this.size / 2;
-    const S = this.size;
-    const hm = this.heightMap;
-
-    // Cross-chunk aware air check for edge culling
-    const isAir = (nlx: number, nly: number, nlz: number): boolean => {
-      if (nly < 0) return false;
-      if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
-        return this.getBlock(nlx, nly, nlz) === CubeType.Air;
-      }
-      if (worldGet) {
-        return worldGet(topleftx + nlx, nly, topleftz + nlz) === CubeType.Air;
-      }
-      return true; // no neighbor data — treat edge as exposed
-    };
-
-    const touchesAir = (lx: number, ly: number, lz: number): boolean =>
-      isAir(lx + 1, ly, lz) ||
-      isAir(lx - 1, ly, lz) ||
-      isAir(lx, ly + 1, lz) ||
-      isAir(lx, ly - 1, lz) ||
-      isAir(lx, ly, lz + 1) ||
-      isAir(lx, ly, lz - 1);
-
-    ensureScratchCapacity(this.maxCubes);
-    const positions = scratchPositions;
-    const colors = scratchColors;
-    const ambientOcclusion = scratchAmbientOcclusion;
-    let count = 0;
-
-    const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
-
-    const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
-      const info = CUBE_TYPE_INFO[blockType];
-      const c = info.baseColor;
-
-      positions[4 * count] = wx;
-      positions[4 * count + 1] = y;
-      positions[4 * count + 2] = wz;
-      positions[4 * count + 3] = blockType;
-
-      colors[3 * count] = c[0];
-      colors[3 * count + 1] = c[1];
-      colors[3 * count + 2] = c[2];
-
-      let aoOffset = 24 * count;
-      for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
-        const n = face.normal;
-        for (const [sideA, sideB] of face.corners) {
-          const side1 = isSolid(lx + n[0] + sideA[0], y + n[1] + sideA[1], lz + n[2] + sideA[2]);
-          const side2 = isSolid(lx + n[0] + sideB[0], y + n[1] + sideB[1], lz + n[2] + sideB[2]);
-          const corner = isSolid(
-            lx + n[0] + sideA[0] + sideB[0],
-            y + n[1] + sideA[1] + sideB[1],
-            lz + n[2] + sideA[2] + sideB[2],
-          );
-          ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(side1, side2, corner);
-        }
-      }
-
-      count++;
-    };
-
-    for (let i = 0; i < S; i++) {
-      for (let j = 0; j < S; j++) {
-        const idx = i * S + j;
-        const surfY = hm[idx]!;
-        const wx = topleftx + j;
-        const wz = topleftz + i;
-
-        for (let y = 0; y <= surfY; y++) {
-          const blockType = this.getBlock(j, y, i);
-          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-          writeCube(blockType, j, y, i, wx, wz);
-        }
-      }
-    }
-
-    this.cubes = count;
-    this.cubePositionsF32 = positions.slice(0, 4 * count);
-    this.cubeColorsF32 = colors.slice(0, 3 * count);
-    this.cubeAmbientOcclusionU8 = ambientOcclusion.slice(0, 24 * count);
+    const result = renderBlockData(this.blocks, this.heightMap, this.x, this.y, this.size, worldGet);
+    this.cubes = result.numCubes;
+    this.cubePositionsF32 = result.cubePositions;
+    this.cubeColorsF32 = result.cubeColors;
+    this.cubeAmbientOcclusionU8 = result.cubeAmbientOcclusion;
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
