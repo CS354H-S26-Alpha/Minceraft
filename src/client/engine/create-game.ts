@@ -13,7 +13,6 @@ import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput, type InputOptions } from "./input";
-import { CubeType } from "./render/cube-types";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 import { SceneLighting } from "./scene-lighting";
@@ -89,9 +88,6 @@ const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and s
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
-// Block-selection UX: raycast from the camera and highlight the first solid voxel hit.
-const BLOCK_HIGHLIGHT_DISTANCE = 8;
-const BLOCK_RAYCAST_EPSILON = 1e-4;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
@@ -268,12 +264,6 @@ export function createGame(args: CreateGameArgs): GameState {
     const projMatrix = camera.projMatrix();
     chunks.cull(viewMatrix, projMatrix);
 
-    // Compute the currently aimed-at block each frame for the white selection outline,
-    // but only while first-person input is active.
-    const highlightedBlock = inputEnabled()
-      ? raycastTargetedBlock(chunks, player.position, yaw, pitch, BLOCK_HIGHLIGHT_DISTANCE)
-      : null;
-
     // --- Remote entities ---
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
@@ -301,7 +291,6 @@ export function createGame(args: CreateGameArgs): GameState {
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
       entities,
-      highlightedBlock,
     });
 
     // --- Diagnostics (producers → store) ---
@@ -349,65 +338,4 @@ export function createGame(args: CreateGameArgs): GameState {
       sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
     },
   };
-}
-
-/**
- * Grid raycast (3D DDA) used for block targeting.
- * Walks voxel-by-voxel from the camera and returns the first non-air block.
- */
-function raycastTargetedBlock(
-  chunks: ChunkManager,
-  origin: Vec3,
-  yaw: number,
-  pitch: number,
-  maxDistance: number,
-): { x: number; y: number; z: number } | null {
-  const cosPitch = Math.cos(pitch);
-  const dirX = cosPitch * Math.sin(yaw);
-  const dirY = Math.sin(pitch);
-  const dirZ = -cosPitch * Math.cos(yaw);
-
-  const originX = origin.x + dirX * BLOCK_RAYCAST_EPSILON;
-  const originY = origin.y + dirY * BLOCK_RAYCAST_EPSILON;
-  const originZ = origin.z + dirZ * BLOCK_RAYCAST_EPSILON;
-
-  let x = Math.floor(originX);
-  let y = Math.floor(originY);
-  let z = Math.floor(originZ);
-
-  const stepX = dirX > 0 ? 1 : dirX < 0 ? -1 : 0;
-  const stepY = dirY > 0 ? 1 : dirY < 0 ? -1 : 0;
-  const stepZ = dirZ > 0 ? 1 : dirZ < 0 ? -1 : 0;
-
-  const tDeltaX = stepX === 0 ? Number.POSITIVE_INFINITY : Math.abs(1 / dirX);
-  const tDeltaY = stepY === 0 ? Number.POSITIVE_INFINITY : Math.abs(1 / dirY);
-  const tDeltaZ = stepZ === 0 ? Number.POSITIVE_INFINITY : Math.abs(1 / dirZ);
-
-  let tMaxX = stepX === 0 ? Number.POSITIVE_INFINITY : (stepX > 0 ? x + 1 - originX : originX - x) / Math.abs(dirX);
-  let tMaxY = stepY === 0 ? Number.POSITIVE_INFINITY : (stepY > 0 ? y + 1 - originY : originY - y) / Math.abs(dirY);
-  let tMaxZ = stepZ === 0 ? Number.POSITIVE_INFINITY : (stepZ > 0 ? z + 1 - originZ : originZ - z) / Math.abs(dirZ);
-
-  let traveled = 0;
-  while (traveled <= maxDistance) {
-    // Stop on the first solid voxel: this is the block we outline.
-    if (chunks.getBlock(x, y, z) !== CubeType.Air) {
-      return { x, y, z };
-    }
-
-    if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
-      x += stepX;
-      traveled = tMaxX;
-      tMaxX += tDeltaX;
-    } else if (tMaxY <= tMaxZ) {
-      y += stepY;
-      traveled = tMaxY;
-      tMaxY += tDeltaY;
-    } else {
-      z += stepZ;
-      traveled = tMaxZ;
-      tMaxZ += tDeltaZ;
-    }
-  }
-
-  return null;
 }

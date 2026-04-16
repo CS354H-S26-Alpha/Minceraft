@@ -6,21 +6,8 @@ import { Cube } from "./cube";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
-import blockOutlineFSText from "./shaders/blockOutline.frag";
-import blockOutlineVSText from "./shaders/blockOutline.vert";
 import skyboxFSText from "./shaders/skybox.frag";
 import skyboxVSText from "./shaders/skybox.vert";
-
-interface BlockTarget {
-  x: number;
-  y: number;
-  z: number;
-}
-
-// Unit-cube wireframe geometry used by the block selection outline pass.
-const OUTLINE_VERTICES = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
-
-const OUTLINE_INDICES = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]);
 
 export interface RenderView {
   viewMatrix: Mat4;
@@ -36,8 +23,6 @@ export interface RenderView {
   /** RGB sun/moon light color (changes with time of day). */
   sunColor: Float32Array;
   entities: EntityDrawData[];
-  /** World-space voxel coordinates for the currently targeted block. */
-  highlightedBlock: BlockTarget | null;
 }
 
 interface EntityPass {
@@ -51,7 +36,6 @@ export class Renderer {
   private readonly ctx: WebGL2RenderingContext;
   private readonly skyboxRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
-  private readonly blockOutlineRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
   readonly gpuTimer: GpuTimer;
 
@@ -60,9 +44,6 @@ export class Renderer {
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
   private lastCubeAmbientOcclusion: Uint8Array | null = null;
-  // Single-instance translation for the currently highlighted block.
-  private readonly blockOutlineOffset = new Float32Array(4);
-  private lastOutlineKey = "";
 
   constructor(canvas: HTMLCanvasElement, entityDefs: EntityPassDef[]) {
     this.canvas = canvas;
@@ -74,8 +55,6 @@ export class Renderer {
     this.initSkyboxPass(cubeGeometry);
     this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
-    this.blockOutlineRenderPass = new RenderPass(this.ctx, blockOutlineVSText, blockOutlineFSText);
-    this.initBlockOutlinePass();
 
     this.entityPasses = new Map();
     for (const def of entityDefs) {
@@ -136,36 +115,7 @@ export class Renderer {
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
 
-    this.drawHighlightedBlock(view.highlightedBlock);
-
     this.gpuTimer.end();
-  }
-
-  private drawHighlightedBlock(target: BlockTarget | null): void {
-    if (!target) return;
-
-    const gl = this.ctx;
-    // Avoid re-uploading the instance offset while the target block stays the same.
-    const key = `${target.x},${target.y},${target.z}`;
-    if (key !== this.lastOutlineKey) {
-      this.blockOutlineOffset[0] = target.x;
-      this.blockOutlineOffset[1] = target.y;
-      this.blockOutlineOffset[2] = target.z;
-      this.blockOutlineOffset[3] = 0;
-      this.blockOutlineRenderPass.updateAttributeBuffer("aOffset", this.blockOutlineOffset);
-      this.lastOutlineKey = key;
-    }
-
-    gl.disable(gl.CULL_FACE);
-    // Keep outline depth-tested against terrain, but use LEQUAL + no depth writes so
-    // coplanar edges remain visible without polluting the depth buffer.
-    gl.depthMask(false);
-    gl.depthFunc(gl.LEQUAL);
-    gl.lineWidth(3);
-    this.blockOutlineRenderPass.drawInstanced(1);
-    gl.depthFunc(gl.LESS);
-    gl.depthMask(true);
-    gl.enable(gl.CULL_FACE);
   }
 
   private drawSkybox(): void {
@@ -480,44 +430,6 @@ export class Renderer {
     });
 
     pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
-    pass.setup();
-  }
-
-  private initBlockOutlinePass(): void {
-    const gl = this.ctx;
-    const pass = this.blockOutlineRenderPass;
-
-    // Dedicated pass for drawing block-selection wireframes.
-    pass.setIndexBufferData(OUTLINE_INDICES);
-    pass.addAttribute(
-      "aVertPos",
-      3,
-      gl.FLOAT,
-      false,
-      3 * Float32Array.BYTES_PER_ELEMENT,
-      0,
-      undefined,
-      OUTLINE_VERTICES,
-    );
-    pass.addInstancedAttribute(
-      "aOffset",
-      4,
-      gl.FLOAT,
-      false,
-      4 * Float32Array.BYTES_PER_ELEMENT,
-      0,
-      undefined,
-      this.blockOutlineOffset,
-    );
-
-    pass.addUniform("uProj", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
-    });
-    pass.addUniform("uView", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
-      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
-    });
-
-    pass.setDrawData(gl.LINES, OUTLINE_INDICES.length, gl.UNSIGNED_INT, 0);
     pass.setup();
   }
 

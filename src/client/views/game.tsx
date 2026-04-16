@@ -58,15 +58,6 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
-      {/* Block-selection crosshair: hidden while inventory is open. */}
-      <Show when={!inventoryOpen()}>
-        <div class="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2">
-          <div class="relative h-5 w-5">
-            <div class="absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded bg-white" />
-            <div class="absolute left-0 top-1/2 h-[2px] w-full -translate-y-1/2 rounded bg-white" />
-          </div>
-        </div>
-      </Show>
       <Minimap
         hidden={inventoryOpen()}
         minimap={game.minimap}
