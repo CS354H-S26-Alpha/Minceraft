@@ -60,6 +60,12 @@ export interface BlockChangesPacket {
   changes: Array<{ x: number; y: number; z: number; blockType: number }>;
 }
 
+/** Server-pushed chunk block data (RLE-encoded) for the receiving client. */
+export interface ChunkDataPacket {
+  type: "chunkData";
+  chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>;
+}
+
 /** World-wide state — tick cost, time-of-day, etc. */
 export interface WorldStatePacket {
   type: "world";
@@ -78,7 +84,8 @@ export type ServerPacket =
   | InventoryUiPacket
   | WorldStatePacket
   | BlockAckPacket
-  | BlockChangesPacket;
+  | BlockChangesPacket
+  | ChunkDataPacket;
 
 /** A single server tick delivered to one client. */
 export interface ServerTick {

@@ -92,17 +92,22 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
   ];
 }
 
-// Shared scratch buffers reused across renderChunk calls. Grow on demand so
-// total resident footprint is O(max chunk) instead of O(chunks × max chunk).
+// Shared scratch buffers reused across renderBlockData calls.
 let scratchPositions = new Float32Array(0);
 let scratchColors = new Float32Array(0);
 let scratchAmbientOcclusion = new Uint8Array(0);
+// Padded block array: (S+2) × (S+2) × (H+2) with 1-block border for branchless neighbor lookups.
+// Air = 0 in the border by default; filled from worldGet when available.
+let scratchPadded = new Uint8Array(0);
 
-function ensureScratchCapacity(maxCubes: number): void {
+function ensureScratchCapacity(maxCubes: number, paddedSize: number): void {
   if (scratchPositions.length < 4 * maxCubes) scratchPositions = new Float32Array(4 * maxCubes);
   if (scratchColors.length < 3 * maxCubes) scratchColors = new Float32Array(3 * maxCubes);
   if (scratchAmbientOcclusion.length < 24 * maxCubes) scratchAmbientOcclusion = new Uint8Array(24 * maxCubes);
+  if (scratchPadded.length < paddedSize) scratchPadded = new Uint8Array(paddedSize);
 }
+
+export const SECTION_SIZE = 16;
 
 export interface RenderBlockResult {
   cubePositions: Float32Array;
@@ -111,9 +116,28 @@ export interface RenderBlockResult {
   numCubes: number;
 }
 
+/** Optional sub-region bounds within a chunk. Limits iteration to a 16x16x16 section. */
+export interface RenderRegion {
+  /** Local X start within the chunk (0-based). */
+  x: number;
+  /** Local Z start within the chunk (0-based). */
+  z: number;
+  /** Y start. */
+  y: number;
+  /** Region size along X/Z. */
+  sizeXZ: number;
+  /** Region size along Y. */
+  sizeY: number;
+}
+
 /**
  * Builds render arrays (positions, colors, AO) from raw block and height data.
  * Environment-agnostic — callable from both the worker and the main thread.
+ *
+ * Uses a padded (S+2)×(S+2)×(H+2) scratch array for branchless neighbor
+ * lookups — eliminates bounds checks and worldGet calls from the hot loop.
+ *
+ * When `region` is provided, only iterates blocks within that sub-region.
  */
 export function renderBlockData(
   blocks: Uint8Array,
@@ -122,91 +146,120 @@ export function renderBlockData(
   originZ: number,
   size: number,
   worldGet?: (wx: number, wy: number, wz: number) => CubeType,
+  region?: RenderRegion,
 ): RenderBlockResult {
   const topleftx = originX - size / 2;
   const topleftz = originZ - size / 2;
   const S = size;
-  const hm = heightMap;
+  const PX = S + 2;
+  const PZ = S + 2;
+  const PY = CHUNK_HEIGHT + 2;
+  const paddedSize = PX * PZ * PY;
 
-  const getBlock = (lx: number, ly: number, lz: number): CubeType => {
-    if (lx < 0 || lx >= S || lz < 0 || lz >= S || ly < 0 || ly >= CHUNK_HEIGHT) return CubeType.Air;
-    return blocks[ly * S * S + lz * S + lx] as CubeType;
-  };
+  // Iteration bounds
+  const x0 = region?.x ?? 0;
+  const z0 = region?.z ?? 0;
+  const y0 = region?.y ?? 0;
+  const x1 = region ? x0 + region.sizeXZ : S;
+  const z1 = region ? z0 + region.sizeXZ : S;
+  const y1 = region ? y0 + region.sizeY : CHUNK_HEIGHT;
 
-  const isAir = (nlx: number, nly: number, nlz: number): boolean => {
-    if (nly < 0) return false;
-    if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
-      return getBlock(nlx, nly, nlz) === CubeType.Air;
+  const maxCubes = (x1 - x0) * (z1 - z0) * (y1 - y0);
+  ensureScratchCapacity(maxCubes, paddedSize);
+
+  // Build padded array: index = (ly+1) * PX*PZ + (lz+1) * PX + (lx+1)
+  // Default fill is 0 (Air) — borders are Air unless worldGet overrides.
+  const padded = scratchPadded;
+  padded.fill(0, 0, paddedSize);
+
+  // Copy interior blocks
+  for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+    for (let lz = 0; lz < S; lz++) {
+      const srcOff = ly * S * S + lz * S;
+      const dstOff = (ly + 1) * PX * PZ + (lz + 1) * PX + 1;
+      padded.set(blocks.subarray(srcOff, srcOff + S), dstOff);
     }
-    if (worldGet) {
-      return worldGet(topleftx + nlx, nly, topleftz + nlz) === CubeType.Air;
-    }
-    return true;
-  };
-
-  const touchesAir = (lx: number, ly: number, lz: number): boolean =>
-    isAir(lx + 1, ly, lz) ||
-    isAir(lx - 1, ly, lz) ||
-    isAir(lx, ly + 1, lz) ||
-    isAir(lx, ly - 1, lz) ||
-    isAir(lx, ly, lz + 1) ||
-    isAir(lx, ly, lz - 1);
-
-  // Compute max cubes for scratch buffer sizing
-  let maxCubes = 0;
-  for (let i = 0; i < S * S; i++) {
-    maxCubes += (hm[i] ?? 0) + 1;
   }
-  ensureScratchCapacity(maxCubes);
+
+  // Fill Y=-1 border as solid (prevents false "air" below bedrock floor)
+  padded.fill(CubeType.Bedrock, 0, PX * PZ);
+
+  // Fill X/Z borders from worldGet if available
+  if (worldGet) {
+    for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+      const py = ly + 1;
+      // X borders (lx = -1 and lx = S)
+      for (let lz = 0; lz < S; lz++) {
+        padded[py * PX * PZ + (lz + 1) * PX + 0] = worldGet(topleftx - 1, ly, topleftz + lz);
+        padded[py * PX * PZ + (lz + 1) * PX + (S + 1)] = worldGet(topleftx + S, ly, topleftz + lz);
+      }
+      // Z borders (lz = -1 and lz = S)
+      for (let lx = 0; lx < S; lx++) {
+        padded[py * PX * PZ + 0 * PX + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz - 1);
+        padded[py * PX * PZ + (S + 1) * PX + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz + S);
+      }
+    }
+  }
+
+  // Pre-computed strides for padded array: avoids per-call multiplication
+  const strideY = PX * PZ;
+  const strideZ = PX;
+
   const positions = scratchPositions;
   const colors = scratchColors;
   const ambientOcclusion = scratchAmbientOcclusion;
   let count = 0;
 
-  const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
-
-  const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
-    const info = CUBE_TYPE_INFO[blockType];
-    const c = info.baseColor;
-
-    positions[4 * count] = wx;
-    positions[4 * count + 1] = y;
-    positions[4 * count + 2] = wz;
-    positions[4 * count + 3] = blockType;
-
-    colors[3 * count] = c[0];
-    colors[3 * count + 1] = c[1];
-    colors[3 * count + 2] = c[2];
-
-    let aoOffset = 24 * count;
-    for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
-      const n = face.normal;
-      for (const [sideA, sideB] of face.corners) {
-        const side1 = isSolid(lx + n[0] + sideA[0], y + n[1] + sideA[1], lz + n[2] + sideA[2]);
-        const side2 = isSolid(lx + n[0] + sideB[0], y + n[1] + sideB[1], lz + n[2] + sideB[2]);
-        const corner = isSolid(
-          lx + n[0] + sideA[0] + sideB[0],
-          y + n[1] + sideA[1] + sideB[1],
-          lz + n[2] + sideA[2] + sideB[2],
-        );
-        ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(side1, side2, corner);
-      }
-    }
-
-    count++;
-  };
-
-  for (let i = 0; i < S; i++) {
-    for (let j = 0; j < S; j++) {
-      const idx = i * S + j;
-      const surfY = hm[idx] ?? 0;
+  for (let i = z0; i < z1; i++) {
+    const pBaseZ = (i + 1) * strideZ;
+    for (let j = x0; j < x1; j++) {
+      const surfY = region ? Math.min(heightMap[i * S + j] ?? 0, y1 - 1) : (heightMap[i * S + j] ?? 0);
+      if (surfY < y0) continue;
       const wx = topleftx + j;
       const wz = topleftz + i;
+      const pBaseXZ = pBaseZ + (j + 1);
 
-      for (let y = 0; y <= surfY; y++) {
-        const blockType = getBlock(j, y, i);
-        if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-        writeCube(blockType, j, y, i, wx, wz);
+      for (let y = y0; y <= surfY; y++) {
+        const pi = (y + 1) * strideY + pBaseXZ;
+        const blockType = padded[pi]!;
+        if (blockType === CubeType.Air) continue;
+
+        // Face culling: skip blocks fully surrounded by solid blocks
+        if (
+          padded[pi + 1] !== CubeType.Air &&
+          padded[pi - 1] !== CubeType.Air &&
+          padded[pi + strideY] !== CubeType.Air &&
+          padded[pi - strideY] !== CubeType.Air &&
+          padded[pi + strideZ] !== CubeType.Air &&
+          padded[pi - strideZ] !== CubeType.Air
+        )
+          continue;
+
+        // Write instance data
+        const info = CUBE_TYPE_INFO[blockType as CubeType];
+        const c = info.baseColor;
+        positions[4 * count] = wx;
+        positions[4 * count + 1] = y;
+        positions[4 * count + 2] = wz;
+        positions[4 * count + 3] = blockType;
+        colors[3 * count] = c[0];
+        colors[3 * count + 1] = c[1];
+        colors[3 * count + 2] = c[2];
+
+        // AO: 6 faces × 4 corners — all via padded array with pre-computed offsets
+        let aoOffset = 24 * count;
+        for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
+          const nOff = face.normal[0] + face.normal[1] * strideY + face.normal[2] * strideZ;
+          for (const [sideA, sideB] of face.corners) {
+            const aOff = sideA[0] + sideA[1] * strideY + sideA[2] * strideZ;
+            const bOff = sideB[0] + sideB[1] * strideY + sideB[2] * strideZ;
+            const s1 = padded[pi + nOff + aOff] !== CubeType.Air;
+            const s2 = padded[pi + nOff + bOff] !== CubeType.Air;
+            const cn = padded[pi + nOff + aOff + bOff] !== CubeType.Air;
+            ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(s1, s2, cn);
+          }
+        }
+        count++;
       }
     }
   }
@@ -218,6 +271,29 @@ export function renderBlockData(
     numCubes: count,
   };
 }
+
+/** Computes the section index for a block at local coordinates (lx, ly, lz). */
+export function sectionIndex(lx: number, ly: number, lz: number): number {
+  return (lx >> 4) + ((lz >> 4) << 2) + ((ly >> 4) << 4);
+}
+
+/** Returns the RenderRegion for a given section index. */
+export function sectionRegion(idx: number): RenderRegion {
+  const sx = idx & 3;
+  const sz = (idx >> 2) & 3;
+  const sy = idx >> 4;
+  return {
+    x: sx * SECTION_SIZE,
+    z: sz * SECTION_SIZE,
+    y: sy * SECTION_SIZE,
+    sizeXZ: SECTION_SIZE,
+    sizeY: SECTION_SIZE,
+  };
+}
+
+/** Total number of sections in a chunk (4x4x8 = 128). */
+export const SECTIONS_PER_CHUNK =
+  (CHUNK_SIZE / SECTION_SIZE) * (CHUNK_SIZE / SECTION_SIZE) * (CHUNK_HEIGHT / SECTION_SIZE);
 
 /**
  * Column-major RLE encoding for chunk block data. Iterates each (x,z) column

@@ -3,6 +3,11 @@ import { createStarterInventory, PLAYER_MAX_HEALTH } from "../game/player";
 
 const STARTER_INVENTORY_JSON = JSON.stringify(createStarterInventory());
 
+export const roomConfig = sqliteTable("room_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
 export const players = sqliteTable("players", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

@@ -83,6 +83,10 @@ export class PlayerSystem implements GameSystem {
     }
   }
 
+  onlinePlayerIds(): Iterable<string> {
+    return this.players.keys();
+  }
+
   getPlayerPosition(playerId: string): { x: number; y: number; z: number } | null {
     const player = this.players.get(playerId);
     if (!player) return null;

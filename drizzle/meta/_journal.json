@@ -36,6 +36,13 @@
       "when": 1776124800000,
       "tag": "0004_steady_health",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1776470400000,
+      "tag": "0005_room_config",
+      "breakpoints": true
     }
   ]
 }

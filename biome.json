@@ -25,7 +25,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/lib/webglutils/**"],
+      "includes": ["src/lib/webglutils/**", "worker-configuration.d.ts"],
       "linter": {
         "enabled": false
       }

@@ -1,104 +1,64 @@
 import { describe, expect, it } from "vitest";
-import type { ChunkBatchData, ChunkQueueArgs } from "../src/client/engine/chunks/client";
 import type { ChunkClient } from "../src/client/engine/chunks/manager";
 import { ChunkManager } from "../src/client/engine/chunks/manager";
+import { CubeType } from "../src/client/engine/render/cube-types";
+import { CHUNK_SIZE, SECTIONS_PER_CHUNK } from "../src/game/chunk";
 
-function flushPromises(): Promise<void> {
-  return Promise.resolve();
-}
-
-function renderData(value: number): ChunkBatchData {
+function createMockClient(): ChunkClient {
   return {
-    chunks: [
-      {
-        originX: 0,
-        originZ: 0,
-        cubePositions: new Float32Array([value, 0, 0, 0]),
-        cubeColors: new Float32Array([value, 0, 0]),
-        blocks: new Uint8Array(0),
-        cubeAmbientOcclusion: new Uint8Array(24).fill(3),
-        surfaceHeights: new Uint8Array([1]),
-        surfaceTypes: new Uint8Array([1]),
-        numCubes: 1,
-      },
-    ],
+    async loadChunks(chunks) {
+      return {
+        chunks: chunks.map((c) => ({
+          ...c,
+          cubePositions: new Float32Array(4),
+          cubeColors: new Float32Array(3),
+          blocks: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * 128),
+          cubeAmbientOcclusion: new Uint8Array(24),
+          surfaceHeights: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
+          surfaceTypes: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
+          numCubes: 1,
+          sectionOffsets: new Uint32Array(SECTIONS_PER_CHUNK),
+          sectionCounts: new Uint16Array(SECTIONS_PER_CHUNK),
+        })),
+      };
+    },
+    syncBlock() {},
+    async clearCache() {},
+    dispose() {},
   };
 }
 
-const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+async function ingestAndFlush(
+  manager: ChunkManager,
+  chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>,
+): Promise<void> {
+  manager.receiveChunks(chunks);
+  manager.processIncoming();
+  // Wait for the worker promise to resolve
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("ChunkManager", () => {
-  it("submits the visible chunk queue in center-first order and pumps incremental updates", async () => {
-    const setCalls: ChunkQueueArgs[] = [];
-    let nextCalls = 0;
-    const client: ChunkClient = {
-      async setVisibleChunks(args) {
-        setCalls.push(args);
-        return renderData(0);
-      },
-      async generateNext() {
-        nextCalls++;
-        if (nextCalls > 3) return null;
-        return renderData(nextCalls);
-      },
-      dispose: () => {},
-    };
+  it("receives chunks and makes them available via getBlock", async () => {
+    const manager = new ChunkManager(createMockClient());
+    await ingestAndFlush(manager, [{ originX: 0, originZ: 0, blocks: new Uint8Array(0) }]);
 
-    const chunkManager = new ChunkManager(0, 0, 123, client);
-
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
-
-    expect(setCalls).toHaveLength(1);
-    expect(setCalls[0]?.chunkOrigins.slice(0, 5)).toEqual([
-      { originX: 0, originZ: 0 },
-      { originX: -64, originZ: -64 },
-      { originX: -64, originZ: 0 },
-      { originX: -64, originZ: 64 },
-      { originX: 0, originZ: -64 },
-    ]);
-    chunkManager.cull(identity, identity);
-    expect(Array.from(chunkManager.positions)).toEqual([3, 0, 0, 0]);
-    expect(Array.from(chunkManager.colors)).toEqual([3, 0, 0]);
-    expect(chunkManager.ambientOcclusion.length).toBe(24);
-    expect(chunkManager.count).toBe(1);
+    expect(manager.getBlock(0, 0, 0)).toBe(CubeType.Air);
   });
 
-  it("ignores stale queued results after moving to a new chunk", async () => {
-    let resolveFirst: ((value: ChunkBatchData | null) => void) | undefined;
-    let generationSeenBySet = -1;
-    const client: ChunkClient = {
-      async setVisibleChunks(args) {
-        generationSeenBySet = args.generationId;
-        return renderData(args.generationId);
-      },
-      generateNext(args) {
-        if (args.generationId === 1) {
-          return new Promise((resolve) => {
-            resolveFirst = resolve;
-          });
-        }
-        return Promise.resolve(null);
-      },
-      dispose: () => {},
-    };
+  it("modifyBlock updates local state", async () => {
+    const manager = new ChunkManager(createMockClient());
+    await ingestAndFlush(manager, [{ originX: 0, originZ: 0, blocks: new Uint8Array(0) }]);
 
-    const chunkManager = new ChunkManager(0, 0, 123, client);
-    await flushPromises();
+    const prev = manager.modifyBlock(0, 10, 0, CubeType.Stone);
+    expect(prev).toBe(CubeType.Air);
+    expect(manager.getBlock(0, 10, 0)).toBe(CubeType.Stone);
+  });
 
-    chunkManager.update(64, 0);
-    await flushPromises();
-
-    resolveFirst?.(renderData(999));
-    await flushPromises();
-
-    expect(generationSeenBySet).toBe(2);
-    chunkManager.cull(identity, identity);
-    expect(Array.from(chunkManager.positions)).toEqual([2, 0, 0, 0]);
-    expect(Array.from(chunkManager.colors)).toEqual([2, 0, 0]);
-    expect(chunkManager.ambientOcclusion.length).toBe(24);
-    expect(chunkManager.count).toBe(1);
+  it("returns null for unloaded chunks", () => {
+    const manager = new ChunkManager(createMockClient());
+    expect(manager.getBlock(0, 0, 0)).toBe(CubeType.Air);
+    expect(manager.modifyBlock(0, 0, 0, CubeType.Stone)).toBeNull();
   });
 });

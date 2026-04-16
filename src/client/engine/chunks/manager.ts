@@ -1,32 +1,44 @@
 import { Mat4, type Mat4Like } from "gl-matrix";
 import { CubeType } from "@/client/engine/render/cube-types";
-import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey, chunkOrigin, renderBlockData } from "@/game/chunk";
+import {
+  CHUNK_HEIGHT,
+  CHUNK_SIZE,
+  chunkKey,
+  chunkOrigin,
+  renderBlockData,
+  SECTION_SIZE,
+  sectionIndex,
+  sectionRegion,
+} from "@/game/chunk";
 import { Player } from "@/game/player";
-import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
+import type { ChunkBatchData, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
 const RENDER_DISTANCE = 4;
-const LOAD_DISTANCE = RENDER_DISTANCE;
-const EVICT_DISTANCE = LOAD_DISTANCE + 2;
+const EVICT_DISTANCE = RENDER_DISTANCE + 2;
+const INGEST_PER_FRAME = 3;
 
 export interface ChunkClient {
-  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
-  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  loadChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): Promise<ChunkBatchData>;
+  syncBlock(wx: number, wy: number, wz: number, blockType: number): void;
+  clearCache(): Promise<void>;
   dispose(): void;
 }
 
 /**
- * Main-thread coordinator that keeps the renderer fed with terrain data
- * from the chunk generation worker, with per-frame frustum culling.
+ * Main-thread coordinator that receives server-pushed chunk data, dispatches
+ * to the mesh-building worker, and feeds frustum-culled render arrays to the
+ * renderer each frame.
  */
 export class ChunkManager {
   private readonly client: ChunkClient;
-  private readonly seed: number;
   private lastOriginX = NaN;
   private lastOriginZ = NaN;
-  private activeGeneration = 0;
 
   private chunkDataMap = new Map<string, SingleChunkData>();
+  private ingestQueue: Array<{ originX: number; originZ: number; blocks: Uint8Array }> = [];
+  private workerBusy = false;
+  private resetGeneration = 0;
   private positionBuffer = new Float32Array(0);
   private colorBuffer = new Float32Array(0);
   private ambientOcclusionBuffer = new Uint8Array(0);
@@ -39,56 +51,56 @@ export class ChunkManager {
   count = 0;
 
   constructor(
-    spawnX: number,
-    spawnZ: number,
-    seed: number,
     client: ChunkClient,
     private readonly onChange?: () => void,
   ) {
     this.client = client;
-    this.seed = seed;
-    this.update(spawnX, spawnZ);
-  }
-
-  private buildArgs(generationId: number, originX: number, originZ: number): ChunkQueueArgs {
-    return {
-      generationId,
-      originX,
-      originZ,
-      renderDistance: RENDER_DISTANCE,
-      loadDistance: LOAD_DISTANCE,
-      evictDistance: EVICT_DISTANCE,
-      seed: this.seed,
-      chunkOrigins: buildGenerationOrder(originX, originZ, LOAD_DISTANCE),
-    };
   }
 
   get minimapRadiusBlocks(): number {
     return RENDER_DISTANCE * CHUNK_SIZE;
   }
 
-  /** Starts a new chunk generation when the player enters a different chunk. */
+  /** Queues server-pushed chunk data for incremental ingestion. */
+  receiveChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): void {
+    this.ingestQueue.push(...chunks);
+  }
+
+  /**
+   * Processes a limited batch of queued chunks per frame, sending them to the
+   * worker for mesh building. Call once per rAF frame to spread the load.
+   */
+  processIncoming(): void {
+    if (this.workerBusy || this.ingestQueue.length === 0) return;
+    const batch = this.ingestQueue.splice(0, INGEST_PER_FRAME);
+    this.workerBusy = true;
+    const gen = this.resetGeneration;
+    void this.client.loadChunks(batch).then((result) => {
+      this.workerBusy = false;
+      if (gen !== this.resetGeneration) return;
+      this.mergeBatch(result);
+    });
+  }
+
+  /** Evicts chunks that are too far from the player's current position. */
   update(wx: number, wz: number): void {
     const [originX, originZ] = chunkOrigin(wx, wz);
     if (originX === this.lastOriginX && originZ === this.lastOriginZ) return;
-
     this.lastOriginX = originX;
     this.lastOriginZ = originZ;
-    const generationId = ++this.activeGeneration;
-
-    const args = this.buildArgs(generationId, originX, originZ);
-    void this.load(args);
+    this.evictDistant(originX, originZ);
   }
 
   reset(): void {
     this.lastOriginX = NaN;
     this.lastOriginZ = NaN;
+    this.chunkDataMap.clear();
+    this.ingestQueue.length = 0;
+    this.resetGeneration++;
+    void this.client.clearCache();
+    this.dirty = true;
   }
 
-  /**
-   * Minimum camera Y where the player can stand at `(wx, wz)` given their
-   * current Y.
-   */
   collisionQuery(wx: number, wz: number, currentY: number): number {
     const r = Player.CYLINDER_RADIUS;
     const r2 = r * r;
@@ -146,6 +158,12 @@ export class ChunkManager {
     return minCameraY;
   }
 
+  /** Returns true if the chunk containing the given world coordinates is loaded. */
+  hasChunkAt(wx: number, wz: number): boolean {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    return this.chunkDataMap.has(chunkKey(originX, originZ));
+  }
+
   /** Returns the block type at the given world coordinates, or Air if the chunk is not loaded. */
   getBlock(wx: number, wy: number, wz: number): CubeType {
     if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
@@ -159,8 +177,9 @@ export class ChunkManager {
   }
 
   /**
-   * Modifies a block at the given world coordinates and rebuilds the chunk's render arrays.
-   * Returns the previous block type, or `null` if the chunk is not loaded.
+   * Modifies a block and immediately rebuilds only the affected 16x16x16
+   * section(s) on the main thread. With sections, the rebuild takes ~0.2ms
+   * per section — fast enough for synchronous visual updates with correct AO.
    */
   modifyBlock(wx: number, wy: number, wz: number, newType: CubeType): CubeType | null {
     if (wy < 0 || wy >= CHUNK_HEIGHT) return null;
@@ -177,10 +196,9 @@ export class ChunkManager {
     const previousType = (chunk.blocks[index] ?? CubeType.Air) as CubeType;
     chunk.blocks[index] = newType;
 
-    // Update surface height/type for the affected column
+    // Update surface data for collision/minimap
     const colIdx = lz * CHUNK_SIZE + lx;
     if (newType === CubeType.Air && wy === chunk.surfaceHeights[colIdx]) {
-      // Broke the surface block — scan down to find new surface
       let newSurfY = 0;
       for (let y = wy - 1; y >= 0; y--) {
         if (chunk.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] !== CubeType.Air) {
@@ -192,50 +210,125 @@ export class ChunkManager {
       chunk.surfaceTypes[colIdx] =
         chunk.blocks[newSurfY * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air;
     } else if (newType !== CubeType.Air && wy > (chunk.surfaceHeights[colIdx] ?? 0)) {
-      // Placed above current surface
       chunk.surfaceHeights[colIdx] = wy;
       chunk.surfaceTypes[colIdx] = newType;
     }
 
-    // Rebuild render arrays for this chunk
+    // Rebuild only the dirty section(s) and splice into chunk render arrays
     const worldGet = (bwx: number, bwy: number, bwz: number) =>
       this.getBlock(Math.floor(bwx), Math.floor(bwy), Math.floor(bwz));
-    this.rebuildChunkRender(chunk, originX, originZ, worldGet);
+    const dirtyIdx = sectionIndex(lx, wy, lz);
+    const dirtySet = new Set<number>([dirtyIdx]);
+    if (lx % SECTION_SIZE === 0 && lx > 0) dirtySet.add(sectionIndex(lx - 1, wy, lz));
+    if (lx % SECTION_SIZE === SECTION_SIZE - 1 && lx < CHUNK_SIZE - 1) dirtySet.add(sectionIndex(lx + 1, wy, lz));
+    if (lz % SECTION_SIZE === 0 && lz > 0) dirtySet.add(sectionIndex(lx, wy, lz - 1));
+    if (lz % SECTION_SIZE === SECTION_SIZE - 1 && lz < CHUNK_SIZE - 1) dirtySet.add(sectionIndex(lx, wy, lz + 1));
+    if (wy % SECTION_SIZE === 0 && wy > 0) dirtySet.add(sectionIndex(lx, wy - 1, lz));
+    if (wy % SECTION_SIZE === SECTION_SIZE - 1 && wy < CHUNK_HEIGHT - 1) dirtySet.add(sectionIndex(lx, wy + 1, lz));
 
-    // If block is at a chunk edge, also re-render the adjacent chunk
-    if (lx === 0) this.rebuildAdjacentChunk(originX - CHUNK_SIZE, originZ, worldGet);
-    else if (lx === CHUNK_SIZE - 1) this.rebuildAdjacentChunk(originX + CHUNK_SIZE, originZ, worldGet);
-    if (lz === 0) this.rebuildAdjacentChunk(originX, originZ - CHUNK_SIZE, worldGet);
-    else if (lz === CHUNK_SIZE - 1) this.rebuildAdjacentChunk(originX, originZ + CHUNK_SIZE, worldGet);
+    this.rebuildSections(chunk, originX, originZ, dirtySet, worldGet);
 
+    // If at chunk edge, rebuild the neighbor chunk's adjacent section too
+    if (lx === 0) this.rebuildNeighborSection(originX - CHUNK_SIZE, originZ, CHUNK_SIZE - 1, lz, wy, worldGet);
+    else if (lx === CHUNK_SIZE - 1) this.rebuildNeighborSection(originX + CHUNK_SIZE, originZ, 0, lz, wy, worldGet);
+    if (lz === 0) this.rebuildNeighborSection(originX, originZ - CHUNK_SIZE, lx, CHUNK_SIZE - 1, wy, worldGet);
+    else if (lz === CHUNK_SIZE - 1) this.rebuildNeighborSection(originX, originZ + CHUNK_SIZE, lx, 0, wy, worldGet);
+
+    this.client.syncBlock(wx, wy, wz, newType);
     this.dirty = true;
     this.onChange?.();
     return previousType;
   }
 
-  private rebuildChunkRender(
+  /**
+   * Re-renders the specified sections and rebuilds the chunk's concatenated
+   * render arrays from the section offset/count metadata.
+   */
+  private rebuildSections(
     chunk: SingleChunkData,
     originX: number,
     originZ: number,
+    dirtySet: Set<number>,
     worldGet: (wx: number, wy: number, wz: number) => CubeType,
   ): void {
-    const result = renderBlockData(chunk.blocks, chunk.surfaceHeights, originX, originZ, CHUNK_SIZE, worldGet);
-    chunk.cubePositions = result.cubePositions;
-    chunk.cubeColors = result.cubeColors;
-    chunk.cubeAmbientOcclusion = result.cubeAmbientOcclusion;
-    chunk.numCubes = result.numCubes;
+    // Re-render each dirty section
+    const newSectionData = new Map<number, { pos: Float32Array; col: Float32Array; ao: Uint8Array; count: number }>();
+    for (const idx of dirtySet) {
+      const region = sectionRegion(idx);
+      const result = renderBlockData(
+        chunk.blocks,
+        chunk.surfaceHeights,
+        originX,
+        originZ,
+        CHUNK_SIZE,
+        worldGet,
+        region,
+      );
+      newSectionData.set(idx, {
+        pos: result.cubePositions,
+        col: result.cubeColors,
+        ao: result.cubeAmbientOcclusion,
+        count: result.numCubes,
+      });
+    }
+
+    // Compute new total size
+    let totalCubes = 0;
+    const sectionCount = chunk.sectionOffsets.length;
+    for (let i = 0; i < sectionCount; i++) {
+      totalCubes += newSectionData.has(i) ? newSectionData.get(i)!.count : chunk.sectionCounts[i]!;
+    }
+
+    // Build new concatenated arrays
+    const newPos = new Float32Array(totalCubes * 4);
+    const newCol = new Float32Array(totalCubes * 3);
+    const newAO = new Uint8Array(totalCubes * 24);
+    const newOffsets = new Uint32Array(sectionCount);
+    const newCounts = new Uint16Array(sectionCount);
+    let offset = 0;
+
+    for (let i = 0; i < sectionCount; i++) {
+      newOffsets[i] = offset;
+      const updated = newSectionData.get(i);
+      if (updated) {
+        newPos.set(updated.pos, offset * 4);
+        newCol.set(updated.col, offset * 3);
+        newAO.set(updated.ao, offset * 24);
+        newCounts[i] = updated.count;
+        offset += updated.count;
+      } else {
+        const oldOff = chunk.sectionOffsets[i]!;
+        const oldCount = chunk.sectionCounts[i]!;
+        if (oldCount > 0) {
+          newPos.set(chunk.cubePositions.subarray(oldOff * 4, (oldOff + oldCount) * 4), offset * 4);
+          newCol.set(chunk.cubeColors.subarray(oldOff * 3, (oldOff + oldCount) * 3), offset * 3);
+          newAO.set(chunk.cubeAmbientOcclusion.subarray(oldOff * 24, (oldOff + oldCount) * 24), offset * 24);
+        }
+        newCounts[i] = oldCount;
+        offset += oldCount;
+      }
+    }
+
+    chunk.cubePositions = newPos;
+    chunk.cubeColors = newCol;
+    chunk.cubeAmbientOcclusion = newAO;
+    chunk.numCubes = totalCubes;
+    chunk.sectionOffsets = newOffsets;
+    chunk.sectionCounts = newCounts;
   }
 
-  private rebuildAdjacentChunk(
+  private rebuildNeighborSection(
     adjOriginX: number,
     adjOriginZ: number,
+    nlx: number,
+    nlz: number,
+    wy: number,
     worldGet: (wx: number, wy: number, wz: number) => CubeType,
   ): void {
     const adjKey = chunkKey(adjOriginX, adjOriginZ);
     const adjChunk = this.chunkDataMap.get(adjKey);
-    if (adjChunk) {
-      this.rebuildChunkRender(adjChunk, adjOriginX, adjOriginZ, worldGet);
-    }
+    if (!adjChunk) return;
+    this.rebuildSections(adjChunk, adjOriginX, adjOriginZ, new Set([sectionIndex(nlx, wy, nlz)]), worldGet);
   }
 
   /** Frustum-cull chunks and concatenate visible ones into flat arrays. */
@@ -247,6 +340,11 @@ export class ChunkManager {
     const visible: SingleChunkData[] = [];
 
     for (const chunk of this.chunkDataMap.values()) {
+      // Distance cull: skip chunks beyond render distance
+      const dx = Math.abs(chunk.originX - this.lastOriginX) / CHUNK_SIZE;
+      const dz = Math.abs(chunk.originZ - this.lastOriginZ) / CHUNK_SIZE;
+      if (Math.max(dx, dz) > RENDER_DISTANCE) continue;
+
       const aabb = chunkAABB(chunk.originX, chunk.originZ);
       if (aabbInFrustum(aabb, planes)) {
         visible.push(chunk);
@@ -292,17 +390,6 @@ export class ChunkManager {
     this.ambientOcclusion = this.ambientOcclusionBuffer.subarray(0, totalCubes * 24);
     this.count = totalCubes;
   }
-  private async load(args: ChunkQueueArgs): Promise<void> {
-    const initialBatch = await this.client.setVisibleChunks(args);
-    if (args.generationId !== this.activeGeneration) return;
-    this.chunkDataMap.clear();
-    this.mergeBatch(initialBatch);
-    while (args.generationId === this.activeGeneration) {
-      const next = await this.client.generateNext(args);
-      if (!next || args.generationId !== this.activeGeneration) return;
-      this.mergeBatch(next);
-    }
-  }
 
   private mergeBatch(batch: ChunkBatchData): void {
     for (const chunk of batch.chunks) {
@@ -312,14 +399,24 @@ export class ChunkManager {
     this.onChange?.();
   }
 
+  private evictDistant(playerOriginX: number, playerOriginZ: number): void {
+    const toDelete: string[] = [];
+    for (const key of this.chunkDataMap.keys()) {
+      const [oxStr, ozStr] = key.split(",");
+      const ox = Number(oxStr);
+      const oz = Number(ozStr);
+      const dx = Math.abs(ox - playerOriginX) / CHUNK_SIZE;
+      const dz = Math.abs(oz - playerOriginZ) / CHUNK_SIZE;
+      if (Math.max(dx, dz) > EVICT_DISTANCE) toDelete.push(key);
+    }
+    for (const key of toDelete) this.chunkDataMap.delete(key);
+    if (toDelete.length > 0) this.dirty = true;
+  }
+
   dispose(): void {
     this.client.dispose();
   }
 
-  /**
-   * Returns an encoded minimap sample for the highest block at (x, z).
-   * High byte = `CubeType`, low byte = surface Y.
-   */
   sampleSurface(wx: number, wz: number): number | undefined {
     const [originX, originZ] = chunkOrigin(wx, wz);
     const chunk = this.chunkDataMap.get(chunkKey(originX, originZ));
@@ -335,22 +432,4 @@ export class ChunkManager {
     if (blockType === undefined || height === undefined) return undefined;
     return (blockType << 8) | height;
   }
-}
-
-function buildGenerationOrder(originX: number, originZ: number, loadDistance: number): ChunkOrigin[] {
-  const origins: ChunkOrigin[] = [{ originX, originZ }];
-
-  for (let radius = 1; radius <= loadDistance; radius++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      for (let dz = -radius; dz <= radius; dz++) {
-        if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
-        origins.push({
-          originX: originX + dx * CHUNK_SIZE,
-          originZ: originZ + dz * CHUNK_SIZE,
-        });
-      }
-    }
-  }
-
-  return origins;
 }
