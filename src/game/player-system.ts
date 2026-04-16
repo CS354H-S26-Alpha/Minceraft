@@ -24,6 +24,7 @@ import {
   MAX_COORDINATE,
   normalizeInventory,
   PLAYER_MAX_FALL_SPEED,
+  PLAYER_MAX_HEALTH,
   PLAYER_SPEED,
   Player,
   type PlayerAttackPacket,
@@ -322,20 +323,13 @@ export class PlayerSystem implements GameSystem {
     const target = this.players.get(packet.targetPlayerId);
     if (!target || target.state.health <= 0 || !onlinePlayerIds.has(packet.targetPlayerId)) return false;
     if (!canTargetPlayer(packet, target.state)) return false;
-    if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
-
-    this.dirty.add(target.id);
-    this.pendingSelfStateSync.add(target.id);
-    return true;
+    return this.applyDamageToPlayer(target.id, getHeldItemDamage(attacker.state), onlinePlayerIds);
   }
 
   damagePlayer(playerId: string, amount: number, onlinePlayerIds: ReadonlySet<string>): boolean {
     const player = this.players.get(playerId);
     if (!player || player.state.health <= 0 || !onlinePlayerIds.has(playerId)) return false;
-    if (!player.takeDamage(amount)) return false;
-    this.dirty.add(playerId);
-    this.pendingSelfStateSync.add(playerId);
-    return true;
+    return this.applyDamageToPlayer(playerId, amount, onlinePlayerIds);
   }
 
   /** Returns `true` if any player has unsaved changes. */
@@ -491,6 +485,34 @@ export class PlayerSystem implements GameSystem {
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
+  }
+
+  private applyDamageToPlayer(playerId: string, amount: number, onlinePlayerIds: ReadonlySet<string>): boolean {
+    const player = this.players.get(playerId);
+    if (!player || player.state.health <= 0 || !onlinePlayerIds.has(playerId)) return false;
+    if (!player.takeDamage(amount)) return false;
+
+    this.dirty.add(playerId);
+    if (player.state.health <= 0) {
+      this.respawnPlayer(playerId, player);
+    } else {
+      this.pendingSelfStateSync.add(playerId);
+    }
+    return true;
+  }
+
+  private respawnPlayer(playerId: string, player: Player) {
+    player.state.x = SPAWN_POSITION.x;
+    player.state.y = SPAWN_POSITION.y;
+    player.state.z = SPAWN_POSITION.z;
+    player.state.yaw = SPAWN_POSITION.yaw;
+    player.state.pitch = SPAWN_POSITION.pitch;
+    player.state.vy = 0;
+    player.state.health = PLAYER_MAX_HEALTH;
+    this.pendingPackets.delete(playerId);
+    this.lastAcceptedAt.set(playerId, Date.now());
+    this.pendingSelfStateSync.delete(playerId);
+    this.pendingReconcile.add(playerId);
   }
 }
 

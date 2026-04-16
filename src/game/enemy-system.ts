@@ -14,16 +14,21 @@ const MIN_SEEK_DISTANCE = 1.5;
 const ENEMY_ATTACK_RANGE = 1.75;
 const ENEMY_ATTACK_DAMAGE = 1;
 const ENEMY_ATTACK_COOLDOWN_MS = 750;
+const ENEMY_RESPAWN_DELAY_S = 5;
 const MAX_STEP_UP = 1;
 const WANDER_MIN_S = 1.0;
 const WANDER_MAX_S = 2.5;
-const ENEMY_HEIGHT_OFFSET = 0.5;
 
 const DEFAULT_ENEMY_LAYOUT = [
   { id: "enemy-1", x: 6, y: 70, z: 14, yaw: Math.PI, health: 6 },
   { id: "enemy-2", x: -8, y: 70, z: 18, yaw: Math.PI / 2, health: 6 },
   { id: "enemy-3", x: 4, y: 70, z: 28, yaw: -Math.PI / 2, health: 6 },
 ] as const satisfies readonly EnemyPublicState[];
+
+const ENEMY_LAYOUT_BY_ID = Object.fromEntries(DEFAULT_ENEMY_LAYOUT.map((enemy) => [enemy.id, enemy])) as Record<
+  string,
+  (typeof DEFAULT_ENEMY_LAYOUT)[number]
+>;
 
 /**
  * Server-authoritative enemy state.
@@ -35,6 +40,7 @@ export class EnemySystem implements GameSystem {
   readonly key = "enemies";
 
   private enemies = new Map<string, Enemy>();
+  private respawnTimers = new Map<string, number>();
 
   constructor(
     private readonly getOnlinePlayers: () => readonly PlayerPublicState[],
@@ -51,6 +57,7 @@ export class EnemySystem implements GameSystem {
     for (const enemy of this.enemies.values()) {
       if (this.updateEnemy(enemy, onlinePlayers)) changed = true;
     }
+    if (this.tickRespawns()) changed = true;
     return changed;
   }
 
@@ -100,7 +107,12 @@ export class EnemySystem implements GameSystem {
     const enemy = this.enemies.get(targetEnemyId);
     if (!enemy || enemy.state.health <= 0) return false;
     if (!canTargetEnemy(packet, enemy.state)) return false;
-    return enemy.takeDamage(getHeldItemDamage(attacker.state));
+    if (!enemy.takeDamage(getHeldItemDamage(attacker.state))) return false;
+    if (enemy.state.health <= 0) {
+      this.enemies.delete(targetEnemyId);
+      this.respawnTimers.set(targetEnemyId, ENEMY_RESPAWN_DELAY_S);
+    }
+    return true;
   }
 
   private updateEnemy(enemy: Enemy, onlinePlayers: readonly PlayerPublicState[]): boolean {
@@ -163,11 +175,37 @@ export class EnemySystem implements GameSystem {
       attacked || enemy.state.x !== prevX || enemy.state.y !== prevY || enemy.state.z !== prevZ || enemy.state.yaw !== prevYaw
     );
   }
+
+  private tickRespawns(): boolean {
+    let changed = false;
+    for (const [enemyId, remainingS] of [...this.respawnTimers]) {
+      const nextRemainingS = remainingS - TICK_SECONDS;
+      if (nextRemainingS > 0) {
+        this.respawnTimers.set(enemyId, nextRemainingS);
+        continue;
+      }
+
+      this.respawnTimers.delete(enemyId);
+      const layout = ENEMY_LAYOUT_BY_ID[enemyId];
+      if (!layout || this.enemies.has(enemyId)) continue;
+      this.enemies.set(
+        enemyId,
+        new Enemy(
+          createEnemyState({
+            ...layout,
+            y: sampleSurfaceY(layout.x, layout.z),
+          }),
+        ),
+      );
+      changed = true;
+    }
+    return changed;
+  }
 }
 
 function sampleSurfaceY(x: number, z: number): number {
   const { height } = sampleColumn(WORLD_SEED, Math.round(x), Math.round(z));
-  return height + ENEMY_HEIGHT_OFFSET;
+  return height;
 }
 
 function nearestPlayer(x: number, z: number, players: readonly PlayerPublicState[]): PlayerPublicState | undefined {

@@ -1,6 +1,7 @@
 precision mediump float;
 
 varying vec2 uv;
+varying float flash;
 
 void main() {
   vec3 core = vec3(1.0, 0.08, 0.08);
@@ -17,6 +18,7 @@ void main() {
   vec3 color = mix(core, stripe, crosshair * 0.95);
   color = mix(color, crown, crownMask * 0.8);
   color = mix(color, edge, clamp(border, 0.0, 1.0));
+  color = mix(color, vec3(1.0, 1.0, 1.0), clamp(flash, 0.0, 1.0) * 0.9);
 
   gl_FragColor = vec4(min(color * 1.15, 1.0), 1.0);
 }

@@ -1,9 +1,10 @@
 import { Entity } from "./entity";
 
 export const ENEMY_MAX_HEALTH = 6;
-export const ENEMY_HIT_RADIUS = 0.5;
-export const ENEMY_HEIGHT = 3.0;
-export const ENEMY_HALF_HEIGHT = ENEMY_HEIGHT / 2;
+export const ENEMY_WIDTH = 1.4;
+export const ENEMY_DEPTH = 1.4;
+export const ENEMY_HEIGHT = 3.2;
+export const ENEMY_HIT_RADIUS = Math.max(ENEMY_WIDTH, ENEMY_DEPTH) * 0.5;
 
 export interface EnemyPublicState {
   id: string;

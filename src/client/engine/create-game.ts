@@ -1,6 +1,6 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
-import { Vec3 } from "gl-matrix";
+import { Mat4, Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
@@ -12,6 +12,7 @@ import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import {
+  createEnemySnapshotTracker,
   createEntityPipeline,
   enemyPassDef,
   enemyPipelineConfig,
@@ -85,6 +86,11 @@ export interface MinimapApi {
 
 export interface GameState extends Readonly<MutableGameState> {
   readonly minimap: MinimapApi;
+  readonly projectWorldToScreen: (
+    x: number,
+    y: number,
+    z: number,
+  ) => { x: number; y: number; depth: number } | undefined;
 }
 
 /** Sliding window for FPS / TPS / snap-rate averaging. */
@@ -143,6 +149,7 @@ export function createGame(args: CreateGameArgs): GameState {
   const lighting = new SceneLighting();
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const remoteEnemies = createEntityPipeline(enemyPipelineConfig);
+  const enemySnapshots = createEnemySnapshotTracker();
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const packetMeter = createRateMeter(FPS_WINDOW_MS);
@@ -287,7 +294,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
-      remoteEnemies.onSnapshot(unwrap(room().remoteEnemies), now);
+      remoteEnemies.onSnapshot(enemySnapshots.decorate(unwrap(room().remoteEnemies), now), now);
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
@@ -361,5 +368,78 @@ export function createGame(args: CreateGameArgs): GameState {
       radiusBlocks: chunks.minimapRadiusBlocks,
       sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
     },
+    projectWorldToScreen: (x, y, z) => {
+      const gl = args.glCanvas();
+      const camera = ctx?.camera;
+      if (!gl || !camera) return undefined;
+      return projectWorldToScreen(x, y, z, camera.viewMatrix(), camera.projMatrix(), gl.clientWidth, gl.clientHeight);
+    },
+  };
+}
+
+function projectWorldToScreen(
+  x: number,
+  y: number,
+  z: number,
+  viewMatrix: Mat4,
+  projMatrix: Mat4,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const v0 = viewMatrix[0] ?? 0;
+  const v1 = viewMatrix[1] ?? 0;
+  const v2 = viewMatrix[2] ?? 0;
+  const v3 = viewMatrix[3] ?? 0;
+  const v4 = viewMatrix[4] ?? 0;
+  const v5 = viewMatrix[5] ?? 0;
+  const v6 = viewMatrix[6] ?? 0;
+  const v7 = viewMatrix[7] ?? 0;
+  const v8 = viewMatrix[8] ?? 0;
+  const v9 = viewMatrix[9] ?? 0;
+  const v10 = viewMatrix[10] ?? 0;
+  const v11 = viewMatrix[11] ?? 0;
+  const v12 = viewMatrix[12] ?? 0;
+  const v13 = viewMatrix[13] ?? 0;
+  const v14 = viewMatrix[14] ?? 0;
+  const v15 = viewMatrix[15] ?? 0;
+
+  const p0 = projMatrix[0] ?? 0;
+  const p1 = projMatrix[1] ?? 0;
+  const p2 = projMatrix[2] ?? 0;
+  const p3 = projMatrix[3] ?? 0;
+  const p4 = projMatrix[4] ?? 0;
+  const p5 = projMatrix[5] ?? 0;
+  const p6 = projMatrix[6] ?? 0;
+  const p7 = projMatrix[7] ?? 0;
+  const p8 = projMatrix[8] ?? 0;
+  const p9 = projMatrix[9] ?? 0;
+  const p10 = projMatrix[10] ?? 0;
+  const p11 = projMatrix[11] ?? 0;
+  const p12 = projMatrix[12] ?? 0;
+  const p13 = projMatrix[13] ?? 0;
+  const p14 = projMatrix[14] ?? 0;
+  const p15 = projMatrix[15] ?? 0;
+
+  const vx = v0 * x + v4 * y + v8 * z + v12;
+  const vy = v1 * x + v5 * y + v9 * z + v13;
+  const vz = v2 * x + v6 * y + v10 * z + v14;
+  const vw = v3 * x + v7 * y + v11 * z + v15;
+
+  const cx = p0 * vx + p4 * vy + p8 * vz + p12 * vw;
+  const cy = p1 * vx + p5 * vy + p9 * vz + p13 * vw;
+  const cz = p2 * vx + p6 * vy + p10 * vz + p14 * vw;
+  const cw = p3 * vx + p7 * vy + p11 * vz + p15 * vw;
+
+  if (cw <= 0) return undefined;
+
+  const ndcX = cx / cw;
+  const ndcY = cy / cw;
+  const ndcZ = cz / cw;
+  if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2 || ndcZ < -1 || ndcZ > 1) return undefined;
+
+  return {
+    x: ((ndcX + 1) * 0.5) * viewportWidth,
+    y: ((1 - ndcY) * 0.5) * viewportHeight,
+    depth: ndcZ,
   };
 }

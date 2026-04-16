@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
+import { EnemyHealthBars } from "../components/EnemyHealthBars";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { Minimap } from "../components/Minimap";
 import { PlayerHud } from "../components/PlayerHud";
@@ -63,6 +64,12 @@ export default function GameView() {
         minimap={game.minimap}
         player={room.player}
         players={() => room.remotePlayers}
+      />
+      <EnemyHealthBars
+        enemies={() => room.remoteEnemies}
+        frame={game.diagnostics.client.frameCount}
+        hidden={inventoryOpen()}
+        projectWorldToScreen={game.projectWorldToScreen}
       />
       <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
       <InventoryPanel

@@ -385,7 +385,7 @@ describe("GameRoom Durable Object", () => {
     const enemy = latestEnemies?.["enemy-1"];
     expect(enemy).toBeDefined();
     if (!enemy) return;
-    const terrainHeight = sampleColumn(123, Math.round(enemy.x), Math.round(enemy.z)).height + 0.5;
+    const terrainHeight = sampleColumn(123, Math.round(enemy.x), Math.round(enemy.z)).height;
     expect(enemy.y).toBeCloseTo(terrainHeight, 5);
   });
 
@@ -536,6 +536,80 @@ describe("GameRoom Durable Object", () => {
         return selfHealth === PLAYER_MAX_HEALTH - 1 || reconcileHealth === PLAYER_MAX_HEALTH - 1;
       }),
     ).toBe(true);
+  });
+
+  it("respawns players at spawn with full health after lethal damage", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      room.join("bob", "Bob", () => {});
+      await room.runTick();
+
+      await wait(50);
+      room.sendPosition("bob", { sequence: 1, x: 0, y: 70, z: 18, yaw: Math.PI, pitch: 0 });
+      await room.runTick();
+
+      room.selectHotbarSlot("bob", 2);
+      await room.runTick();
+
+      for (let i = 0; i < 10; i++) {
+        room.attack("bob", {
+          targetPlayerId: "alice",
+          x: 0,
+          y: 70,
+          z: 18,
+          yaw: Math.PI,
+          pitch: 0,
+        });
+        await room.runTick();
+      }
+    });
+
+    const respawnTick = aliceTicks.findLast((tick) => {
+      const reconcile = findPacket(tick, "reconcile")?.state;
+      return reconcile?.health === PLAYER_MAX_HEALTH && reconcile.x === 0 && reconcile.y === 70 && reconcile.z === 20;
+    });
+
+    expect(respawnTick).toBeDefined();
+  });
+
+  it("despawns defeated enemies and respawns them after a delay", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const enemySurfaceY = sampleColumn(123, 6, 14).height;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      room.selectHotbarSlot("alice", 2);
+      room.teleportTo("alice", 6, enemySurfaceY, 16.5);
+      await room.runTick();
+
+      for (let i = 0; i < 3; i++) {
+        room.attack("alice", {
+          targetEnemyId: "enemy-1",
+          x: 6,
+          y: enemySurfaceY,
+          z: 16.5,
+          yaw: 0,
+          pitch: 0,
+        });
+        await room.runTick();
+      }
+
+      for (let i = 0; i < 101; i++) {
+        await room.runTick();
+      }
+    });
+
+    const despawnTick = aliceTicks.find((tick) => findPacket(tick, "enemies")?.enemies["enemy-1"] === undefined);
+    const respawnTick = aliceTicks.findLast((tick) => findPacket(tick, "enemies")?.enemies["enemy-1"]?.health === 6);
+
+    expect(despawnTick).toBeDefined();
+    expect(respawnTick).toBeDefined();
   });
 
   it("rejects attack snapshots that are implausibly far from the server player state", async () => {

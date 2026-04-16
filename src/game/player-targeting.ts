@@ -1,5 +1,5 @@
 import { getLookDirection } from "../utils/look-direction";
-import { ENEMY_HALF_HEIGHT, ENEMY_HIT_RADIUS, type EnemyPublicState } from "./enemy";
+import { ENEMY_HEIGHT, ENEMY_HIT_RADIUS, type EnemyPublicState } from "./enemy";
 import { getPlayerEyePosition, Player, type PlayerPublicState, type PlayerState } from "./player";
 
 const RAY_EPSILON = 1e-6;
@@ -125,8 +125,8 @@ function intersectRayWithEnemyBounds(
     {
       minX: target.x - ENEMY_HIT_RADIUS,
       maxX: target.x + ENEMY_HIT_RADIUS,
-      minY: target.y - ENEMY_HALF_HEIGHT,
-      maxY: target.y + ENEMY_HALF_HEIGHT,
+      minY: target.y,
+      maxY: target.y + ENEMY_HEIGHT,
       minZ: target.z - ENEMY_HIT_RADIUS,
       maxZ: target.z + ENEMY_HIT_RADIUS,
     },
