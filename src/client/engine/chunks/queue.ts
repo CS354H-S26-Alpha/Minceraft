@@ -4,6 +4,7 @@ import {
   CHUNK_SIZE,
   chunkKey,
   chunkOrigin,
+  computeHeightData,
   type RenderBlockResult,
   renderBlockData,
   rleDecodeBlocks,
@@ -11,6 +12,7 @@ import {
   SECTIONS_PER_CHUNK,
   sectionIndex,
   sectionRegion,
+  updateColumnSurface,
 } from "@/game/chunk";
 import type { ChunkBatchData, SingleChunkData } from "./client";
 
@@ -112,25 +114,6 @@ const CARDINAL_OFFSETS: [number, number][] = [
   [0, CHUNK_SIZE],
   [0, -CHUNK_SIZE],
 ];
-
-function deriveHeightData(blocks: Uint8Array, size: number): { heightMap: Uint8Array; surfaceTypes: Uint8Array } {
-  const heightMap = new Uint8Array(size * size);
-  const surfaceTypes = new Uint8Array(size * size);
-  for (let z = 0; z < size; z++) {
-    for (let x = 0; x < size; x++) {
-      const colIdx = z * size + x;
-      for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-        const bt = blocks[y * size * size + z * size + x]!;
-        if (bt !== CubeType.Air) {
-          heightMap[colIdx] = y;
-          surfaceTypes[colIdx] = bt;
-          break;
-        }
-      }
-    }
-  }
-  return { heightMap, surfaceTypes };
-}
 
 interface ConcatenatedResult extends RenderBlockResult {
   sectionOffsets: Uint32Array;
@@ -258,7 +241,7 @@ export class ChunkMeshBuilder {
     for (const { originX, originZ, blocks: encoded } of incoming) {
       const key = chunkKey(originX, originZ);
       const blocks = rleDecodeBlocks(encoded, CHUNK_SIZE);
-      const { heightMap, surfaceTypes } = deriveHeightData(blocks, CHUNK_SIZE);
+      const { heightMap, surfaceTypes } = computeHeightData(blocks, CHUNK_SIZE);
       this.cache.set(key, { blocks, heightMap, surfaceTypes, sections: new Array(SECTIONS_PER_CHUNK).fill(null) });
     }
 
@@ -327,22 +310,7 @@ export class ChunkMeshBuilder {
     const lz = wz - (oz - CHUNK_SIZE / 2);
     cached.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = blockType;
 
-    // Update surface data
-    const colIdx = lz * CHUNK_SIZE + lx;
-    if (blockType === CubeType.Air && wy === cached.heightMap[colIdx]) {
-      let newY = 0;
-      for (let y = wy - 1; y >= 0; y--) {
-        if (cached.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] !== CubeType.Air) {
-          newY = y;
-          break;
-        }
-      }
-      cached.heightMap[colIdx] = newY;
-      cached.surfaceTypes[colIdx] = cached.blocks[newY * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx]!;
-    } else if (blockType !== CubeType.Air && wy > (cached.heightMap[colIdx] ?? 0)) {
-      cached.heightMap[colIdx] = wy;
-      cached.surfaceTypes[colIdx] = blockType;
-    }
+    updateColumnSurface(cached.blocks, cached.heightMap, cached.surfaceTypes, lx, lz, wy, blockType, CHUNK_SIZE);
 
     const worldGetBlock = this.buildWorldGetBlock();
 
@@ -388,21 +356,7 @@ export class ChunkMeshBuilder {
     const lx = wx - (ox - CHUNK_SIZE / 2);
     const lz = wz - (oz - CHUNK_SIZE / 2);
     cached.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = blockType;
-    const colIdx = lz * CHUNK_SIZE + lx;
-    if (blockType === CubeType.Air && wy === cached.heightMap[colIdx]) {
-      let newY = 0;
-      for (let y = wy - 1; y >= 0; y--) {
-        if (cached.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] !== CubeType.Air) {
-          newY = y;
-          break;
-        }
-      }
-      cached.heightMap[colIdx] = newY;
-      cached.surfaceTypes[colIdx] = cached.blocks[newY * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx]!;
-    } else if (blockType !== CubeType.Air && wy > (cached.heightMap[colIdx] ?? 0)) {
-      cached.heightMap[colIdx] = wy;
-      cached.surfaceTypes[colIdx] = blockType;
-    }
+    updateColumnSurface(cached.blocks, cached.heightMap, cached.surfaceTypes, lx, lz, wy, blockType, CHUNK_SIZE);
   }
 
   clearCache(): void {

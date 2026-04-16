@@ -23,7 +23,6 @@ export class BlockSystem implements GameSystem {
 
   private readonly getChunkStore: () => DurableObjectStub<ChunkStore>;
   private playerSystem: PlayerSystem;
-  private readonly roomId: string;
   private pendingActions = new Map<string, BlockActionPacket[]>();
   private pendingAcks = new Map<string, Array<{ seq: number; accepted: boolean }>>();
   private pendingChanges: Array<{ x: number; y: number; z: number; blockType: number }> = [];
@@ -34,7 +33,6 @@ export class BlockSystem implements GameSystem {
   private readonly initialLoadRadius: number;
   private readonly loadRadius: number;
   private inFlightChunkFetch = false;
-  private chunkFetchSeq = 0;
   private chunkFetchStartedAtMs = 0;
   private lastSlowFetchLogAtMs = 0;
 
@@ -42,13 +40,11 @@ export class BlockSystem implements GameSystem {
     getChunkStore: () => DurableObjectStub<ChunkStore>,
     playerSystem: PlayerSystem,
     opts?: BlockSystemOptions,
-    roomId = "unknown",
   ) {
     this.getChunkStore = getChunkStore;
     this.playerSystem = playerSystem;
     this.initialLoadRadius = opts?.initialLoadRadius ?? 5;
     this.loadRadius = opts?.loadRadius ?? 4;
-    this.roomId = roomId;
   }
 
   hydrate(_db: DrizzleSqliteDODatabase<typeof schema>): void {}
@@ -73,7 +69,6 @@ export class BlockSystem implements GameSystem {
     const [ox, oz] = chunkOrigin(pos.x, pos.z);
     this.playerChunkOrigins.set(playerId, chunkKey(ox, oz));
     this.queueChunkLoad(playerId, ox, oz, this.initialLoadRadius);
-    this.log("player_join_chunk_load", { playerId, originX: ox, originZ: oz, radius: this.initialLoadRadius });
   }
 
   /** Called from GameRoom.sendPosition() — checks for chunk boundary crossing. */
@@ -86,13 +81,6 @@ export class BlockSystem implements GameSystem {
     this.pendingChunkData.delete(playerId);
     this.playerChunkOrigins.set(playerId, currentKey);
     this.queueChunkLoad(playerId, ox, oz, this.loadRadius);
-    this.log("player_crossed_chunk_boundary", {
-      playerId,
-      originX: ox,
-      originZ: oz,
-      previousOriginKey: lastKey ?? null,
-      generation: this.playerGeneration.get(playerId) ?? 0,
-    });
   }
 
   onPlayerLeave(playerId: string): void {
@@ -108,14 +96,9 @@ export class BlockSystem implements GameSystem {
     if (this.inFlightChunkFetch) {
       const now = Date.now();
       const elapsedMs = now - this.chunkFetchStartedAtMs;
-      if (elapsedMs >= 2000 && now - this.lastSlowFetchLogAtMs >= 2000) {
+      if (elapsedMs >= 5000 && now - this.lastSlowFetchLogAtMs >= 5000) {
         this.lastSlowFetchLogAtMs = now;
-        this.log("chunk_fetch_still_in_flight", {
-          fetchSeq: this.chunkFetchSeq,
-          elapsedMs,
-          pendingRequestPlayers: this.pendingChunkRequests.size,
-          pendingChunkPlayers: this.pendingChunkData.size,
-        });
+        console.warn(`[BlockSystem] chunk fetch still in flight after ${elapsedMs}ms`);
       }
     }
 
@@ -135,11 +118,6 @@ export class BlockSystem implements GameSystem {
 
     const chunkData = this.pendingChunkData.get(playerId);
     if (chunkData?.length) {
-      this.log("deliver_chunk_data", {
-        playerId,
-        chunkCount: chunkData.length,
-        fetchSeq: this.chunkFetchSeq,
-      });
       packets.push({ type: "chunkData", chunks: chunkData });
     }
 
@@ -156,13 +134,6 @@ export class BlockSystem implements GameSystem {
   }
 
   clearPending(): void {
-    if (this.pendingChunkData.size > 0) {
-      const totalChunks = [...this.pendingChunkData.values()].reduce((sum, chunks) => sum + chunks.length, 0);
-      this.log("clear_pending_chunk_data", {
-        playerCount: this.pendingChunkData.size,
-        totalChunks,
-      });
-    }
     this.pendingAcks.clear();
     this.pendingChanges = [];
     this.pendingChunkData.clear();
@@ -189,24 +160,14 @@ export class BlockSystem implements GameSystem {
     });
     const existing = this.pendingChunkRequests.get(playerId);
     if (existing) {
-      // Replace with new request (player moved again before previous finished)
       existing.origins = origins;
-      this.log("replace_pending_chunk_request", {
-        playerId,
-        originX: ox,
-        originZ: oz,
-        radius,
-        originCount: origins.length,
-      });
     } else {
       this.pendingChunkRequests.set(playerId, { origins });
-      this.log("queue_chunk_request", { playerId, originX: ox, originZ: oz, radius, originCount: origins.length });
     }
   }
 
   private startChunkFetch(): void {
     this.inFlightChunkFetch = true;
-    this.chunkFetchSeq++;
     this.chunkFetchStartedAtMs = Date.now();
 
     const allOrigins = new Map<string, { originX: number; originZ: number }>();
@@ -225,7 +186,6 @@ export class BlockSystem implements GameSystem {
 
     if (allOrigins.size === 0) {
       this.inFlightChunkFetch = false;
-      this.log("chunk_fetch_skipped_empty_batch", { fetchSeq: this.chunkFetchSeq });
       return;
     }
 
@@ -233,14 +193,6 @@ export class BlockSystem implements GameSystem {
     for (const playerId of perPlayer.keys()) {
       capturedGens.set(playerId, this.playerGeneration.get(playerId) ?? 0);
     }
-
-    this.log("chunk_fetch_started", {
-      fetchSeq: this.chunkFetchSeq,
-      uniqueChunkCount: allOrigins.size,
-      playerCount: perPlayer.size,
-      pendingRequestPlayers: this.pendingChunkRequests.size,
-      sampleChunkKeys: [...allOrigins.keys()].slice(0, 5),
-    });
 
     void this.getChunkStore()
       .getChunks([...allOrigins.values()])
@@ -251,16 +203,7 @@ export class BlockSystem implements GameSystem {
         }
 
         for (const [playerId, origins] of perPlayer) {
-          if ((this.playerGeneration.get(playerId) ?? -1) !== capturedGens.get(playerId)) {
-            this.log("drop_stale_chunk_fetch_result", {
-              fetchSeq: this.chunkFetchSeq,
-              playerId,
-              requestedChunkCount: origins.length,
-              capturedGeneration: capturedGens.get(playerId) ?? -1,
-              currentGeneration: this.playerGeneration.get(playerId) ?? -1,
-            });
-            continue;
-          }
+          if ((this.playerGeneration.get(playerId) ?? -1) !== capturedGens.get(playerId)) continue;
 
           const chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }> = [];
           for (const o of origins) {
@@ -274,41 +217,16 @@ export class BlockSystem implements GameSystem {
             } else {
               this.pendingChunkData.set(playerId, chunks);
             }
-            this.log("append_chunk_fetch_result", {
-              fetchSeq: this.chunkFetchSeq,
-              playerId,
-              chunkCount: chunks.length,
-              pendingChunksForPlayer: this.pendingChunkData.get(playerId)?.length ?? 0,
-            });
           }
         }
-
-        this.log("chunk_fetch_resolved", {
-          fetchSeq: this.chunkFetchSeq,
-          durationMs: Date.now() - this.chunkFetchStartedAtMs,
-          returnedChunkCount: chunkResults.length,
-          pendingChunkPlayers: this.pendingChunkData.size,
-        });
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
+        console.error(`[BlockSystem] chunk fetch failed: ${message}`);
         this.requeueFailedChunkBatch(perPlayer, capturedGens);
-        this.log("chunk_fetch_failed", {
-          fetchSeq: this.chunkFetchSeq,
-          durationMs: Date.now() - this.chunkFetchStartedAtMs,
-          error: message,
-          pendingRequestPlayers: this.pendingChunkRequests.size,
-          note: "failed batch was re-queued for players whose chunk generation is unchanged",
-        });
       })
       .finally(() => {
         this.inFlightChunkFetch = false;
-        this.log("chunk_fetch_finished", {
-          fetchSeq: this.chunkFetchSeq,
-          durationMs: Date.now() - this.chunkFetchStartedAtMs,
-          pendingRequestPlayers: this.pendingChunkRequests.size,
-          pendingChunkPlayers: this.pendingChunkData.size,
-        });
       });
   }
 
@@ -318,16 +236,7 @@ export class BlockSystem implements GameSystem {
   ): void {
     for (const [playerId, origins] of perPlayer) {
       if (origins.length === 0) continue;
-      if ((this.playerGeneration.get(playerId) ?? -1) !== capturedGens.get(playerId)) {
-        this.log("skip_requeue_stale_chunk_batch", {
-          fetchSeq: this.chunkFetchSeq,
-          playerId,
-          chunkCount: origins.length,
-          capturedGeneration: capturedGens.get(playerId) ?? -1,
-          currentGeneration: this.playerGeneration.get(playerId) ?? -1,
-        });
-        continue;
-      }
+      if ((this.playerGeneration.get(playerId) ?? -1) !== capturedGens.get(playerId)) continue;
 
       const existing = this.pendingChunkRequests.get(playerId);
       if (existing) {
@@ -335,26 +244,7 @@ export class BlockSystem implements GameSystem {
       } else {
         this.pendingChunkRequests.set(playerId, { origins: [...origins] });
       }
-
-      this.log("requeue_failed_chunk_batch", {
-        fetchSeq: this.chunkFetchSeq,
-        playerId,
-        chunkCount: origins.length,
-        pendingChunkCount: this.pendingChunkRequests.get(playerId)?.origins.length ?? origins.length,
-      });
     }
-  }
-
-  private log(event: string, data: Record<string, unknown>): void {
-    console.info(
-      JSON.stringify({
-        message: "block_system",
-        event,
-        roomId: this.roomId,
-        inFlightChunkFetch: this.inFlightChunkFetch,
-        ...data,
-      }),
-    );
   }
 
   private async processBlockActions(): Promise<boolean> {

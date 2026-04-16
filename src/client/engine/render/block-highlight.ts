@@ -1,5 +1,6 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: WebGL factory methods are non-null in valid contexts */
 import type { Mat4Like } from "gl-matrix";
+import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import highlightFragSrc from "./shaders/highlight.frag";
 import highlightVertSrc from "./shaders/highlight.vert";
 
@@ -88,18 +89,6 @@ const WIREFRAME_VERTICES = new Float32Array([
   HI,
 ]);
 
-function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
-  const shader = gl.createShader(type)!;
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    const info = gl.getShaderInfoLog(shader);
-    gl.deleteShader(shader);
-    throw new Error(`Shader compile error: ${info}`);
-  }
-  return shader;
-}
-
 export class BlockHighlight {
   private program: WebGLProgram;
   private vao: WebGLVertexArrayObject;
@@ -108,18 +97,7 @@ export class BlockHighlight {
   private uBlockPos: WebGLUniformLocation;
 
   constructor(private gl: WebGL2RenderingContext) {
-    const vert = compileShader(gl, gl.VERTEX_SHADER, highlightVertSrc);
-    const frag = compileShader(gl, gl.FRAGMENT_SHADER, highlightFragSrc);
-
-    this.program = gl.createProgram()!;
-    gl.attachShader(this.program, vert);
-    gl.attachShader(this.program, frag);
-    gl.linkProgram(this.program);
-    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
-      throw new Error(`Program link error: ${gl.getProgramInfoLog(this.program)}`);
-    }
-    gl.deleteShader(vert);
-    gl.deleteShader(frag);
+    this.program = WebGLUtilities.createProgram(gl, highlightVertSrc, highlightFragSrc);
 
     this.uView = gl.getUniformLocation(this.program, "uView")!;
     this.uProj = gl.getUniformLocation(this.program, "uProj")!;

@@ -335,11 +335,9 @@ export function createGame(args: CreateGameArgs): GameState {
       }
 
       // Apply block changes from other players
+      const pendingCoords = new Set([...pendingBlocks.values()].map((p) => `${p.x},${p.y},${p.z}`));
       for (const change of room().blockChangesQueue.splice(0)) {
-        const isOurs = [...pendingBlocks.values()].some(
-          (p) => p.x === change.x && p.y === change.y && p.z === change.z,
-        );
-        if (!isOurs) {
+        if (!pendingCoords.has(`${change.x},${change.y},${change.z}`)) {
           chunks.modifyBlock(change.x, change.y, change.z, change.blockType as CubeType);
         }
       }
