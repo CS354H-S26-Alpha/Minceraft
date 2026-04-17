@@ -36,6 +36,27 @@
       "when": 1776124800000,
       "tag": "0004_steady_health",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1776470400000,
+      "tag": "0005_room_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1776556800000,
+      "tag": "0006_chunks",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1776643200000,
+      "tag": "0007_chunk_fluid_levels",
+      "breakpoints": true
     }
   ]
 }

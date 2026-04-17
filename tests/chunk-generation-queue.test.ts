@@ -1,99 +1,75 @@
 import { describe, expect, it } from "vitest";
-import type { ChunkOrigin, ChunkQueueArgs } from "../src/client/engine/chunks/client";
-import { ChunkGenerationQueue } from "../src/client/engine/chunks/queue";
+import { ChunkMeshBuilder } from "../src/client/engine/chunks/queue";
 import { CubeType } from "../src/client/engine/render/cube-types";
+import { CHUNK_SIZE, rleEncodeBlocks } from "../src/game/chunk";
 
-class FakeChunk {
-  public renderCount = 0;
-  public blocks = new Uint8Array(0);
-
-  constructor(
-    private readonly x: number,
-    private readonly z: number,
-  ) {}
-
-  public renderChunk(): void {
-    this.renderCount++;
+function makeTestBlocks(): Uint8Array {
+  const blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * 128);
+  // Fill bottom layer with stone, surface with grass
+  for (let z = 0; z < CHUNK_SIZE; z++) {
+    for (let x = 0; x < CHUNK_SIZE; x++) {
+      blocks[0 * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x] = CubeType.Bedrock;
+      for (let y = 1; y < 50; y++) {
+        blocks[y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x] = CubeType.Stone;
+      }
+      blocks[50 * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x] = CubeType.Grass;
+    }
   }
-
-  public getBlockWorld(): CubeType {
-    return CubeType.Stone;
-  }
-
-  public cubePositions(): Float32Array {
-    return new Float32Array([this.x, 0, this.z, 0]);
-  }
-
-  public cubeColors(): Float32Array {
-    return new Float32Array([1, 1, 1]);
-  }
-
-  public cubeAmbientOcclusion(): Uint8Array {
-    return new Uint8Array(24).fill(3);
-  }
-
-  public surfaceHeights(): Uint8Array {
-    return new Uint8Array([1]);
-  }
-
-  public surfaceTypes(): Uint8Array {
-    return new Uint8Array([CubeType.Stone]);
-  }
-
-  public numCubes(): number {
-    return 1;
-  }
+  return blocks;
 }
 
-function buildArgs(generationId: number, seed: number, chunkOrigins: ChunkOrigin[]): ChunkQueueArgs {
-  return {
-    generationId,
-    seed,
-    originX: 0,
-    originZ: 0,
-    renderDistance: 1,
-    chunkOrigins,
-  };
-}
+describe("ChunkMeshBuilder", () => {
+  it("builds meshes from RLE-encoded blocks", () => {
+    const builder = new ChunkMeshBuilder();
+    const blocks = makeTestBlocks();
+    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
 
-describe("ChunkGenerationQueue", () => {
-  it("reuses cached chunks and only generates newly queued ones", () => {
-    const created: string[] = [];
-    const queue = new ChunkGenerationQueue((x, z) => {
-      created.push(`${x},${z}`);
-      return new FakeChunk(x, z);
-    });
-    const firstChunks = [
-      { originX: 0, originZ: 0 },
-      { originX: 64, originZ: 0 },
-      { originX: 0, originZ: 64 },
-    ];
+    const batch = builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
+    expect(batch.chunks.length).toBeGreaterThan(0);
 
-    queue.setVisibleChunks(buildArgs(1, 123, firstChunks));
-    queue.generateNext(buildArgs(1, 123, firstChunks));
-    queue.generateNext(buildArgs(1, 123, firstChunks));
-    queue.generateNext(buildArgs(1, 123, firstChunks));
-
-    const secondChunks = [
-      { originX: 0, originZ: 0 },
-      { originX: 64, originZ: 0 },
-      { originX: 128, originZ: 0 },
-    ];
-    queue.setVisibleChunks(buildArgs(2, 123, secondChunks));
-    queue.generateNext(buildArgs(2, 123, secondChunks));
-
-    expect(created).toEqual(["0,0", "64,0", "0,64", "128,0"]);
+    const chunk = batch.chunks.find((c) => c.originX === 0 && c.originZ === 0);
+    expect(chunk).toBeDefined();
+    expect(chunk?.numCubes).toBeGreaterThan(0);
+    expect(chunk?.blocks.length).toBe(CHUNK_SIZE * CHUNK_SIZE * 128);
   });
 
-  it("cancels stale generations when a new visible set replaces the queue", () => {
-    const queue = new ChunkGenerationQueue((x, z) => new FakeChunk(x, z));
-    const firstChunks = [{ originX: 0, originZ: 0 }];
-    const secondChunks = [{ originX: 64, originZ: 0 }];
+  it("returns surfaceHeights and surfaceTypes", () => {
+    const builder = new ChunkMeshBuilder();
+    const blocks = makeTestBlocks();
+    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
 
-    queue.setVisibleChunks(buildArgs(1, 123, firstChunks));
-    queue.setVisibleChunks(buildArgs(2, 123, secondChunks));
+    const batch = builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
+    const chunk = batch.chunks.find((c) => c.originX === 0 && c.originZ === 0);
+    expect(chunk).toBeDefined();
+    expect(chunk?.surfaceHeights[0]).toBe(50);
+    expect(chunk?.surfaceTypes[0]).toBe(CubeType.Grass);
+  });
 
-    expect(queue.generateNext(buildArgs(1, 123, firstChunks))).toBeNull();
-    expect(queue.generateNext(buildArgs(2, 123, secondChunks))?.chunks[0]?.numCubes).toBe(1);
+  it("caches blocks and re-renders neighbors on new chunk load", () => {
+    const builder = new ChunkMeshBuilder();
+    const blocks = makeTestBlocks();
+    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
+
+    // Load first chunk
+    builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
+
+    // Load adjacent chunk — should also re-render the first chunk (for edge AO)
+    const batch2 = builder.loadChunks([{ originX: CHUNK_SIZE, originZ: 0, blocks: encoded }]);
+    const keys = batch2.chunks.map((c) => `${c.originX},${c.originZ}`);
+    expect(keys).toContain("0,0"); // neighbor was re-rendered
+    expect(keys).toContain(`${CHUNK_SIZE},0`);
+  });
+
+  it("clearCache removes all data", () => {
+    const builder = new ChunkMeshBuilder();
+    const blocks = makeTestBlocks();
+    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
+
+    builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
+    builder.clearCache();
+
+    // Loading the same chunk again should work (cache miss, re-decode)
+    const batch = builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
+    expect(batch.chunks.length).toBeGreaterThan(0);
   });
 });

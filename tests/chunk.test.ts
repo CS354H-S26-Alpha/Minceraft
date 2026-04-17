@@ -111,4 +111,119 @@ describe("Chunk", () => {
       }
     }
   });
+
+  describe("tickFluids", () => {
+    it("spreads a source placed above terrain into the surrounding air column", () => {
+      const chunk = new Chunk(0, 0, 8, 3);
+      const y = CHUNK_HEIGHT - 1;
+      chunk.addFluid(4, y, 4, CubeType.Water, 0);
+
+      const beforeCount = countFluid(chunk);
+      for (let t = 0; t < 16; t++) chunk.tickFluids();
+      const afterCount = countFluid(chunk);
+
+      expect(afterCount).toBeGreaterThan(beforeCount);
+      expect(chunk.getBlock(4, y, 4)).toBe(CubeType.Water);
+    });
+
+    it("reaches a steady state after enough ticks (idempotence)", () => {
+      const chunk = new Chunk(0, 0, 4, 5);
+      chunk.addFluid(2, CHUNK_HEIGHT - 1, 2, CubeType.Water, 0);
+      for (let t = 0; t < 200; t++) chunk.tickFluids();
+      const snapshot = countFluid(chunk);
+      for (let t = 0; t < 10; t++) chunk.tickFluids();
+      expect(countFluid(chunk)).toBe(snapshot);
+    });
+
+    it("ignores a chunk with no fluids", () => {
+      const chunk = new Chunk(0, 0, 4, 5);
+      const before = chunk.blocks.slice();
+      for (let t = 0; t < 5; t++) {
+        expect(chunk.tickFluids()).toBe(false);
+      }
+      expect(Array.from(chunk.blocks)).toEqual(Array.from(before));
+    });
+
+    it("decays flowing fluid once its source is removed", () => {
+      // Use a larger chunk so the max-7 spread stays off the boundary
+      // (boundary cells are conservatively treated as supported since we
+      // can't see into adjacent chunks cheaply).
+      const chunk = new Chunk(0, 0, 32, 7);
+      const y = CHUNK_HEIGHT - 1;
+      chunk.addFluid(16, y, 16, CubeType.Water, 0);
+      for (let t = 0; t < 20; t++) chunk.tickFluids();
+      const fluidAfterSpread = countFluid(chunk);
+      expect(fluidAfterSpread).toBeGreaterThan(4);
+
+      expect(chunk.removeFluidAt(16, y, 16)).toBe(true);
+      // The cascade removes one level-ring per tick, so spread-radius
+      // (FLUID_MAX_LEVEL=7) ticks plus slack is enough.
+      for (let t = 0; t < 40; t++) chunk.tickFluids();
+
+      expect(chunk.getBlock(16, y, 16)).toBe(CubeType.Air);
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        expect(chunk.getBlock(16 + dx, y, 16 + dz)).toBe(CubeType.Air);
+      }
+    });
+
+    it("turns water into stone on contact with lava", () => {
+      const chunk = new Chunk(0, 0, 8, 9);
+      const y = CHUNK_HEIGHT - 1;
+      // Give both sources a solid stone floor so they spread laterally
+      // rather than falling past each other.
+      paintStoneFloor(chunk, y - 1);
+      chunk.addFluid(2, y, 4, CubeType.Water, 0);
+      chunk.addFluid(5, y, 4, CubeType.Lava, 0);
+      for (let t = 0; t < 12; t++) chunk.tickFluids();
+
+      let foundStone = false;
+      for (let dx = 2; dx <= 5; dx++) {
+        if (chunk.getBlock(dx, y, 4) === CubeType.Stone) {
+          foundStone = true;
+          break;
+        }
+      }
+      expect(foundStone).toBe(true);
+    });
+
+    it("reports a cross-chunk spillover when a flow leaves the chunk", () => {
+      const chunk = new Chunk(0, 0, 4, 11);
+      const y = CHUNK_HEIGHT - 1;
+      // Floor so the test source flows laterally rather than straight down,
+      // guaranteeing it reaches the chunk boundary.
+      paintStoneFloor(chunk, y - 1);
+      chunk.addFluid(0, y, 2, CubeType.Water, 0);
+
+      const spillovers: Array<{ wx: number; wy: number; wz: number; type: number; level: number }> = [];
+      for (let t = 0; t < 5; t++) {
+        chunk.tickFluids((wx, wy, wz, type, level) => {
+          spillovers.push({ wx, wy, wz, type, level });
+        });
+      }
+      const waterSpill = spillovers.find((s) => s.type === CubeType.Water);
+      expect(waterSpill).toBeDefined();
+    });
+  });
 });
+
+function countFluid(chunk: Chunk): number {
+  let count = 0;
+  for (let i = 0; i < chunk.blocks.length; i++) {
+    const t = chunk.blocks[i];
+    if (t === CubeType.Water || t === CubeType.Lava) count++;
+  }
+  return count;
+}
+
+function paintStoneFloor(chunk: Chunk, y: number, chunkSize = 64): void {
+  for (let z = 0; z < chunkSize; z++) {
+    for (let x = 0; x < chunkSize; x++) {
+      chunk.blocks[y * chunkSize * chunkSize + z * chunkSize + x] = CubeType.Stone;
+    }
+  }
+}

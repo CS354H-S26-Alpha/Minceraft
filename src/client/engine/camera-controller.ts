@@ -79,6 +79,16 @@ export class CameraController {
     return out;
   }
 
+  /** Returns the camera's world-space eye position. */
+  eye(): Vec3 {
+    return this.camera.pos();
+  }
+
+  /** Returns the normalized look direction (forward into the screen). */
+  lookDirection(): Vec3 {
+    return this.camera.forward().negate();
+  }
+
   /** Returns the current camera yaw in radians (atan2 of the look direction). */
   yaw(): number {
     const lookDir = this.camera.forward().negate();

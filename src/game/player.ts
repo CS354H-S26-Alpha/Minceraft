@@ -1,6 +1,6 @@
 import { Vec3 } from "gl-matrix";
 import { Entity } from "./entity";
-import { ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
+import { getItemDamage, ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
 
 // minceraft yoinked
 export const PLAYER_SPEED = 4.317;
@@ -8,6 +8,7 @@ export const PLAYER_GRAVITY = 32;
 export const PLAYER_JUMP_VELOCITY = 8.944;
 export const PLAYER_MAX_FALL_SPEED = 78.4;
 export const PLAYER_MAX_HEALTH = 20;
+export const PLAYER_EYE_OFFSET = 1.62;
 export const HOTBAR_SLOT_COUNT = 9;
 export const MAIN_INVENTORY_SLOT_COUNT = 27;
 export const INVENTORY_SLOT_COUNT = MAIN_INVENTORY_SLOT_COUNT + HOTBAR_SLOT_COUNT;
@@ -53,6 +54,8 @@ export interface PlayerInput {
 const GROUND_EPSILON = 1e-3;
 
 export type CollisionQuery = (x: number, z: number, currentY: number) => number;
+/** Max allowed eye Y at (x, z) given the player is currently at `eyeY`. Returns +Infinity when no ceiling is in range. */
+export type HeadQuery = (x: number, z: number, eyeY: number) => number;
 
 export function createEmptyInventory(): InventorySlot[] {
   return Array.from({ length: INVENTORY_SLOT_COUNT }, () => null);
@@ -89,6 +92,48 @@ export function normalizeInventory(inventory?: readonly InventorySlot[] | null):
 export function clampHotbarSlot(slotIndex: number): number {
   if (!Number.isFinite(slotIndex)) return DEFAULT_SELECTED_HOTBAR_SLOT;
   return Math.min(HOTBAR_SLOT_COUNT - 1, Math.max(0, Math.trunc(slotIndex)));
+}
+
+export function getSelectedHotbarInventoryIndex(selectedHotbarSlot: number): number {
+  return HOTBAR_START_INDEX + clampHotbarSlot(selectedHotbarSlot);
+}
+
+export function getSelectedHotbarItem(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): InventorySlot {
+  return state.inventory[getSelectedHotbarInventoryIndex(state.selectedHotbarSlot)] ?? null;
+}
+
+export function getHeldItemDamage(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): number {
+  return getItemDamage(getSelectedHotbarItem(state)?.itemId);
+}
+
+/**
+ * True iff the block at integer coords (bx, by, bz) — AABB [bx,bx+1]³ — overlaps
+ * the player's cylinder centered at (pos.x, pos.z) with feet at pos.y - EYE_OFFSET
+ * and head top at pos.y + (CYLINDER_HEIGHT - EYE_OFFSET).
+ */
+export function blockIntersectsPlayer(
+  bx: number,
+  by: number,
+  bz: number,
+  pos: { x: number; y: number; z: number },
+): boolean {
+  const headOffset = Player.CYLINDER_HEIGHT - PLAYER_EYE_OFFSET;
+  const feetY = pos.y - PLAYER_EYE_OFFSET;
+  const headTopY = pos.y + headOffset;
+  if (by + 1 <= feetY || by >= headTopY) return false;
+  const closestX = pos.x < bx ? bx : pos.x > bx + 1 ? bx + 1 : pos.x;
+  const closestZ = pos.z < bz ? bz : pos.z > bz + 1 ? bz + 1 : pos.z;
+  const dx = pos.x - closestX;
+  const dz = pos.z - closestZ;
+  return dx * dx + dz * dz < Player.CYLINDER_RADIUS * Player.CYLINDER_RADIUS;
+}
+
+export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) {
+  return {
+    x: state.x,
+    y: state.y + PLAYER_EYE_OFFSET,
+    z: state.z,
+  };
 }
 
 export function createPlayerState(
@@ -171,14 +216,24 @@ export interface PlayerPositionPacket {
   pitch: number;
 }
 
+export interface PlayerAttackPacket {
+  targetPlayerId: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+}
+
 /** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
   public static readonly CYLINDER_RADIUS = 0.3;
   public static readonly CYLINDER_HEIGHT = 1.8;
   /** Distance from feet to camera — Minecraft eye height. */
-  public static readonly EYE_OFFSET = 1.62;
+  public static readonly EYE_OFFSET = PLAYER_EYE_OFFSET;
 
   public collisionQuery: CollisionQuery | undefined = undefined;
+  public headQuery: HeadQuery | undefined = undefined;
 
   /** Unique player identifier (alias for `state.id`). */
   get id() {
@@ -203,6 +258,16 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
   addItem(stack: ItemStack): ItemStack | null {
     return addItemToInventory(this.state.inventory, stack);
+  }
+
+  takeDamage(amount: number): boolean {
+    if (!Number.isFinite(amount)) return false;
+    const damage = Math.max(0, Math.trunc(amount));
+    if (damage <= 0 || this.state.health <= 0) return false;
+    const nextHealth = Math.max(0, this.state.health - damage);
+    if (nextHealth === this.state.health) return false;
+    this.state.health = nextHealth;
+    return true;
   }
 
   publicState(): PlayerPublicState {
@@ -268,6 +333,13 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     if (vy < -PLAYER_MAX_FALL_SPEED) vy = -PLAYER_MAX_FALL_SPEED;
 
     let nextY = clampCoord(currentY + vy * dtSeconds);
+    if (vy > 0 && this.headQuery) {
+      const ceilingY = this.headQuery(nextX, nextZ, nextY);
+      if (nextY > ceilingY) {
+        nextY = ceilingY;
+        vy = 0;
+      }
+    }
     if (nextY < floorY) {
       nextY = floorY;
       vy = 0;

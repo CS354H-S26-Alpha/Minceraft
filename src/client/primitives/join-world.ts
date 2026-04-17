@@ -5,6 +5,7 @@ import { useSession } from "@/client/session";
 import { createInventoryUiState } from "@/game/crafting";
 import { Player, type PlayerPublicState } from "@/game/player";
 import type { RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
+import { createSoundEffects } from "./sounds";
 
 /** Reactive server-side diagnostics derived from every tick. */
 export interface TickInfo {
@@ -31,6 +32,11 @@ export function joinWorld(roomId: string) {
   const [remotePlayers, setRemotePlayers] = createStore<Record<string, PlayerPublicState>>({});
   const [tickInfo, setTickInfo] = createStore<TickInfo>({ tick: 0, tickTimeMs: 0, timeOfDayS: 0 });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
+  const sounds = createSoundEffects();
+
+  const blockAckQueue: Array<{ seq: number; accepted: boolean }> = [];
+  const blockChangesQueue: Array<{ x: number; y: number; z: number; blockType: number }> = [];
+  const chunkDataQueue: Array<Array<{ originX: number; originZ: number; blocks: Uint8Array }>> = [];
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
@@ -69,8 +75,10 @@ export function joinWorld(roomId: string) {
         if (!current) {
           setPlayer(new Player(packet.state));
         } else {
+          const previousHealth = current.state.health;
           const { x, y, z, yaw, pitch, ...rest } = packet.state;
           Object.assign(current.state, rest);
+          if (packet.state.health < previousHealth) sounds.playPlayerHit();
         }
         return;
       }
@@ -81,6 +89,15 @@ export function joinWorld(roomId: string) {
         setTickInfo("tickTimeMs", packet.tickTimeMs);
         setTickInfo("timeOfDayS", packet.timeOfDayS);
         return;
+      case "blockAck":
+        blockAckQueue.push(...packet.acks);
+        return;
+      case "blockChanges":
+        blockChangesQueue.push(...packet.changes);
+        return;
+      case "chunkData":
+        chunkDataQueue.push(packet.chunks);
+        return;
     }
   }
 
@@ -88,5 +105,16 @@ export function joinWorld(roomId: string) {
     session()?.leave();
   });
 
-  return { player, remotePlayers, tickInfo, snapCount, session, replicated, inventoryUi } as const;
+  return {
+    player,
+    remotePlayers,
+    tickInfo,
+    snapCount,
+    session,
+    replicated,
+    inventoryUi,
+    blockAckQueue,
+    blockChangesQueue,
+    chunkDataQueue,
+  } as const;
 }

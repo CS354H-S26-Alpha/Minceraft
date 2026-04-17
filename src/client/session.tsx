@@ -19,6 +19,11 @@ export function SessionProvider(props: { name: string } & ParentProps) {
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const api = newWebSocketRpcSession<GameApi>(`${wsProtocol}//${window.location.host}/api`);
 
+  api.onRpcBroken((error) => {
+    console.error("RPC connection broken:", error);
+    location.reload(); // temp bad fix
+  });
+
   const [session] = createResource(async () => {
     const authPromise = api.authenticate(props.name);
     const [auth, credentials] = await Promise.all([authPromise, authPromise.credentials]);
