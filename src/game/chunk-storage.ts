@@ -14,9 +14,20 @@ export interface BlockMutation {
   blockType?: number;
 }
 
+export interface BlockChange {
+  // World-space block cell update emitted to clients and tests.
+  x: number;
+  y: number;
+  z: number;
+  blockType: number;
+}
+
 export interface BlockMutationResult {
   accepted: boolean;
   previousType: number;
+  // Full list of resulting cell updates (primary mutation + side effects).
+  // Needed for features like undermining where one break can move many blocks.
+  changes: BlockChange[];
 }
 
 export interface ChunkBlob {
@@ -177,33 +188,87 @@ export class ChunkStorage {
    * Applies a block mutation. If `playerPos` is supplied, the target chunk is
    * loaded on demand when within 1 chunk of the player, so a very recent
    * eviction or pre-load miss doesn't silently reject the action. Rejects if
-   * the coordinate is out of range, the chunk still isn't loaded, or the
+   * the coordinate is out of range, the chunk still isn't loaded, or if the
    * mutation violates type rules (can't break Air/Bedrock, can't place into
-   * non-Air).
+   * non-Air). Returns the previous block type and full resulting block changes
+   * for accepted mutations; otherwise `accepted: false`.
    */
   async applyMutation(action: BlockMutation, playerPos?: { x: number; z: number }): Promise<BlockMutationResult> {
     const { x, y, z } = action;
     if (y < 0 || y >= CHUNK_HEIGHT) {
-      return { accepted: false, previousType: CubeType.Air };
+      return { accepted: false, previousType: CubeType.Air, changes: [] };
     }
     const current = await this.getBlock(x, y, z, playerPos);
     if (current === undefined) {
-      return { accepted: false, previousType: CubeType.Air };
+      return { accepted: false, previousType: CubeType.Air, changes: [] };
     }
     if (action.action === "break") {
       if (current === CubeType.Air || current === CubeType.Bedrock || isFluidCubeType(current)) {
-        return { accepted: false, previousType: current };
+        return { accepted: false, previousType: current, changes: [] };
       }
-      this.writeBlock(x, y, z, CubeType.Air);
-      this.activateFluidNeighbours(x, y, z);
-      return { accepted: true, previousType: current };
+      // Breaking support can trigger cascading vertical settling in this
+      // column, so compute and return all resulting updates.
+      const changes = this.applyBreakWithFallingBlocks(x, y, z);
+      return { accepted: true, previousType: current, changes };
     }
     if (current !== CubeType.Air && !isFluidCubeType(current)) {
-      return { accepted: false, previousType: current };
+      return { accepted: false, previousType: current, changes: [] };
     }
     const blockType = (action.blockType ?? CubeType.Dirt) as CubeType;
     this.writeBlock(x, y, z, blockType);
-    return { accepted: true, previousType: CubeType.Air };
+    return {
+      accepted: true,
+      previousType: CubeType.Air,
+      changes: [{ x, y, z, blockType }],
+    };
+  }
+
+  private applyBreakWithFallingBlocks(wx: number, wy: number, wz: number): BlockChange[] {
+    // Deduplicate by world coordinate so if a cell is touched more than once
+    // during cascade, clients receive only the final state for that cell.
+    const changesByCoord = new Map<string, BlockChange>();
+    const recordChange = (x: number, y: number, z: number, blockType: number) => {
+      changesByCoord.set(`${x},${y},${z}`, { x, y, z, blockType });
+    };
+
+    this.writeBlock(wx, wy, wz, CubeType.Air);
+    this.activateFluidNeighbours(wx, wy, wz);
+    recordChange(wx, wy, wz, CubeType.Air);
+
+    // After support is removed, settle any unsupported non-fluid blocks in
+    // this column downward until they reach non-Air support.
+    for (let scanY = wy + 1; scanY < CHUNK_HEIGHT; scanY++) {
+      const blockType = this.getBlock(wx, scanY, wz);
+      if (!this.shouldFallWhenUnsupported(blockType)) continue;
+      if (this.getBlock(wx, scanY - 1, wz) !== CubeType.Air) continue;
+
+      let destinationY = scanY;
+      while (destinationY > 0 && this.getBlock(wx, destinationY - 1, wz) === CubeType.Air) {
+        destinationY--;
+      }
+      if (destinationY === scanY) continue;
+
+      this.writeBlock(wx, scanY, wz, CubeType.Air);
+      this.writeBlock(wx, destinationY, wz, blockType);
+      this.activateFluidNeighbours(wx, scanY, wz);
+      this.activateFluidNeighbours(wx, destinationY, wz);
+      recordChange(wx, scanY, wz, CubeType.Air);
+      recordChange(wx, destinationY, wz, blockType);
+    }
+
+    return [...changesByCoord.values()];
+  }
+
+  private shouldFallWhenUnsupported(blockType: CubeType | undefined): blockType is CubeType {
+    // Current rule: every non-fluid, non-bedrock solid participates in
+    // undermining gravity. This intentionally mirrors the requested behavior
+    // for "normal" blocks without affecting fluids.
+    return (
+      blockType !== undefined &&
+      blockType !== CubeType.Air &&
+      blockType !== CubeType.Bedrock &&
+      !isFluidCubeType(blockType)
+    );
   }
 
   /**

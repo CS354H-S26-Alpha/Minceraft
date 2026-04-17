@@ -937,6 +937,86 @@ describe("GameRoom Durable Object", () => {
     });
   });
 
+  // Undermined non-fluid blocks should settle downward instead of floating.
+  it("drops stacked solid blocks when their support block is broken", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      // Pick a column with two vertical Air cells so we can build a stable
+      // support+payload stack before undermining it.
+      let baseY = -1;
+      for (let y = 124; y >= 3; y--) {
+        if (
+          roomInternals.chunkStorage.getBlock(0, y, 20) === CubeType.Air &&
+          roomInternals.chunkStorage.getBlock(0, y + 1, 20) === CubeType.Air
+        ) {
+          baseY = y;
+          break;
+        }
+      }
+      expect(baseY).toBeGreaterThan(0);
+
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: baseY, z: 20, blockType: CubeType.Dirt })
+          .accepted,
+      ).toBe(true);
+      // "Stone" is the block expected to fall after its Dirt support breaks.
+      expect(
+        roomInternals.chunkStorage.applyMutation({
+          action: "place",
+          x: 0,
+          y: baseY + 1,
+          z: 20,
+          blockType: CubeType.Stone,
+        }).accepted,
+      ).toBe(true);
+
+      // Compute expected final landing based on current column support shape.
+      let expectedLandingY = baseY + 1;
+      while (expectedLandingY > 0) {
+        const belowY = expectedLandingY - 1;
+        const belowType =
+          belowY === baseY ? CubeType.Air : (roomInternals.chunkStorage.getBlock(0, belowY, 20) ?? CubeType.Air);
+        if (belowType !== CubeType.Air) break;
+        expectedLandingY--;
+      }
+
+      room.teleportTo("alice", 0, baseY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "break",
+        x: 0,
+        y: baseY,
+        z: 20,
+      });
+      await room.runTick();
+
+      const breakAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+      expect(breakAck?.accepted).toBe(true);
+
+      // After support is removed, the payload should no longer float at source.
+      expect(roomInternals.chunkStorage.getBlock(0, expectedLandingY, 20)).toBe(CubeType.Stone);
+      expect(roomInternals.chunkStorage.getBlock(0, baseY + 1, 20)).toBe(CubeType.Air);
+      expect(roomInternals.chunkStorage.getBlock(0, baseY, 20)).not.toBe(CubeType.Dirt);
+
+      // Broadcast stream should include both source clearing and landing cell.
+      const changes = findPacket(aliceTicks[aliceTicks.length - 1], "blockChanges")?.changes ?? [];
+      expect(changes).toContainEqual({ x: 0, y: expectedLandingY, z: 20, blockType: CubeType.Stone });
+      expect(changes).toContainEqual({ x: 0, y: baseY + 1, z: 20, blockType: CubeType.Air });
+    });
+  });
+
   it("accepts an attack from a valid client snapshot even when the server yaw is stale", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
