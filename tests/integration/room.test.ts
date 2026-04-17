@@ -671,12 +671,22 @@ describe("GameRoom Durable Object", () => {
           .accepted,
       ).toBe(true);
       expect(
-        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 1, z: 20, blockType: CubeType.Lava })
-          .accepted,
+        roomInternals.chunkStorage.applyMutation({
+          action: "place",
+          x: 0,
+          y: topY - 1,
+          z: 20,
+          blockType: CubeType.Lava,
+        }).accepted,
       ).toBe(true);
       expect(
-        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 2, z: 20, blockType: CubeType.Lava })
-          .accepted,
+        roomInternals.chunkStorage.applyMutation({
+          action: "place",
+          x: 0,
+          y: topY - 2,
+          z: 20,
+          blockType: CubeType.Lava,
+        }).accepted,
       ).toBe(true);
 
       // Stand on top of the lava surface (eye at feet + eye offset).
@@ -706,7 +716,9 @@ describe("GameRoom Durable Object", () => {
       });
       await room.runTick();
 
-      const firstAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 2);
+      const firstAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find(
+        (ack) => ack.seq === 2,
+      );
       expect(firstAcceptAck?.accepted).toBe(true);
       expect(roomInternals.chunkStorage.getBlock(0, topY - 2, 20)).toBe(CubeType.Dirt);
 
@@ -720,7 +732,9 @@ describe("GameRoom Durable Object", () => {
       });
       await room.runTick();
 
-      const secondAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 3);
+      const secondAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find(
+        (ack) => ack.seq === 3,
+      );
       expect(secondAcceptAck?.accepted).toBe(true);
       expect(roomInternals.chunkStorage.getBlock(0, topY - 1, 20)).toBe(CubeType.Dirt);
 
@@ -734,7 +748,9 @@ describe("GameRoom Durable Object", () => {
       });
       await room.runTick();
 
-      const thirdAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 4);
+      const thirdAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find(
+        (ack) => ack.seq === 4,
+      );
       expect(thirdAcceptAck?.accepted).toBe(true);
       expect(roomInternals.chunkStorage.getBlock(0, topY, 20)).toBe(CubeType.Dirt);
     });
@@ -772,12 +788,22 @@ describe("GameRoom Durable Object", () => {
           .accepted,
       ).toBe(true);
       expect(
-        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 1, z: 20, blockType: CubeType.Water })
-          .accepted,
+        roomInternals.chunkStorage.applyMutation({
+          action: "place",
+          x: 0,
+          y: topY - 1,
+          z: 20,
+          blockType: CubeType.Water,
+        }).accepted,
       ).toBe(true);
       expect(
-        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 2, z: 20, blockType: CubeType.Water })
-          .accepted,
+        roomInternals.chunkStorage.applyMutation({
+          action: "place",
+          x: 0,
+          y: topY - 2,
+          z: 20,
+          blockType: CubeType.Water,
+        }).accepted,
       ).toBe(true);
 
       room.teleportTo("alice", 0, topY + 2.62, 20);
@@ -806,7 +832,9 @@ describe("GameRoom Durable Object", () => {
       });
       await room.runTick();
 
-      const firstAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 2);
+      const firstAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find(
+        (ack) => ack.seq === 2,
+      );
       expect(firstAcceptAck?.accepted).toBe(true);
       expect(roomInternals.chunkStorage.getBlock(0, topY - 2, 20)).toBe(CubeType.Dirt);
 
@@ -820,7 +848,9 @@ describe("GameRoom Durable Object", () => {
       });
       await room.runTick();
 
-      const secondAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 3);
+      const secondAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find(
+        (ack) => ack.seq === 3,
+      );
       expect(secondAcceptAck?.accepted).toBe(true);
       expect(roomInternals.chunkStorage.getBlock(0, topY - 1, 20)).toBe(CubeType.Dirt);
 
@@ -834,7 +864,9 @@ describe("GameRoom Durable Object", () => {
       });
       await room.runTick();
 
-      const thirdAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 4);
+      const thirdAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find(
+        (ack) => ack.seq === 4,
+      );
       expect(thirdAcceptAck?.accepted).toBe(true);
       expect(roomInternals.chunkStorage.getBlock(0, topY, 20)).toBe(CubeType.Dirt);
     });
@@ -869,11 +901,12 @@ describe("GameRoom Durable Object", () => {
         }
         expect(topY).toBeGreaterThan(0);
 
-        expect(roomInternals.chunkStorage.applyMutation({ action: "place", x, y: topY, z, blockType: fluid }).accepted).toBe(
-          true,
-        );
         expect(
-          roomInternals.chunkStorage.applyMutation({ action: "place", x, y: topY - 1, z, blockType: CubeType.Dirt }).accepted,
+          roomInternals.chunkStorage.applyMutation({ action: "place", x, y: topY, z, blockType: fluid }).accepted,
+        ).toBe(true);
+        expect(
+          roomInternals.chunkStorage.applyMutation({ action: "place", x, y: topY - 1, z, blockType: CubeType.Dirt })
+            .accepted,
         ).toBe(true);
 
         room.teleportTo(playerId, x, topY + 2.62, z);
