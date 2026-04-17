@@ -47,12 +47,17 @@ export interface CreateGameArgs {
   shortcuts?: Omit<InputOptions, "onReset">;
 }
 
+/** Client-side rendering metrics exposed to the diagnostics panel. */
 export interface ClientDiagnostics {
   fps: number;
   frameCount: number;
+  /** Client-measured wall-clock time for the tick function (ms). */
   computeTimeMs: number;
+  /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
+  /** GPU-measured draw time via EXT_disjoint_timer_query (ms). 0 if unsupported. */
   gpuTimeMs: number;
+  /** Rolling ring-buffer of recent GPU times for sparkline display. */
   gpuTimeHistory: number[];
   pointerLocked: boolean;
 }
@@ -61,6 +66,7 @@ export interface ClientDiagnostics {
 export interface ServerDiagnostics {
   /** Milliseconds per server tick (reported in the `WorldStatePacket`). */
   mspt: number;
+  /** Rolling ring-buffer of recent mspt values. */
   msptHistory: number[];
   /** How many server ticks we receive per second. */
   snapsPerSec: number;
@@ -96,6 +102,7 @@ export interface GameState extends Readonly<MutableGameState> {
 
 /** Sliding window for FPS / TPS / snap-rate averaging. */
 const FPS_WINDOW_MS = 500;
+/** Number of samples kept in the compute-time and mspt ring buffers. */
 const FRAME_HISTORY_SIZE = 120;
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
@@ -109,6 +116,12 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
   return { renderer, camera };
 }
 
+/**
+ * Reactive game primitive.
+ *
+ * The store is the reactive boundary: the rAF callback (an event-handler context)
+ * writes into it each frame, and SolidJS consumers track individual properties.
+ */
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
   const inputEnabled = () => args.inputEnabled?.() ?? true;
@@ -242,6 +255,7 @@ export function createGame(args: CreateGameArgs): GameState {
     ...args.shortcuts,
   });
 
+  // TODO: refactor to be general packet handling rather than only inputs
   let nextPacketSequence = 1;
   let pendingPacket: Omit<PlayerPositionPacket, "sequence"> | undefined;
 
@@ -297,6 +311,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickStart = performance.now();
     const inputDt = Math.min(dt, MAX_INPUT_DT_MS) / 1000;
 
+    // --- Resize ---
     if (needsResize) {
       needsResize = false;
       const dpr = window.devicePixelRatio || 1;
@@ -305,6 +320,7 @@ export function createGame(args: CreateGameArgs): GameState {
       camera.resize(gl.clientWidth, gl.clientHeight);
     }
 
+    // --- Input → server ---
     const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
     const mouseSensitivity = args.preferences.mouseSensitivity();
     const invertY = args.preferences.invertY() ? -1 : 1;
@@ -411,6 +427,7 @@ export function createGame(args: CreateGameArgs): GameState {
     lighting.update(timeOfDayS);
     fogColor.set(lighting.backgroundColor.subarray(0, 3));
 
+    // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [
       { key: "players", buffers, count },
@@ -438,6 +455,7 @@ export function createGame(args: CreateGameArgs): GameState {
       highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
     });
 
+    // --- Diagnostics (producers → store) ---
     frame++;
     const computeTimeMs = performance.now() - tickStart;
     const gpuTimeMs = renderer.gpuTimer.lastTimeMs;

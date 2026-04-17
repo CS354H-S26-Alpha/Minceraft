@@ -212,12 +212,6 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         />
       </div>
       <div class="border-t border-white/20 pt-2">
-        <div class="text-gray-400">controls</div>
-        <div class="mt-1 text-xs text-white/80">click canvas to lock pointer</div>
-        <div class="text-xs text-white/80">WASD move · mouse look · R reset view</div>
-        <div class="text-xs text-white/80">E inventory · P skip day phase</div>
-      </div>
-      <div class="border-t border-white/20 pt-2">
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
         <ul class="mt-1">
           {props.onlinePlayers.map((p) => (
