@@ -10,7 +10,7 @@ import type { BlockActionPacket, ServerPacket } from "./protocol";
 
 const MAX_INTERACT_DISTANCE_SQ = 7 * 7;
 const MAX_ACTIONS_PER_TICK = 20;
-const CHUNKS_PER_TICK = 30;
+const CHUNKS_PER_TICK = 4;
 
 export interface BlockSystemOptions {
   /** Chunk radius for the initial load on join (default 5 → 10x10 grid). */
