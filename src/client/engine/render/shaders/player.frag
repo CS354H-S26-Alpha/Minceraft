@@ -3,6 +3,10 @@ precision mediump float;
 uniform vec4 uLightPos;
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
+uniform vec3 uCameraPos;
+uniform vec3 uFogColor;
+uniform float uFogNear;
+uniform float uFogFar;
 
 varying vec4 normal;
 varying vec4 wsPos;
@@ -46,5 +50,10 @@ void main() {
   vec3 ambient = uAmbient * kd;
   vec3 diffuse = dot_nl * kd * uSunColor;
 
-  gl_FragColor = vec4(clamp(ambient + diffuse, 0.0, 1.0), 1.0);
+  vec3 lit = clamp(ambient + diffuse, 0.0, 1.0);
+
+  vec3 d = wsPos.xyz - uCameraPos;
+  float cylDist = max(length(d.xz), abs(d.y));
+  float fog = clamp((cylDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
+  gl_FragColor = vec4(mix(lit, uFogColor, fog), 1.0);
 }

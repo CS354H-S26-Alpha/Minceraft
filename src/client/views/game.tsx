@@ -10,6 +10,7 @@ import { joinWorld } from "../primitives/join-world";
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
   const [inventoryOpen, setInventoryOpen] = createSignal(false);
+  const [hudHidden, setHudHidden] = createSignal(false);
 
   const room = joinWorld("world-1");
 
@@ -20,6 +21,7 @@ export default function GameView() {
     shortcuts: {
       onToggleInventory: toggleInventory,
       onCloseInventory: closeInventory,
+      onToggleHud: () => setHudHidden((hidden) => !hidden),
       onSelectHotbarSlot: selectHotbarSlot,
       onCycleHotbar: (direction) => {
         const player = room.player();
@@ -58,54 +60,56 @@ export default function GameView() {
   return (
     <div class="relative h-screen w-screen overflow-hidden">
       <canvas ref={setGlCanvas} class="absolute inset-0 h-full w-full" />
-      <Minimap
-        hidden={inventoryOpen()}
-        minimap={game.minimap}
-        player={room.player}
-        players={() => room.remotePlayers}
-      />
-      <Show when={!inventoryOpen()}>
-        <div class="pointer-events-none absolute inset-0 z-20">
-          <div class="absolute top-1/2 left-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2">
-            <div class="absolute top-1/2 left-0 h-px w-full -translate-y-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
-            <div class="absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
+      <Show when={!hudHidden()}>
+        <Minimap
+          hidden={inventoryOpen()}
+          minimap={game.minimap}
+          player={room.player}
+          players={() => room.remotePlayers}
+        />
+        <Show when={!inventoryOpen()}>
+          <div class="pointer-events-none absolute inset-0 z-20">
+            <div class="absolute top-1/2 left-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2">
+              <div class="absolute top-1/2 left-0 h-px w-full -translate-y-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
+              <div class="absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
+            </div>
           </div>
-        </div>
+        </Show>
+        <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
+        <Show when={room.player()?.state}>
+          {(playerState) => (
+            <DiagnosticsPanel
+              playerState={playerState()}
+              fps={game.diagnostics.client.fps}
+              computeTimeMs={game.diagnostics.client.computeTimeMs}
+              computeTimeHistory={game.diagnostics.client.computeTimeHistory}
+              gpuTimeMs={game.diagnostics.client.gpuTimeMs}
+              gpuTimeHistory={game.diagnostics.client.gpuTimeHistory}
+              mspt={game.diagnostics.server.mspt}
+              msptHistory={game.diagnostics.server.msptHistory}
+              snapsPerSec={game.diagnostics.server.snapsPerSec}
+              packetsPerSec={game.diagnostics.server.packetsPerSec}
+              timeOfDayS={game.diagnostics.server.timeOfDayS}
+              onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
+              onlinePlayers={Object.values(room.remotePlayers)}
+              onTeleportTo={(id) => {
+                const target = room.remotePlayers[id];
+                const s = room.session();
+                if (!target || !s) return;
+                room.replicated()?.teleport({ x: target.x, y: target.y, z: target.z });
+                s.teleportTo(target.x, target.y, target.z);
+              }}
+              pointerLocked={game.diagnostics.client.pointerLocked}
+            />
+          )}
+        </Show>
       </Show>
-      <PlayerHud hidden={inventoryOpen()} onSelectHotbarSlot={selectHotbarSlot} player={room.player} />
       <InventoryPanel
         player={room.player}
         inventoryUi={room.inventoryUi}
         open={inventoryOpen()}
         onClickSlot={(target) => room.session()?.clickInventory(target)}
       />
-      <Show when={room.player()?.state}>
-        {(playerState) => (
-          <DiagnosticsPanel
-            playerState={playerState()}
-            fps={game.diagnostics.client.fps}
-            computeTimeMs={game.diagnostics.client.computeTimeMs}
-            computeTimeHistory={game.diagnostics.client.computeTimeHistory}
-            gpuTimeMs={game.diagnostics.client.gpuTimeMs}
-            gpuTimeHistory={game.diagnostics.client.gpuTimeHistory}
-            mspt={game.diagnostics.server.mspt}
-            msptHistory={game.diagnostics.server.msptHistory}
-            snapsPerSec={game.diagnostics.server.snapsPerSec}
-            packetsPerSec={game.diagnostics.server.packetsPerSec}
-            timeOfDayS={game.diagnostics.server.timeOfDayS}
-            onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
-            onlinePlayers={Object.values(room.remotePlayers)}
-            onTeleportTo={(id) => {
-              const target = room.remotePlayers[id];
-              const s = room.session();
-              if (!target || !s) return;
-              room.replicated()?.teleport({ x: target.x, y: target.y, z: target.z });
-              s.teleportTo(target.x, target.y, target.z);
-            }}
-            pointerLocked={game.diagnostics.client.pointerLocked}
-          />
-        )}
-      </Show>
     </div>
   );
 }

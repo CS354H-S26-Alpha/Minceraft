@@ -4,13 +4,14 @@ import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { CubeType } from "@/client/engine/render/cube-types";
+import { CHUNK_SIZE } from "@/game/chunk";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
-import { ChunkManager } from "./chunks";
+import { ChunkManager, RENDER_DISTANCE } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
 import { createInput, type InputOptions } from "./input";
@@ -262,6 +263,13 @@ export function createGame(args: CreateGameArgs): GameState {
     needsResize = true;
   });
 
+  // Match Minecraft 1.21: fog starts at 92% of render distance and completes
+  // at the hard chunk cutoff, so distant chunks fade into the sky instead of
+  // popping as the player walks around.
+  const FOG_FAR = RENDER_DISTANCE * CHUNK_SIZE;
+  const FOG_NEAR = FOG_FAR * 0.92;
+  const fogColor = new Float32Array(3);
+
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
     const player = room().player();
@@ -353,6 +361,7 @@ export function createGame(args: CreateGameArgs): GameState {
 
     const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
     lighting.update(timeOfDayS);
+    fogColor.set(lighting.backgroundColor.subarray(0, 3));
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
@@ -365,10 +374,15 @@ export function createGame(args: CreateGameArgs): GameState {
       cubeAmbientOcclusion: chunks.ambientOcclusion,
       numCubes: chunks.count,
       lightPosition: lighting.lightPosition,
+      sunPosition: lighting.sunPosition,
       backgroundColor: lighting.backgroundColor,
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
       timeS: now / 1000,
+      cameraPos: eye,
+      fogColor,
+      fogNear: FOG_NEAR,
+      fogFar: FOG_FAR,
       entities,
       highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
     });

@@ -16,7 +16,7 @@ import { Player } from "@/game/player";
 import type { ChunkBatchData, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
-const RENDER_DISTANCE = 4;
+export const RENDER_DISTANCE = 4;
 const EVICT_DISTANCE = RENDER_DISTANCE + 2;
 const INGEST_PER_FRAME = 3;
 

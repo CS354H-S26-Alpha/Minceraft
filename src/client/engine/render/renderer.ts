@@ -7,6 +7,8 @@ import { Cube } from "./cube";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
+import cloudsFSText from "./shaders/clouds.frag";
+import cloudsVSText from "./shaders/clouds.vert";
 import skyboxFSText from "./shaders/skybox.frag";
 import skyboxVSText from "./shaders/skybox.vert";
 
@@ -18,6 +20,8 @@ export interface RenderView {
   cubeAmbientOcclusion: Uint8Array;
   numCubes: number;
   lightPosition: Float32Array;
+  /** Actual sun position (unflipped). Used by the skybox to place sun/moon discs. */
+  sunPosition: Float32Array;
   backgroundColor: Float32Array;
   /** RGB ambient light color (changes with time of day). */
   ambientColor: Float32Array;
@@ -25,6 +29,14 @@ export interface RenderView {
   sunColor: Float32Array;
   /** Wall-clock seconds since game start; drives fluid surface animation. */
   timeS: number;
+  /** World-space camera eye position. Used for distance fog. */
+  cameraPos: Float32Array;
+  /** RGB fog color blended into distant fragments (typically matches horizon sky). */
+  fogColor: Float32Array;
+  /** Horizontal distance at which fog begins (blocks). */
+  fogNear: number;
+  /** Horizontal distance at which fog fully obscures fragments (blocks). */
+  fogFar: number;
   entities: EntityDrawData[];
   highlightBlock?: { x: number; y: number; z: number };
 }
@@ -39,6 +51,7 @@ export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: WebGL2RenderingContext;
   private readonly skyboxRenderPass: RenderPass;
+  private readonly cloudRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
   private readonly blockHighlight: BlockHighlight;
@@ -46,6 +59,7 @@ export class Renderer {
 
   private currentView!: RenderView;
   private readonly viewNoTranslation = new Float32Array(16);
+  private readonly cloudSeed = new Float32Array([Math.random() * 1000, Math.random() * 1000]);
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
   private lastCubeAmbientOcclusion: Uint8Array | null = null;
@@ -58,6 +72,8 @@ export class Renderer {
     const cubeGeometry = new Cube();
     this.skyboxRenderPass = new RenderPass(this.ctx, skyboxVSText, skyboxFSText);
     this.initSkyboxPass(cubeGeometry);
+    this.cloudRenderPass = new RenderPass(this.ctx, cloudsVSText, cloudsFSText);
+    this.initCloudPass(cubeGeometry);
     this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
@@ -121,6 +137,8 @@ export class Renderer {
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
 
+    this.drawClouds();
+
     if (view.highlightBlock) {
       this.blockHighlight.draw(
         view.viewMatrix,
@@ -144,6 +162,22 @@ export class Renderer {
     this.skyboxRenderPass.draw();
     gl.depthMask(true);
     gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+  }
+
+  private drawClouds(): void {
+    const gl = this.ctx;
+    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(false);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    this.cloudRenderPass.draw();
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
   }
@@ -476,6 +510,55 @@ export class Renderer {
     pass.addUniform("uSunColor", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       glCtx.uniform3fv(loc, this.currentView.sunColor);
     });
+    pass.addUniform("uLightPos", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform4fv(loc, this.currentView.sunPosition);
+    });
+
+    pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private initCloudPass(cube: Cube): void {
+    const gl = this.ctx;
+    const pass = this.cloudRenderPass;
+
+    pass.setIndexBufferData(cube.indicesFlat());
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      cube.positionsFlat(),
+    );
+
+    pass.addUniform("uProj", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
+    });
+    pass.addUniform("uViewNoTranslation", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      this.viewNoTranslation.set(this.currentView.viewMatrix);
+      this.viewNoTranslation[12] = 0;
+      this.viewNoTranslation[13] = 0;
+      this.viewNoTranslation[14] = 0;
+      glCtx.uniformMatrix4fv(loc, false, this.viewNoTranslation);
+    });
+    pass.addUniform("uAmbient", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.ambientColor);
+    });
+    pass.addUniform("uSunColor", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.sunColor);
+    });
+    pass.addUniform("uCameraPos", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform3fv(loc, this.currentView.cameraPos);
+    });
+    pass.addUniform("uTime", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform1f(loc, this.currentView.timeS);
+    });
+    pass.addUniform("uCloudSeed", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform2fv(loc, this.cloudSeed);
+    });
 
     pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
     pass.setup();
@@ -499,6 +582,18 @@ export class Renderer {
     });
     pass.addUniform("uTime", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform1f(loc, this.currentView.timeS);
+    });
+    pass.addUniform("uCameraPos", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.cameraPos);
+    });
+    pass.addUniform("uFogColor", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.fogColor);
+    });
+    pass.addUniform("uFogNear", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1f(loc, this.currentView.fogNear);
+    });
+    pass.addUniform("uFogFar", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1f(loc, this.currentView.fogFar);
     });
   }
 }

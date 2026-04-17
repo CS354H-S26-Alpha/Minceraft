@@ -5,6 +5,10 @@ uniform vec4 uLightPos;
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
 uniform float uTime;
+uniform vec3 uCameraPos;
+uniform vec3 uFogColor;
+uniform float uFogNear;
+uniform float uFogFar;
 
 // Per-type LUT uniforms (indexed by CubeType, 15 entries covering Air–Permafrost).
 // col1 = mix(color,          uLut1Fixed[type], uLut1Blend[type])
@@ -169,5 +173,14 @@ void main() {
     lit = kd * (uAmbient + dot_nl * uSunColor) * aoFactor;
   }
 
-  fragColor = vec4(lit / (1.0 + lit * 0.5), 1.0);
+  vec3 toned = lit / (1.0 + lit * 0.5);
+
+  // Render-distance fog, matching Minecraft 1.21's cylindrical metric:
+  // max(horizontal distance, vertical distance) — fogs the sky column above
+  // and the void below as well as the horizon, so load boundaries in any
+  // direction fade into the sky.
+  vec3 d = wsPos.xyz - uCameraPos;
+  float cylDist = max(length(d.xz), abs(d.y));
+  float fog = clamp((cylDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
+  fragColor = vec4(mix(toned, uFogColor, fog), 1.0);
 }

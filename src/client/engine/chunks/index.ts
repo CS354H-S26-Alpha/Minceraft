@@ -1,1 +1,1 @@
-export { ChunkManager } from "./manager";
+export { ChunkManager, RENDER_DISTANCE } from "./manager";
