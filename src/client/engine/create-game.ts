@@ -164,7 +164,6 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const handleReset = () => {
     ctx?.camera.reset();
-    chunks.reset();
   };
 
   const handleLeftClick = () => {

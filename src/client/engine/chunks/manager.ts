@@ -106,17 +106,6 @@ export class ChunkManager {
     this.dirty = true;
   }
 
-  reset(): void {
-    this.lastOriginX = NaN;
-    this.lastOriginZ = NaN;
-    this.chunkDataMap.clear();
-    this.localOverrides.clear();
-    this.ingestQueue.length = 0;
-    this.resetGeneration++;
-    void this.client.clearCache();
-    this.dirty = true;
-  }
-
   collisionQuery(wx: number, wz: number, currentY: number): number {
     const r = Player.CYLINDER_RADIUS;
     const r2 = r * r;
