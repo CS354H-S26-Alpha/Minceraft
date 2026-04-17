@@ -12,11 +12,20 @@ export interface BlockMutation {
   y: number;
   z: number;
   blockType?: number;
+  settleOnPlace?: boolean;
+}
+
+export interface BlockChange {
+  x: number;
+  y: number;
+  z: number;
+  blockType: number;
 }
 
 export interface BlockMutationResult {
   accepted: boolean;
   previousType: number;
+  changes: BlockChange[];
 }
 
 export interface ChunkBlob {
@@ -186,26 +195,106 @@ export class ChunkStorage {
   async applyMutation(action: BlockMutation, playerPos?: { x: number; z: number }): Promise<BlockMutationResult> {
     const { x, y, z } = action;
     if (y < 0 || y >= CHUNK_HEIGHT) {
-      return { accepted: false, previousType: CubeType.Air };
+      return { accepted: false, previousType: CubeType.Air, changes: [] };
     }
     const current = await this.getBlock(x, y, z, playerPos);
     if (current === undefined) {
-      return { accepted: false, previousType: CubeType.Air };
+      return { accepted: false, previousType: CubeType.Air, changes: [] };
     }
     if (action.action === "break") {
       if (current === CubeType.Air || current === CubeType.Bedrock) {
-        return { accepted: false, previousType: current };
+        return { accepted: false, previousType: current, changes: [] };
       }
-      this.writeBlock(x, y, z, CubeType.Air);
-      this.activateFluidNeighbours(x, y, z);
-      return { accepted: true, previousType: current };
+      const changes = this.applyBreakWithFallingBlocks(x, y, z);
+      return { accepted: true, previousType: current, changes };
     }
     if (current !== CubeType.Air) {
-      return { accepted: false, previousType: current };
+      return { accepted: false, previousType: current, changes: [] };
     }
     const blockType = (action.blockType ?? CubeType.Dirt) as CubeType;
-    this.writeBlock(x, y, z, blockType);
-    return { accepted: true, previousType: CubeType.Air };
+    const shouldSettlePlacedBlock = action.settleOnPlace === true;
+    if (!shouldSettlePlacedBlock) {
+      this.writeBlock(x, y, z, blockType);
+      return {
+        accepted: true,
+        previousType: CubeType.Air,
+        changes: [{ x, y, z, blockType }],
+      };
+    }
+
+    const changes = this.applyPlaceWithFallingBlocks(x, y, z, blockType);
+    return { accepted: true, previousType: CubeType.Air, changes };
+  }
+
+  private applyBreakWithFallingBlocks(wx: number, wy: number, wz: number): BlockChange[] {
+    const changesByCoord = new Map<string, BlockChange>();
+    const recordChange = (x: number, y: number, z: number, blockType: number) => {
+      changesByCoord.set(`${x},${y},${z}`, { x, y, z, blockType });
+    };
+
+    this.writeBlock(wx, wy, wz, CubeType.Air);
+    this.activateFluidNeighbours(wx, wy, wz);
+    recordChange(wx, wy, wz, CubeType.Air);
+
+    // Only blocks above the removed support can become unsupported.
+    this.settleUnsupportedColumn(wx, wy + 1, wz, recordChange);
+
+    return [...changesByCoord.values()];
+  }
+
+  private applyPlaceWithFallingBlocks(wx: number, wy: number, wz: number, blockType: CubeType): BlockChange[] {
+    const changesByCoord = new Map<string, BlockChange>();
+    const recordChange = (x: number, y: number, z: number, type: number) => {
+      changesByCoord.set(`${x},${y},${z}`, { x, y, z, blockType: type });
+    };
+
+    this.writeBlock(wx, wy, wz, blockType);
+    recordChange(wx, wy, wz, blockType);
+
+    // New placements in unsupported air should settle immediately.
+    this.settleUnsupportedColumn(wx, wy, wz, recordChange);
+
+    return [...changesByCoord.values()];
+  }
+
+  private settleUnsupportedColumn(
+    wx: number,
+    startY: number,
+    wz: number,
+    recordChange: (x: number, y: number, z: number, blockType: number) => void,
+  ): void {
+    // Bottom-up so moved lower blocks become support for upper blocks in the
+    // same pass, preserving stack order when multiple blocks fall.
+    for (let scanY = Math.max(1, startY); scanY < CHUNK_HEIGHT; scanY++) {
+      const blockType = this.readCachedBlock(wx, scanY, wz);
+      if (!this.shouldFallWhenUnsupported(blockType)) continue;
+      if (this.readCachedBlock(wx, scanY - 1, wz) !== CubeType.Air) continue;
+
+      let destinationY = scanY;
+      while (destinationY > 0 && this.readCachedBlock(wx, destinationY - 1, wz) === CubeType.Air) {
+        destinationY--;
+      }
+      if (destinationY === scanY) continue;
+
+      this.writeBlock(wx, scanY, wz, CubeType.Air);
+      this.writeBlock(wx, destinationY, wz, blockType);
+      this.activateFluidNeighbours(wx, scanY, wz);
+      this.activateFluidNeighbours(wx, destinationY, wz);
+      recordChange(wx, scanY, wz, CubeType.Air);
+      recordChange(wx, destinationY, wz, blockType);
+    }
+  }
+
+  private readCachedBlock(wx: number, wy: number, wz: number): CubeType | undefined {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
+    const resolved = this.resolveChunk(wx, wz);
+    if (!resolved) return undefined;
+    const { entry, lx, lz } = resolved;
+    return (entry.chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air) as CubeType;
+  }
+
+  private shouldFallWhenUnsupported(blockType: CubeType | undefined): blockType is CubeType {
+    return blockType === CubeType.Sand;
   }
 
   /**

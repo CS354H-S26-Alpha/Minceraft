@@ -82,13 +82,18 @@ export class BlockSystem implements GameSystem {
         y: action.y,
         z: action.z,
         blockType: action.blockType,
+        settleOnPlace: action.action === "place",
       },
       { x: pos.x, z: pos.z },
     );
     this.pushAck(playerId, action.seq, result.accepted);
     if (result.accepted) {
-      const blockType = action.action === "break" ? CubeType.Air : (action.blockType ?? CubeType.Dirt);
-      this.pendingChanges.push({ x: action.x, y: action.y, z: action.z, blockType });
+      if (result.changes.length > 0) {
+        this.pendingChanges.push(...result.changes);
+      } else {
+        const blockType = action.action === "break" ? CubeType.Air : (action.blockType ?? CubeType.Dirt);
+        this.pendingChanges.push({ x: action.x, y: action.y, z: action.z, blockType });
+      }
     }
   }
 
