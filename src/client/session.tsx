@@ -1,10 +1,10 @@
 import { newWebSocketRpcSession } from "capnweb";
 import { createContext, createResource, onCleanup, type ParentProps, Show, useContext } from "solid-js";
-import type { GameApi, PlayerCredentials, RoomSessionApi, RoomSnapshot } from "../game/protocol";
+import type { GameApi, PlayerCredentials, RoomSessionApi, ServerTick } from "../game/protocol";
 
 interface SessionContextValue {
   credentials: PlayerCredentials;
-  join(roomId: string, onSnapshot: (snap: RoomSnapshot) => void): Promise<RoomSessionApi>;
+  join(roomId: string, onTick: (tick: ServerTick) => void): Promise<RoomSessionApi>;
 }
 
 const SessionContext = createContext<SessionContextValue>();
@@ -24,7 +24,7 @@ export function SessionProvider(props: { name: string } & ParentProps) {
     const [auth, credentials] = await Promise.all([authPromise, authPromise.credentials]);
     return {
       credentials,
-      join: (roomId: string, onSnapshot: (snap: RoomSnapshot) => void) => auth.join(roomId, onSnapshot),
+      join: (roomId: string, onTick: (tick: ServerTick) => void) => auth.join(roomId, onTick),
     } satisfies SessionContextValue;
   });
 

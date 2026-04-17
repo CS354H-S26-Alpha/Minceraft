@@ -10,6 +10,7 @@ function transferBatchData(data: ChunkBatchData): ChunkBatchData {
     transferables.push(
       chunk.cubePositions.buffer as ArrayBuffer,
       chunk.cubeColors.buffer as ArrayBuffer,
+      chunk.cubeAmbientOcclusion.buffer as ArrayBuffer,
       chunk.surfaceHeights.buffer as ArrayBuffer,
       chunk.surfaceTypes.buffer as ArrayBuffer,
     );
@@ -26,6 +27,12 @@ const api: ChunkWorkerApi = {
 
   async generateNext(args) {
     const data = queue.generateNext(args);
+    if (!data) return null;
+    return transferBatchData(data);
+  },
+
+  async tickFluids(args) {
+    const data = queue.tickFluids(args);
     if (!data) return null;
     return transferBatchData(data);
   },

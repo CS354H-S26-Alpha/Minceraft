@@ -7,7 +7,12 @@ export interface SingleChunkData {
   originZ: number;
   cubePositions: Float32Array;
   cubeColors: Float32Array;
+  /** Packed block grid (CubeType per voxel), indexed `y*S*S + z*S + x`. */
+  blocks: Uint8Array;
+  cubeAmbientOcclusion: Uint8Array;
+  /** Detached copy of surface Y per column, indexed `z*S + x`. */
   surfaceHeights: Uint8Array;
+  /** Detached copy of surface block type per column, indexed `z*S + x`. */
   surfaceTypes: Uint8Array;
   numCubes: number;
 }
@@ -32,6 +37,8 @@ export interface ChunkQueueArgs {
   originX: number;
   originZ: number;
   renderDistance: number;
+  loadDistance?: number;
+  evictDistance?: number;
   seed: number;
   chunkOrigins: ChunkOrigin[];
 }
@@ -39,6 +46,7 @@ export interface ChunkQueueArgs {
 export interface ChunkWorkerApi {
   setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
   generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  tickFluids(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
 }
 
 /** Comlink wrapper for the chunk generation web worker. */
@@ -52,6 +60,10 @@ export class ChunkWorkerClient {
 
   generateNext(args: ChunkQueueArgs) {
     return this.remote.generateNext(args);
+  }
+
+  tickFluids(args: ChunkQueueArgs) {
+    return this.remote.tickFluids(args);
   }
 
   dispose(): void {

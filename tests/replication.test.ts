@@ -24,13 +24,13 @@ const S = (
     ...overrides,
   });
 
-const I = (dx: number, dy: number, dz: number) => ({
+const I = (dx: number, dz: number, jump = false) => ({
   dx,
-  dy,
   dz,
   dtSeconds: 1,
   yaw: 0,
   pitch: 0,
+  jump,
 });
 
 function makeReplicated(x = 0, z = 0) {
@@ -49,8 +49,8 @@ describe("LocalPrediction", () => {
   it("replays unacked inputs after initialize", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(1, 0));
 
     replicated.initialize(S({ x: 5 }));
 
@@ -60,9 +60,9 @@ describe("LocalPrediction", () => {
   it("acknowledge does not affect local prediction replay", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(1, 0));
 
     replicated.acknowledge(2);
     replicated.initialize(S({ x: PLAYER_SPEED * 2 }));
@@ -73,12 +73,12 @@ describe("LocalPrediction", () => {
   it("replaces local state on initialize before future local movement", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
-    replicated.predict(I(0, 0, 1));
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
+    replicated.predict(I(0, 1));
+    replicated.predict(I(1, 0));
 
     replicated.acknowledge(1);
-    replicated.predict(I(0, 0, 1));
+    replicated.predict(I(0, 1));
     replicated.acknowledge(3);
 
     replicated.initialize(S({ x: PLAYER_SPEED * 2, z: PLAYER_SPEED }));
@@ -90,10 +90,10 @@ describe("LocalPrediction", () => {
   it("predict applies input immediately", () => {
     const { player, replicated } = makeReplicated();
 
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED);
 
-    replicated.predict(I(1, 0, 0));
+    replicated.predict(I(1, 0));
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED * 2);
   });
 });

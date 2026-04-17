@@ -69,20 +69,25 @@ export class RenderPass {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indexBufferData, gl.STATIC_DRAW);
 
+    /* Setup Attribute Buffers */
+    this.attributeBuffers.forEach((attrBuffer) => {
+      attrBuffer.bufferId = gl.createBuffer() as WebGLBuffer;
+      gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
+      gl.bufferData(gl.ARRAY_BUFFER, attrBuffer.data, gl.STATIC_DRAW);
+    });
+
     /* Setup Attributes */
     this.attributes.forEach((attr) => {
       const attrLoc = gl.getAttribLocation(this.shaderProgram, attr.name);
       const attrBuffer = this.attributeBuffers.get(attr.bufferName);
-      if (attrBuffer) {
-        attrBuffer.bufferId = gl.createBuffer() as WebGLBuffer;
+      if (attrLoc >= 0 && attrBuffer) {
         gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
-        gl.bufferData(gl.ARRAY_BUFFER, attrBuffer.data, gl.STATIC_DRAW);
         gl.vertexAttribPointer(attrLoc, attr.size, attr.type, attr.normalized, attr.stride, attr.offset);
         gl.enableVertexAttribArray(attrLoc);
         if (this.instancedAttributes.has(attr.name)) {
           gl.vertexAttribDivisor(attrLoc, 1);
         }
-      } else {
+      } else if (!attrBuffer) {
         console.error("Attribute's buffer name not found", this);
       }
     });
@@ -313,4 +318,4 @@ class AttributeBuffer {
   }
 }
 
-type BufferData = Uint32Array | Float32Array | Int32Array;
+type BufferData = Uint32Array | Float32Array | Int32Array | Uint8Array;

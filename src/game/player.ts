@@ -1,9 +1,14 @@
 import { Vec3 } from "gl-matrix";
 import { Entity } from "./entity";
-import { ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
+import { getItemDamage, ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
 
-export const PLAYER_SPEED = 30;
+// minceraft yoinked
+export const PLAYER_SPEED = 4.317;
+export const PLAYER_GRAVITY = 32;
+export const PLAYER_JUMP_VELOCITY = 8.944;
+export const PLAYER_MAX_FALL_SPEED = 78.4;
 export const PLAYER_MAX_HEALTH = 20;
+export const PLAYER_EYE_OFFSET = 1.62;
 export const HOTBAR_SLOT_COUNT = 9;
 export const MAIN_INVENTORY_SLOT_COUNT = 27;
 export const INVENTORY_SLOT_COUNT = MAIN_INVENTORY_SLOT_COUNT + HOTBAR_SLOT_COUNT;
@@ -31,6 +36,7 @@ export interface PlayerPublicState {
 }
 
 export interface PlayerState extends PlayerPublicState {
+  vy: number;
   health: number;
   inventory: InventorySlot[];
   selectedHotbarSlot: number;
@@ -38,12 +44,16 @@ export interface PlayerState extends PlayerPublicState {
 
 export interface PlayerInput {
   dx: number;
-  dy: number;
   dz: number;
   dtSeconds: number;
   yaw: number;
   pitch: number;
+  jump: boolean;
 }
+
+const GROUND_EPSILON = 1e-3;
+
+export type CollisionQuery = (x: number, z: number, currentY: number) => number;
 
 export function createEmptyInventory(): InventorySlot[] {
   return Array.from({ length: INVENTORY_SLOT_COUNT }, () => null);
@@ -82,8 +92,29 @@ export function clampHotbarSlot(slotIndex: number): number {
   return Math.min(HOTBAR_SLOT_COUNT - 1, Math.max(0, Math.trunc(slotIndex)));
 }
 
+export function getSelectedHotbarInventoryIndex(selectedHotbarSlot: number): number {
+  return HOTBAR_START_INDEX + clampHotbarSlot(selectedHotbarSlot);
+}
+
+export function getSelectedHotbarItem(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): InventorySlot {
+  return state.inventory[getSelectedHotbarInventoryIndex(state.selectedHotbarSlot)] ?? null;
+}
+
+export function getHeldItemDamage(state: Pick<PlayerState, "inventory" | "selectedHotbarSlot">): number {
+  return getItemDamage(getSelectedHotbarItem(state)?.itemId);
+}
+
+export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) {
+  return {
+    x: state.x,
+    y: state.y + PLAYER_EYE_OFFSET,
+    z: state.z,
+  };
+}
+
 export function createPlayerState(
   args: PlayerPublicState & {
+    vy?: number;
     health?: number;
     inventory?: readonly InventorySlot[] | null;
     selectedHotbarSlot?: number;
@@ -91,6 +122,7 @@ export function createPlayerState(
 ): PlayerState {
   return {
     ...args,
+    vy: Number.isFinite(args.vy) ? (args.vy as number) : 0,
     health: normalizeHealth(args.health),
     inventory: args.inventory === undefined ? createStarterInventory() : normalizeInventory(args.inventory),
     selectedHotbarSlot: clampHotbarSlot(args.selectedHotbarSlot ?? DEFAULT_SELECTED_HOTBAR_SLOT),
@@ -105,7 +137,13 @@ export function clonePlayerState(state: PlayerState): PlayerState {
 }
 
 export function toPublicPlayerState(state: PlayerState): PlayerPublicState {
-  const { health: _health, inventory: _inventory, selectedHotbarSlot: _selectedHotbarSlot, ...publicState } = state;
+  const {
+    vy: _vy,
+    health: _health,
+    inventory: _inventory,
+    selectedHotbarSlot: _selectedHotbarSlot,
+    ...publicState
+  } = state;
   return publicState;
 }
 
@@ -154,8 +192,24 @@ export interface PlayerPositionPacket {
   pitch: number;
 }
 
+export interface PlayerAttackPacket {
+  targetPlayerId: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+}
+
 /** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
+  public static readonly CYLINDER_RADIUS = 0.3;
+  public static readonly CYLINDER_HEIGHT = 1.8;
+  /** Distance from feet to camera — Minecraft eye height. */
+  public static readonly EYE_OFFSET = PLAYER_EYE_OFFSET;
+
+  public collisionQuery: CollisionQuery | undefined = undefined;
+
   /** Unique player identifier (alias for `state.id`). */
   get id() {
     return this.state.id;
@@ -181,19 +235,28 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     return addItemToInventory(this.state.inventory, stack);
   }
 
+  takeDamage(amount: number): boolean {
+    if (!Number.isFinite(amount)) return false;
+    const damage = Math.max(0, Math.trunc(amount));
+    if (damage <= 0 || this.state.health <= 0) return false;
+    const nextHealth = Math.max(0, this.state.health - damage);
+    if (nextHealth === this.state.health) return false;
+    this.state.health = nextHealth;
+    return true;
+  }
+
   publicState(): PlayerPublicState {
     return toPublicPlayerState(this.state);
   }
 
   /**
-   * Applies one input frame: validates the input, normalises the movement
-   * vector to a constant speed, and clamps coordinates within world bounds.
-   * TODO: Handle sending new snapshot to client when movement on server is unexpected.
+   * Applies one input frame: updates facing, integrates horizontal intent at
+   * `PLAYER_SPEED`, and — when a `collisionQuery` is wired — applies gravity,
+   * jump, and per-axis collision against the voxel world.
    */
-  step({ dx, dy, dz, dtSeconds, yaw, pitch }: PlayerInput) {
+  step({ dx, dz, dtSeconds, yaw, pitch, jump }: PlayerInput) {
     if (
       !Number.isFinite(dx) ||
-      !Number.isFinite(dy) ||
       !Number.isFinite(dz) ||
       !Number.isFinite(dtSeconds) ||
       !Number.isFinite(yaw) ||
@@ -205,13 +268,62 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
     this.state.yaw = yaw;
     this.state.pitch = pitch;
-    const mag2 = dx * dx + dy * dy + dz * dz;
-    if (mag2 === 0) return;
-    const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
-    this.state.x = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.x + dx * inv));
-    this.state.y = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.y + dy * inv));
-    this.state.z = Math.max(-MAX_COORDINATE, Math.min(MAX_COORDINATE, this.state.z + dz * inv));
+
+    const currentX = this.state.x;
+    const currentY = this.state.y;
+    const currentZ = this.state.z;
+
+    const mag2 = dx * dx + dz * dz;
+    let nextX = currentX;
+    let nextZ = currentZ;
+    if (mag2 > 0) {
+      const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
+      nextX = clampCoord(currentX + dx * inv);
+      nextZ = clampCoord(currentZ + dz * inv);
+    }
+
+    if (this.collisionQuery === undefined) {
+      this.state.x = nextX;
+      this.state.z = nextZ;
+      return;
+    }
+
+    const minYAtNextXCurrentZ = this.collisionQuery(nextX, currentZ, currentY);
+    if (currentY < minYAtNextXCurrentZ) nextX = currentX;
+
+    const minYAtCurrentXNextZ = this.collisionQuery(currentX, nextZ, currentY);
+    if (currentY < minYAtCurrentXNextZ) nextZ = currentZ;
+
+    let floorY = this.collisionQuery(nextX, nextZ, currentY);
+    if (currentY < floorY) {
+      nextX = currentX;
+      nextZ = currentZ;
+      floorY = this.collisionQuery(currentX, currentZ, currentY);
+    }
+    const grounded = currentY - floorY < GROUND_EPSILON;
+
+    let vy = this.state.vy;
+    if (grounded && jump && vy <= 0) vy = PLAYER_JUMP_VELOCITY;
+    vy -= PLAYER_GRAVITY * dtSeconds;
+    if (vy < -PLAYER_MAX_FALL_SPEED) vy = -PLAYER_MAX_FALL_SPEED;
+
+    let nextY = clampCoord(currentY + vy * dtSeconds);
+    if (nextY < floorY) {
+      nextY = floorY;
+      vy = 0;
+    }
+
+    this.state.vy = vy;
+    this.state.x = nextX;
+    this.state.y = nextY;
+    this.state.z = nextZ;
   }
+}
+
+function clampCoord(v: number): number {
+  if (v > MAX_COORDINATE) return MAX_COORDINATE;
+  if (v < -MAX_COORDINATE) return -MAX_COORDINATE;
+  return v;
 }
 
 function normalizeInventorySlot(slot: InventorySlot | undefined): InventorySlot {

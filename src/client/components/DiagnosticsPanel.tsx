@@ -22,10 +22,10 @@ interface DiagnosticsPanelProps {
   computeTimeHistory: readonly number[];
   gpuTimeMs: number;
   gpuTimeHistory: readonly number[];
-  tps: number;
   mspt: number;
   msptHistory: readonly number[];
   snapsPerSec: number;
+  packetsPerSec: number;
   timeOfDayS: number;
   onSetTimeOfDay: (timeS: number) => void;
   onlinePlayers: readonly OnlinePlayer[];
@@ -179,7 +179,7 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         />
       </div>
       <div>
-        {props.tps} tps ({props.mspt.toFixed(2)}ms) · {props.snapsPerSec} snaps/s
+        {props.snapsPerSec} snaps/s · {props.packetsPerSec} pkts/s ({props.mspt.toFixed(2)}ms)
       </div>
       <div class="my-2">
         <Graph

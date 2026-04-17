@@ -5,6 +5,7 @@ import { CubeType } from "../src/client/engine/render/cube-types";
 
 class FakeChunk {
   public renderCount = 0;
+  public blocks = new Uint8Array(0);
 
   constructor(
     private readonly x: number,
@@ -25,6 +26,18 @@ class FakeChunk {
 
   public cubeColors(): Float32Array {
     return new Float32Array([1, 1, 1]);
+  }
+
+  public cubeAmbientOcclusion(): Uint8Array {
+    return new Uint8Array(24).fill(3);
+  }
+
+  public surfaceHeights(): Uint8Array {
+    return new Uint8Array([1]);
+  }
+
+  public surfaceTypes(): Uint8Array {
+    return new Uint8Array([CubeType.Stone]);
   }
 
   public numCubes(): number {
