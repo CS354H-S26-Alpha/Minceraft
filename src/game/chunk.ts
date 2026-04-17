@@ -1,4 +1,5 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: checks are bounded */
+import { decodeBinary, encodeBinary } from "@thi.ng/rle-pack";
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, Biome, sampleColumn, surfaceBlock } from "@/game/biome";
 import {
@@ -450,75 +451,23 @@ export const SECTIONS_PER_CHUNK =
   (CHUNK_SIZE / SECTION_SIZE) * (CHUNK_SIZE / SECTION_SIZE) * (CHUNK_HEIGHT / SECTION_SIZE);
 
 /**
- * Column-major RLE encoding for chunk block data. Iterates each (x,z) column
- * along the Y axis, emitting (blockType, runLength) pairs. Typical chunks
- * compress from 512 KB to ~40-50 KB.
+ * Binary RLE compression for chunk block data. Backed by `@thi.ng/rle-pack`'s
+ * `encodeBinary`/`decodeBinary` with an 8-bit word size (CubeType fits in a byte).
  */
-export function rleEncodeBlocks(blocks: Uint8Array, size: number): Uint8Array {
-  const maxPairs = size * size * CHUNK_HEIGHT; // absolute worst case
-  const buf = new Uint8Array(maxPairs * 2);
-  let writeIdx = 0;
-
-  for (let z = 0; z < size; z++) {
-    for (let x = 0; x < size; x++) {
-      let runType = blocks[0 * size * size + z * size + x]!;
-      let runLen = 1;
-
-      for (let y = 1; y < CHUNK_HEIGHT; y++) {
-        const bt = blocks[y * size * size + z * size + x]!;
-        if (bt === runType && runLen < 255) {
-          runLen++;
-        } else {
-          buf[writeIdx++] = runType;
-          buf[writeIdx++] = runLen;
-          runType = bt;
-          runLen = 1;
-        }
-      }
-      buf[writeIdx++] = runType;
-      buf[writeIdx++] = runLen;
-    }
-  }
-
-  return buf.slice(0, writeIdx);
+export function encodeBlocks(blocks: Uint8Array): Uint8Array {
+  return encodeBinary(blocks, blocks.length, 8);
 }
 
 /**
- * Decodes column-major RLE data back into a flat blocks array.
- * Returns the blocks Uint8Array (size × size × CHUNK_HEIGHT).
+ * Inverse of `encodeBlocks`. Throws if the decoded payload doesn't match the
+ * expected word size, so callers can fall back to regeneration.
  */
-export function rleDecodeBlocks(encoded: Uint8Array, size: number): Uint8Array {
-  const blocks = new Uint8Array(size * size * CHUNK_HEIGHT);
-  let readIdx = 0;
-
-  for (let z = 0; z < size; z++) {
-    for (let x = 0; x < size; x++) {
-      let y = 0;
-      while (y < CHUNK_HEIGHT) {
-        if (readIdx + 1 >= encoded.length) {
-          throw new Error(
-            `rleDecodeBlocks: unexpected end of encoded data at readIdx=${readIdx} (column x=${x}, z=${z}, y=${y})`,
-          );
-        }
-        const blockType = encoded[readIdx++]!;
-        const runLen = encoded[readIdx++]!;
-        if (runLen === 0) {
-          throw new Error(`rleDecodeBlocks: zero-length run at readIdx=${readIdx - 1} (column x=${x}, z=${z}, y=${y})`);
-        }
-        if (y + runLen > CHUNK_HEIGHT) {
-          throw new Error(
-            `rleDecodeBlocks: run of length ${runLen} at y=${y} exceeds CHUNK_HEIGHT=${CHUNK_HEIGHT} (column x=${x}, z=${z})`,
-          );
-        }
-        for (let i = 0; i < runLen; i++) {
-          blocks[y * size * size + z * size + x] = blockType;
-          y++;
-        }
-      }
-    }
+export function decodeBlocks(encoded: Uint8Array): Uint8Array {
+  const decoded = decodeBinary(encoded);
+  if (!(decoded instanceof Uint8Array)) {
+    throw new Error(`decodeBlocks: expected Uint8Array, got ${decoded.constructor.name}`);
   }
-
-  return blocks;
+  return decoded;
 }
 
 export class Chunk {

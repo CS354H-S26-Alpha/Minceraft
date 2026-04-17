@@ -37,7 +37,8 @@ import type { ServerPacket } from "./protocol";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const BASE_MOVEMENT_WINDOW_MS = 100;
-const MOVEMENT_TOLERANCE = 1;
+const MOVEMENT_TOLERANCE = 3;
+const DEATH_Y_THRESHOLD = -20;
 
 /**
  * Manages the set of players in a room — their in-memory state, latest pending
@@ -165,6 +166,10 @@ export class PlayerSystem implements GameSystem {
       this.pendingReconcile.add(playerId);
       return null;
     }
+    if (player.state.health <= 0) {
+      this.pendingReconcile.add(playerId);
+      return null;
+    }
     if (!this.isPlausibleMovement(player.state, packet, this.lastAcceptedAt.get(playerId) ?? Date.now())) {
       this.pendingReconcile.add(playerId);
       return null;
@@ -221,6 +226,15 @@ export class PlayerSystem implements GameSystem {
         this.dirty.add(id);
         changed = true;
       }
+    }
+    for (const [id, player] of this.players) {
+      if (player.state.health <= 0) continue;
+      if (player.state.y >= DEATH_Y_THRESHOLD) continue;
+      player.state.health = 0;
+      this.pendingPackets.delete(id);
+      this.pendingSelfStateSync.add(id);
+      this.dirty.add(id);
+      changed = true;
     }
     return changed;
   }
@@ -333,10 +347,9 @@ export class PlayerSystem implements GameSystem {
 
     this.dirty.add(target.id);
     if (target.state.health <= 0) {
-      this.respawnPlayer(target.id);
-    } else {
-      this.pendingSelfStateSync.add(target.id);
+      this.pendingPackets.delete(target.id);
     }
+    this.pendingSelfStateSync.add(target.id);
     return true;
   }
 
@@ -482,9 +495,9 @@ export class PlayerSystem implements GameSystem {
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
 
-  private respawnPlayer(playerId: string): void {
+  respawn(playerId: string): boolean {
     const player = this.players.get(playerId);
-    if (!player) return;
+    if (!player) return false;
 
     Object.assign(
       player.state,
@@ -499,6 +512,8 @@ export class PlayerSystem implements GameSystem {
     this.lastAcceptedAt.set(playerId, Date.now());
     this.pendingSelfStateSync.delete(playerId);
     this.pendingReconcile.add(playerId);
+    this.dirty.add(playerId);
+    return true;
   }
 }
 

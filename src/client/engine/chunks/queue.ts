@@ -1,4 +1,5 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: typed-array hot path with bounded indices */
+import { LRUCache } from "lru-cache";
 import { CubeType } from "@/client/engine/render/cube-types";
 import {
   CHUNK_HEIGHT,
@@ -6,9 +7,9 @@ import {
   chunkKey,
   chunkOrigin,
   computeHeightData,
+  decodeBlocks,
   type RenderBlockResult,
   renderBlockData,
-  rleDecodeBlocks,
   SECTION_SIZE,
   SECTIONS_PER_CHUNK,
   sectionIndex,
@@ -29,84 +30,6 @@ interface CachedChunkData {
   heightMap: Uint8Array;
   surfaceTypes: Uint8Array;
   sections: (SectionRenderData | null)[];
-}
-
-interface LRUNode {
-  key: string;
-  data: CachedChunkData;
-  prev: LRUNode | null;
-  next: LRUNode | null;
-}
-
-class LRUCache {
-  private readonly map = new Map<string, LRUNode>();
-  private head: LRUNode | null = null;
-  private tail: LRUNode | null = null;
-  private readonly capacity: number;
-
-  constructor(capacity: number) {
-    this.capacity = Math.max(1, capacity);
-  }
-
-  has(key: string): boolean {
-    return this.map.has(key);
-  }
-
-  get(key: string): CachedChunkData | undefined {
-    const node = this.map.get(key);
-    if (!node) return undefined;
-    this.moveToHead(node);
-    return node.data;
-  }
-
-  set(key: string, data: CachedChunkData): void {
-    const existing = this.map.get(key);
-    if (existing) {
-      existing.data = data;
-      this.moveToHead(existing);
-      return;
-    }
-
-    const node: LRUNode = { key, data, prev: null, next: this.head };
-    if (this.head) this.head.prev = node;
-    this.head = node;
-    if (!this.tail) this.tail = node;
-    this.map.set(key, node);
-
-    if (this.map.size > this.capacity) this.evictTail();
-  }
-
-  clear(): void {
-    this.map.clear();
-    this.head = null;
-    this.tail = null;
-  }
-
-  private moveToHead(node: LRUNode): void {
-    if (node === this.head) return;
-    this.unlink(node);
-    node.next = this.head;
-    node.prev = null;
-    if (this.head) this.head.prev = node;
-    this.head = node;
-    if (!this.tail) this.tail = node;
-  }
-
-  private evictTail(): void {
-    if (!this.tail) return;
-    const key = this.tail.key;
-    this.unlink(this.tail);
-    this.map.delete(key);
-  }
-
-  private unlink(node: LRUNode): void {
-    if (node.prev) node.prev.next = node.next;
-    else this.head = node.next;
-    if (node.next) node.next.prev = node.prev;
-    else this.tail = node.prev;
-    node.prev = null;
-    node.next = null;
-  }
 }
 
 const CARDINAL_OFFSETS: [number, number][] = [
@@ -230,18 +153,18 @@ function buildChunkData(ox: number, oz: number, cached: CachedChunkData, result:
   };
 }
 
-/** Receives server block data, decodes RLE, caches blocks, and builds render meshes. */
+/** Receives server block data, decodes it, caches blocks, and builds render meshes. */
 export class ChunkMeshBuilder {
-  private readonly cache: LRUCache;
+  private readonly cache: LRUCache<string, CachedChunkData>;
 
   constructor(cacheCapacity = 512) {
-    this.cache = new LRUCache(cacheCapacity);
+    this.cache = new LRUCache<string, CachedChunkData>({ max: Math.max(1, cacheCapacity) });
   }
 
   loadChunks(incoming: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): ChunkBatchData {
     for (const { originX, originZ, blocks: encoded } of incoming) {
       const key = chunkKey(originX, originZ);
-      const blocks = rleDecodeBlocks(encoded, CHUNK_SIZE);
+      const blocks = decodeBlocks(encoded);
       const { heightMap, surfaceTypes } = computeHeightData(blocks, CHUNK_SIZE);
       this.cache.set(key, { blocks, heightMap, surfaceTypes, sections: new Array(SECTIONS_PER_CHUNK).fill(null) });
     }

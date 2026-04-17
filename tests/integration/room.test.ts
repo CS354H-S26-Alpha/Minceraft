@@ -449,7 +449,7 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(caraLatest, "self")).toBeUndefined();
   });
 
-  it("respawns players with starter state and a reconcile after lethal damage", async () => {
+  it("marks players dead after lethal damage and respawns them on request", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
 
@@ -477,6 +477,13 @@ describe("GameRoom Durable Object", () => {
         });
         await room.runTick();
       }
+
+      const afterDeath = bobTicks[bobTicks.length - 1];
+      expect(findPacket(afterDeath, "self")?.state.health).toBe(0);
+      expect(findPacket(afterDeath, "reconcile")).toBeUndefined();
+
+      room.respawn("bob");
+      await room.runTick();
     });
 
     const latest = bobTicks[bobTicks.length - 1];

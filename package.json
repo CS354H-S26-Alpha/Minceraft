@@ -24,10 +24,12 @@
     "@solid-primitives/resize-observer": "^2.1.5",
     "@solid-primitives/storage": "^4.3.4",
     "@solid-primitives/timer": "^1.4.4",
+    "@thi.ng/rle-pack": "^3.2.5",
     "capnweb": "^0.6.1",
     "comlink": "^4.4.2",
     "drizzle-orm": "^0.45.2",
     "gl-matrix": "^4.0.0-beta.2",
+    "lru-cache": "^11.3.5",
     "rand-seed": "^3.0.0",
     "solid-js": "^1.9.12"
   },

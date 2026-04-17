@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ChunkMeshBuilder } from "../src/client/engine/chunks/queue";
 import { CubeType } from "../src/client/engine/render/cube-types";
-import { CHUNK_SIZE, rleEncodeBlocks } from "../src/game/chunk";
+import { CHUNK_SIZE, encodeBlocks } from "../src/game/chunk";
 
 function makeTestBlocks(): Uint8Array {
   const blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * 128);
@@ -22,7 +22,7 @@ describe("ChunkMeshBuilder", () => {
   it("builds meshes from RLE-encoded blocks", () => {
     const builder = new ChunkMeshBuilder();
     const blocks = makeTestBlocks();
-    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
+    const encoded = encodeBlocks(blocks);
 
     const batch = builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
     expect(batch.chunks.length).toBeGreaterThan(0);
@@ -36,7 +36,7 @@ describe("ChunkMeshBuilder", () => {
   it("returns surfaceHeights and surfaceTypes", () => {
     const builder = new ChunkMeshBuilder();
     const blocks = makeTestBlocks();
-    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
+    const encoded = encodeBlocks(blocks);
 
     const batch = builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
     const chunk = batch.chunks.find((c) => c.originX === 0 && c.originZ === 0);
@@ -48,7 +48,7 @@ describe("ChunkMeshBuilder", () => {
   it("caches blocks and re-renders neighbors on new chunk load", () => {
     const builder = new ChunkMeshBuilder();
     const blocks = makeTestBlocks();
-    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
+    const encoded = encodeBlocks(blocks);
 
     // Load first chunk
     builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
@@ -63,7 +63,7 @@ describe("ChunkMeshBuilder", () => {
   it("clearCache removes all data", () => {
     const builder = new ChunkMeshBuilder();
     const blocks = makeTestBlocks();
-    const encoded = rleEncodeBlocks(blocks, CHUNK_SIZE);
+    const encoded = encodeBlocks(blocks);
 
     builder.loadChunks([{ originX: 0, originZ: 0, blocks: encoded }]);
     builder.clearCache();

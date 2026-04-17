@@ -112,6 +112,8 @@ export interface RoomSessionApi {
   requestState(): void;
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number): void;
+  /** Respawns this player at the world spawn with starter state. */
+  respawn(): void;
   /** Interacts with the inventory or crafting UI. */
   clickInventory(target: InventoryClickTarget): void;
   /** Returns crafting/cursor items back to the player's inventory. */

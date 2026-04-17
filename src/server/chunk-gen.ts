@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { CHUNK_SIZE, Chunk, rleEncodeBlocks } from "@/game/chunk";
+import { CHUNK_SIZE, Chunk, encodeBlocks } from "@/game/chunk";
 
 /**
  * Stateless Worker entrypoint for chunk generation. Called via a self-service
@@ -9,6 +9,6 @@ import { CHUNK_SIZE, Chunk, rleEncodeBlocks } from "@/game/chunk";
 export class ChunkGen extends WorkerEntrypoint<Env> {
   generateChunk(originX: number, originZ: number, seed: number): Uint8Array {
     const chunk = new Chunk(originX, originZ, CHUNK_SIZE, seed, true);
-    return rleEncodeBlocks(chunk.blocks, CHUNK_SIZE);
+    return encodeBlocks(chunk.blocks);
   }
 }

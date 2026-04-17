@@ -8,7 +8,8 @@
   "observability": {
     "enabled": true,
     "traces": {
-      "enabled": true
+      "enabled": true,
+      "persist": true
     },
     "logs": {
       "enabled": true
@@ -17,6 +18,11 @@
   "env": {
     "staging": {
       "workers_dev": true,
+      "observability": {
+        "traces": {
+          "enabled": true
+        }
+      },
       "durable_objects": {
         "bindings": [
           {
