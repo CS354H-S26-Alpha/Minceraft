@@ -41,8 +41,8 @@ export class BlockSystem implements GameSystem {
   constructor(storage: ChunkStorage, playerSystem: PlayerSystem, opts?: BlockSystemOptions) {
     this.storage = storage;
     this.playerSystem = playerSystem;
-    this.initialLoadRadius = opts?.initialLoadRadius ?? 5;
-    this.loadRadius = opts?.loadRadius ?? 4;
+    this.initialLoadRadius = opts?.initialLoadRadius ?? 9;
+    this.loadRadius = opts?.loadRadius ?? 8;
   }
 
   hydrate(_db: DrizzleSqliteDODatabase<typeof schema>): void {}

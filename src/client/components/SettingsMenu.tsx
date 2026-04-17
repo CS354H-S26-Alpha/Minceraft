@@ -13,11 +13,6 @@ interface SettingsMenuProps {
   onShowDiagnosticsInput: (value: boolean) => void;
 }
 
-const RENDER_DISTANCE_OPTIONS = Array.from(
-  { length: MAX_RENDER_DISTANCE - MIN_RENDER_DISTANCE + 1 },
-  (_, i) => MIN_RENDER_DISTANCE + i,
-);
-
 export function SettingsMenu(props: SettingsMenuProps) {
   return (
     <div class="absolute inset-0 z-40 flex items-center justify-center bg-[linear-gradient(rgba(0,0,0,0.46),rgba(0,0,0,0.62)),linear-gradient(45deg,rgba(255,255,255,0.05)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.05)_50%,rgba(255,255,255,0.05)_75%,transparent_75%,transparent)] bg-[length:100%_100%,16px_16px] px-4 py-6">
@@ -88,22 +83,19 @@ export function SettingsMenu(props: SettingsMenuProps) {
 
         <div class="mt-4">
           <SettingCard label="Chunk Render Distance">
-            <div class="grid gap-2 sm:grid-cols-4">
-              {RENDER_DISTANCE_OPTIONS.map((distance) => (
-                <button
-                  type="button"
-                  class="border-2 px-3 py-3 text-center font-mono text-sm font-bold tracking-[0.04em] [text-shadow:0_2px_0_rgba(0,0,0,0.72)] transition focus:outline-none focus:ring-2 focus:ring-white/70"
-                  classList={{
-                    "border-black bg-[linear-gradient(180deg,#b8b8b8,#8d8d8d)] text-white [box-shadow:inset_0_1px_0_rgba(255,255,255,0.38),inset_0_-2px_0_rgba(0,0,0,0.32)]":
-                      props.preferences.renderDistance === distance,
-                    "border-black bg-[linear-gradient(180deg,#8c8c8c,#696969)] text-[#ededed] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.18),inset_0_-2px_0_rgba(0,0,0,0.32)] hover:bg-[linear-gradient(180deg,#9a9a9a,#747474)]":
-                      props.preferences.renderDistance !== distance,
-                  }}
-                  onClick={() => props.onRenderDistanceInput(distance)}
-                >
-                  {distance} ring
-                </button>
-              ))}
+            <div class="flex items-center gap-3">
+              <input
+                type="range"
+                min={MIN_RENDER_DISTANCE}
+                max={MAX_RENDER_DISTANCE}
+                step="1"
+                value={props.preferences.renderDistance}
+                class="w-full accent-[#d7d7d7]"
+                onInput={(event) => props.onRenderDistanceInput(Number(event.currentTarget.value))}
+              />
+              <div class="w-20 text-right font-mono text-sm font-bold tracking-[0.04em] text-white [text-shadow:0_1px_0_rgba(0,0,0,0.7)]">
+                {props.preferences.renderDistance} ring{props.preferences.renderDistance === 1 ? "" : "s"}
+              </div>
             </div>
             <p class="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-[#dcdcdc]">
               1 ring matches the assignment's 3x3 active chunk target.
