@@ -3,11 +3,7 @@ import playerFSText from "../render/shaders/player.frag";
 import playerVSText from "../render/shaders/player.vert";
 import type { EntityPassDef, EntityPipelineConfig } from "./pipeline";
 import { createPlayerModelGeometry } from "./player-model";
-import {
-  interpolatePlayerRenderState,
-  packPlayerRenderStates,
-  type PlayerRenderState,
-} from "./player-render-state";
+import { interpolatePlayerRenderState, type PlayerRenderState, packPlayerRenderStates } from "./player-render-state";
 
 const playerGeometry = createPlayerModelGeometry();
 

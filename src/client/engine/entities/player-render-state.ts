@@ -85,11 +85,7 @@ function hslToRgb(hue: number, saturation: number, lightness: number): [number, 
 
   const q = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
   const p = 2 * lightness - q;
-  return [
-    hueChannel(p, q, hue + 1 / 3),
-    hueChannel(p, q, hue),
-    hueChannel(p, q, hue - 1 / 3),
-  ];
+  return [hueChannel(p, q, hue + 1 / 3), hueChannel(p, q, hue), hueChannel(p, q, hue - 1 / 3)];
 }
 
 function hueChannel(p: number, q: number, t: number): number {

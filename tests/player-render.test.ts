@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PLAYER_EYE_OFFSET, PLAYER_SPEED, type PlayerPublicState } from "../src/game/player";
 import {
   interpolatePlayerRenderState,
   packPlayerRenderStates,
   shirtColorFromName,
 } from "../src/client/engine/entities/player-render-state";
+import { PLAYER_EYE_OFFSET, PLAYER_SPEED, type PlayerPublicState } from "../src/game/player";
 
 function createPublicPlayerState(overrides: Partial<PlayerPublicState> = {}): PlayerPublicState {
   return {
