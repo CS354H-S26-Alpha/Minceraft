@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { CubeType } from "@/client/engine/render/cube-types";
 import type * as schema from "../server/schema";
 import * as playerSchema from "../server/schema";
 import {
@@ -34,7 +35,6 @@ import {
 } from "./player";
 import { canTargetPlayer } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
-import { CubeType } from "@/client/engine/render/cube-types";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const BASE_MOVEMENT_WINDOW_MS = 100;
