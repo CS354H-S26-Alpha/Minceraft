@@ -11,6 +11,7 @@ export const roomConfig = sqliteTable("room_config", {
 export const chunks = sqliteTable("chunks", {
   key: text("key").primaryKey(),
   data: blob("data").notNull().$type<Uint8Array>(),
+  fluidLevels: blob("fluid_levels").$type<Uint8Array>(),
 });
 
 export const players = sqliteTable("players", {

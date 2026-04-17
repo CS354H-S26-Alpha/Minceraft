@@ -484,8 +484,21 @@ export function rleDecodeBlocks(encoded: Uint8Array, size: number): Uint8Array {
     for (let x = 0; x < size; x++) {
       let y = 0;
       while (y < CHUNK_HEIGHT) {
+        if (readIdx + 1 >= encoded.length) {
+          throw new Error(
+            `rleDecodeBlocks: unexpected end of encoded data at readIdx=${readIdx} (column x=${x}, z=${z}, y=${y})`,
+          );
+        }
         const blockType = encoded[readIdx++]!;
         const runLen = encoded[readIdx++]!;
+        if (runLen === 0) {
+          throw new Error(`rleDecodeBlocks: zero-length run at readIdx=${readIdx - 1} (column x=${x}, z=${z}, y=${y})`);
+        }
+        if (y + runLen > CHUNK_HEIGHT) {
+          throw new Error(
+            `rleDecodeBlocks: run of length ${runLen} at y=${y} exceeds CHUNK_HEIGHT=${CHUNK_HEIGHT} (column x=${x}, z=${z})`,
+          );
+        }
         for (let i = 0; i < runLen; i++) {
           blocks[y * size * size + z * size + x] = blockType;
           y++;
@@ -527,43 +540,141 @@ export class Chunk {
   // adjacent cell opens up later (e.g. via mining).
   private activeFluids: Set<number> = new Set();
 
-  constructor(centerX: number, centerY: number, size: number, seed: number, skipRender = false) {
+  // Highest Y at which this chunk has ever held a fluid cell (-1 = never).
+  // Conservative upper bound: not decremented on decay/harden, so it stays
+  // useful even after fluids retreat. Used to cap boundary-priming scans.
+  private maxFluidY_: number = -1;
+
+  constructor(
+    centerX: number,
+    centerY: number,
+    size: number,
+    seed: number,
+    skipRender = false,
+    prefilled?: { blocks: Uint8Array; fluidLevels?: Uint8Array },
+  ) {
     this.x = centerX;
     this.y = centerY;
     this.size = size;
     this.seed = seed;
 
-    this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
     this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-    this.fluidLevels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
 
-    this.generateCubes();
+    if (prefilled) {
+      this.blocks = prefilled.blocks;
+      this.fluidLevels = prefilled.fluidLevels ?? new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
+      this.buildHeightMap();
+    } else {
+      this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
+      this.fluidLevels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
+      this.generateCubes();
+    }
+
     this.seedActiveFluids();
-    if (!skipRender) this.renderChunk();
+    if (!skipRender && !prefilled) this.renderChunk();
+  }
+
+  /** Returns the number of fluid cells queued for the next tick. */
+  public get activeFluidCount(): number {
+    return this.activeFluids.size;
+  }
+
+  /** Upper-bound Y of any fluid ever placed in this chunk (-1 if none). */
+  public get maxFluidY(): number {
+    return this.maxFluidY_;
   }
 
   /**
-   * Collects every fluid voxel placed during terrain generation into the
-   * active-fluid queue. Generated fluids are all sources (level 0), so no
-   * level initialisation is required — the zero-default on `fluidLevels` is
-   * already correct.
+   * Rebuilds heightMap/surfaceTypesMap from the current `blocks` array. Used
+   * when hydrating a Chunk from persisted data instead of terrain generation.
+   */
+  private buildHeightMap(): void {
+    const S = this.size;
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const hmIdx = z * CHUNK_SIZE + x;
+        let topY = -1;
+        let topType: CubeType = CubeType.Air;
+        for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+          const t = this.blocks[y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x] as CubeType;
+          if (t !== CubeType.Air) {
+            topY = y;
+            topType = t;
+            break;
+          }
+        }
+        this.heightMap[hmIdx] = topY < 0 ? 0 : topY;
+        this.surfaceTypesMap[hmIdx] = topType;
+      }
+    }
+  }
+
+  /**
+   * Collects fluid voxels that could still act (have an adjacent air cell,
+   * opposing fluid, or sit on a chunk boundary where spillover may reach a
+   * neighbour chunk) into the active-fluid queue. Interior sources that are
+   * fully surrounded by same-fluid are left out; they get re-woken by
+   * `activateCellIfFluid` / `activateFluidNeighbours` whenever an adjacent
+   * cell changes. Generated fluids are all sources (level 0).
    */
   private seedActiveFluids(): void {
     const S = this.size;
-    // blocks is stored on a CHUNK_SIZE × CHUNK_SIZE grid regardless of `size`;
-    // the S parameter only bounds which voxels are populated.
+    let maxY = -1;
     for (let y = 0; y < CHUNK_HEIGHT; y++) {
       for (let z = 0; z < S; z++) {
         const zOffset = y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE;
         for (let x = 0; x < S; x++) {
           const t = this.blocks[zOffset + x];
-          if (t === CubeType.Water || t === CubeType.Lava) {
+          if (t !== CubeType.Water && t !== CubeType.Lava) continue;
+          if (y > maxY) maxY = y;
+          if (this.canFluidAct(x, y, z, t as CubeType.Water | CubeType.Lava)) {
             this.activeFluids.add(packPos(x, y, z));
           }
         }
       }
     }
+    this.maxFluidY_ = maxY;
+  }
+
+  /**
+   * True iff a fluid at (lx, ly, lz) has at least one in-chunk neighbour
+   * (below, ±X, ±Z) it could plausibly act on next tick — an Air or
+   * opposing-fluid cell. Used to cull stable interior sources from
+   * `activeFluids` so per-tick iteration is proportional to the fluid
+   * *surface*, not volume. Cells on the chunk boundary whose in-chunk
+   * neighbours are all unreactive still return false; the cross-chunk
+   * neighbour is handled out-of-band by `primeAgainstNeighbor` (called
+   * when a neighbour chunk loads) and `chunk-storage.activateFluidNeighbours`
+   * (called on block breaks).
+   */
+  private canFluidAct(lx: number, ly: number, lz: number, type: CubeType.Water | CubeType.Lava): boolean {
+    const S = this.size;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const rowStride = CHUNK_SIZE;
+    const opp = opposingFluid(type);
+    if (ly > 0) {
+      const b = this.blocks[(ly - 1) * stride + lz * rowStride + lx];
+      if (b === CubeType.Air || b === opp) return true;
+    }
+    const py = ly * stride;
+    if (lx + 1 < S) {
+      const bE = this.blocks[py + lz * rowStride + lx + 1];
+      if (bE === CubeType.Air || bE === opp) return true;
+    }
+    if (lx > 0) {
+      const bW = this.blocks[py + lz * rowStride + lx - 1];
+      if (bW === CubeType.Air || bW === opp) return true;
+    }
+    if (lz + 1 < S) {
+      const bN = this.blocks[py + (lz + 1) * rowStride + lx];
+      if (bN === CubeType.Air || bN === opp) return true;
+    }
+    if (lz > 0) {
+      const bS = this.blocks[py + (lz - 1) * rowStride + lx];
+      if (bS === CubeType.Air || bS === opp) return true;
+    }
+    return false;
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -857,6 +968,7 @@ export class Chunk {
     this.blocks[idx] = type;
     this.fluidLevels[idx] = level;
     this.activeFluids.add(packPos(lx, ly, lz));
+    if (ly > this.maxFluidY_) this.maxFluidY_ = ly;
     const hmIdx = lz * CHUNK_SIZE + lx;
     if (ly > this.heightMap[hmIdx]!) {
       this.heightMap[hmIdx] = ly;
@@ -889,6 +1001,7 @@ export class Chunk {
       this.blocks[idx] = type;
       this.fluidLevels[idx] = level;
       this.activeFluids.add(packPos(lx, ly, lz));
+      if (ly > this.maxFluidY_) this.maxFluidY_ = ly;
       const hmIdx = lz * CHUNK_SIZE + lx;
       if (ly > this.heightMap[hmIdx]!) {
         this.heightMap[hmIdx] = ly;
@@ -943,6 +1056,64 @@ export class Chunk {
     this.heightMap[hmIdx] = -1;
     this.surfaceTypesMap[hmIdx] = CubeType.Air;
   }
+  /**
+   * Scans the face of this chunk adjacent to `neighbor` (specified by a
+   * unit step `(dx, dz)` from `this` to `neighbor` in world space) and
+   * activates any fluid cell whose cross-chunk neighbour in `neighbor`
+   * is Air or opposing fluid — i.e. cells that could flow out on the
+   * next tick. Called by `ChunkStorage` after a chunk is loaded so
+   * boundary sources that weren't seeded by local `canFluidAct` get
+   * woken once the adjacent chunk is present.
+   */
+  public primeAgainstNeighbor(neighbor: Chunk, dx: number, dz: number): void {
+    const maxY = Math.min(CHUNK_HEIGHT - 1, Math.max(this.maxFluidY_, neighbor.maxFluidY_));
+    if (maxY < 0) return;
+    const S = this.size;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const rowStride = CHUNK_SIZE;
+
+    if (dx !== 0) {
+      const thisLx = dx === 1 ? S - 1 : 0;
+      const otherLx = dx === 1 ? 0 : S - 1;
+      for (let y = 0; y <= maxY; y++) {
+        const rowBase = y * stride;
+        for (let z = 0; z < S; z++) {
+          const t = this.blocks[rowBase + z * rowStride + thisLx];
+          if (t !== CubeType.Water && t !== CubeType.Lava) continue;
+          const o = neighbor.blocks[rowBase + z * rowStride + otherLx];
+          const opp = t === CubeType.Water ? CubeType.Lava : CubeType.Water;
+          if (o === CubeType.Air || o === opp) {
+            this.activeFluids.add(packPos(thisLx, y, z));
+          }
+        }
+      }
+    } else {
+      const thisLz = dz === 1 ? S - 1 : 0;
+      const otherLz = dz === 1 ? 0 : S - 1;
+      for (let y = 0; y <= maxY; y++) {
+        const rowBase = y * stride;
+        for (let x = 0; x < S; x++) {
+          const t = this.blocks[rowBase + thisLz * rowStride + x];
+          if (t !== CubeType.Water && t !== CubeType.Lava) continue;
+          const o = neighbor.blocks[rowBase + otherLz * rowStride + x];
+          const opp = t === CubeType.Water ? CubeType.Lava : CubeType.Water;
+          if (o === CubeType.Air || o === opp) {
+            this.activeFluids.add(packPos(x, y, thisLz));
+          }
+        }
+      }
+    }
+  }
+
+  /** Adds (lx, ly, lz) to the active-fluids queue if it contains Water/Lava. No-op otherwise. */
+  public activateCellIfFluid(lx: number, ly: number, lz: number): void {
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_HEIGHT) return;
+    const t = this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx];
+    if (t === CubeType.Water || t === CubeType.Lava) {
+      this.activeFluids.add(packPos(lx, ly, lz));
+    }
+  }
+
   private activateFluidNeighbours(lx: number, ly: number, lz: number): void {
     const candidates: readonly [number, number, number][] = [
       [lx + 1, ly, lz],
@@ -1019,7 +1190,9 @@ export class Chunk {
    * Returns true iff any block changed.
    */
   public tickFluids(
-    spillover?: (wx: number, wy: number, wz: number, type: CubeType.Water | CubeType.Lava, level: number) => void,
+    spillover?: (wx: number, wy: number, wz: number, type: CubeType.Water | CubeType.Lava, level: number) => boolean,
+    onChange?: (wx: number, wy: number, wz: number, blockType: CubeType) => void,
+    tickLava = true,
   ): boolean {
     if (this.activeFluids.size === 0) return false;
     const S = this.size;
@@ -1027,6 +1200,12 @@ export class Chunk {
     const rowStride = CHUNK_SIZE;
     const topleftx = this.x - this.size / 2;
     const topleftz = this.y - this.size / 2;
+    const emit = onChange
+      ? (lx: number, ly: number, lz: number) => {
+          const bt = this.blocks[ly * stride + lz * rowStride + lx] as CubeType;
+          onChange(topleftx + lx, ly, topleftz + lz, bt);
+        }
+      : undefined;
 
     const current = this.activeFluids;
     const nextActive: Set<number> = new Set();
@@ -1055,7 +1234,14 @@ export class Chunk {
       const idx = y * stride + z * rowStride + x;
       const type = this.blocks[idx] as CubeType;
       if (type !== CubeType.Water && type !== CubeType.Lava) continue; // stale entry (removed since last tick)
+      if (!tickLava && type === CubeType.Lava) {
+        // Lava runs on a slower cadence than water; keep the cell active so it
+        // processes on the next lava tick.
+        nextActive.add(pos);
+        continue;
+      }
       const level = this.fluidLevels[idx]!;
+      const opp = type === CubeType.Water ? CubeType.Lava : CubeType.Water;
 
       if (level !== FLUID_SOURCE_LEVEL && !this.isFluidSupported(x, y, z, type, level)) {
         decayX.push(x);
@@ -1074,12 +1260,13 @@ export class Chunk {
           changeType.push(type);
           changeLevel.push(1);
           flowedDown = true;
-        } else if (this.blocks[belowIdx] === opposingFluid(type)) {
+        } else if (this.blocks[belowIdx] === opp) {
           // Falling onto the opposite fluid hardens it directly; the flow
           // stops as if it had hit solid ground.
           this.blocks[belowIdx] = CubeType.Stone;
           this.fluidLevels[belowIdx] = 0;
           this.activateFluidNeighbours(x, y - 1, z);
+          emit?.(x, y - 1, z);
           anyChange = true;
         }
       }
@@ -1092,9 +1279,8 @@ export class Chunk {
           const nx = x + dx;
           const nz = z + dz;
           if (nx < 0 || nx >= S || nz < 0 || nz >= S) {
-            if (spillover) {
-              spillover(topleftx + nx, y, topleftz + nz, type, nextLevel);
-              spreadLaterally = true; // we tried; cross-chunk result is authoritative there
+            if (spillover?.(topleftx + nx, y, topleftz + nz, type, nextLevel)) {
+              spreadLaterally = true;
             }
             continue;
           }
@@ -1107,21 +1293,21 @@ export class Chunk {
             changeType.push(type);
             changeLevel.push(nextLevel);
             spreadLaterally = true;
-          } else if (nType === opposingFluid(type)) {
+          } else if (nType === opp) {
             this.blocks[nIdx] = CubeType.Stone;
             this.fluidLevels[nIdx] = 0;
             this.activateFluidNeighbours(nx, y, nz);
+            emit?.(nx, y, nz);
             anyChange = true;
           }
         }
       }
 
-      // Keep anything that might still be interesting next tick:
-      //   - sources (can always re-spawn flows if neighbours open up)
-      //   - cells that did something this tick
-      // Stable flowing cells drop off; they are re-woken by
-      // `activateFluidNeighbours` when a neighbouring cell changes.
-      if (level === FLUID_SOURCE_LEVEL || flowedDown || spreadLaterally) {
+      // Fully-surrounded sources drop out; re-woken by `activateCellIfFluid`
+      // / `activateFluidNeighbours` on any neighbouring cell change.
+      if (flowedDown || spreadLaterally) {
+        nextActive.add(pos);
+      } else if (level === FLUID_SOURCE_LEVEL && this.canFluidAct(x, y, z, type)) {
         nextActive.add(pos);
       }
     }
@@ -1140,6 +1326,7 @@ export class Chunk {
       this.blocks[idx] = CubeType.Air;
       this.fluidLevels[idx] = 0;
       this.activateFluidNeighbours(x, y, z);
+      emit?.(x, y, z);
       anyChange = true;
     }
 
@@ -1148,7 +1335,10 @@ export class Chunk {
       const x = changeX[n]!;
       const y = changeY[n]!;
       const z = changeZ[n]!;
-      if (this.applyFluidFlow(x, y, z, changeType[n]!, changeLevel[n]!)) anyChange = true;
+      if (this.applyFluidFlow(x, y, z, changeType[n]!, changeLevel[n]!)) {
+        emit?.(x, y, z);
+        anyChange = true;
+      }
     }
 
     return anyChange;

@@ -10,6 +10,7 @@ import * as schema from "../server/schema";
 import { BlockSystem, type BlockSystemOptions } from "./block-system";
 import { ChunkStorage } from "./chunk-storage";
 import type { InventoryClickTarget } from "./crafting";
+import { FluidSystem } from "./fluid-system";
 import type { GameSystem } from "./game-system";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
 import { PlayerSystem } from "./player-system";
@@ -106,11 +107,13 @@ export class GameRoom extends DurableObject<Env> {
     this.chunkStorage.hydrate(seed);
 
     this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
-    this.systems = [this.playerSystem, this.blockSystem];
+    const fluidSystem = new FluidSystem(this.chunkStorage);
+    this.systems = [this.playerSystem, this.blockSystem, fluidSystem];
 
     for (const system of this.systems) {
       system.hydrate(this.db);
     }
+    console.log("GameRoom initialized");
   }
 
   private getOrCreateSeed(): number {
@@ -256,7 +259,13 @@ export class GameRoom extends DurableObject<Env> {
       const tickStart = performance.now();
       this.gameTick++;
       for (const system of this.systems) {
+        const tickStart = performance.now();
         const changed = await system.tick();
+        const tickMs = performance.now() - tickStart;
+        if (tickMs > 20) {
+          console.warn(`System ${system.constructor.name} tick took ${tickMs.toFixed(1)}ms`);
+        }
+
         if (changed) this.needsBroadcast = true;
       }
       this.lastTickTimeMs = performance.now() - tickStart;
@@ -271,6 +280,10 @@ export class GameRoom extends DurableObject<Env> {
       if (this.listeners.size === 0) {
         this.stopTickLoop();
         if (this.hasDirty()) this.flushAll();
+      }
+
+      if (this.lastTickTimeMs > TICK_MS) {
+        console.warn(`Tick ${this.gameTick} took ${this.lastTickTimeMs.toFixed(1)}ms`);
       }
     } finally {
       this.tickRunning = false;

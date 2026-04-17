@@ -1,0 +1,1 @@
+ALTER TABLE `chunks` ADD `fluid_levels` blob;

@@ -25,12 +25,21 @@ export interface ChunkBlob {
 }
 
 interface ChunkEntry {
-  blocks: Uint8Array;
+  chunk: Chunk;
   encoded: Uint8Array | undefined;
+  encodedFluidLevels: Uint8Array | undefined;
 }
 
 /** Cap on in-memory chunks. Each chunk is 512KB (Uint8Array of CHUNK_SIZE²·CHUNK_HEIGHT). */
 const MAX_MEMORY_CHUNKS = 160;
+
+/** World-space deltas to the 4 cardinal neighbour chunks. */
+const CARDINAL_CHUNK_DELTAS = [
+  [CHUNK_SIZE, 0],
+  [-CHUNK_SIZE, 0],
+  [0, CHUNK_SIZE],
+  [0, -CHUNK_SIZE],
+] as const;
 
 type ChunkGenService = Service<typeof ChunkGen>;
 type ChunkDb = DrizzleSqliteDODatabase<typeof schema>;
@@ -72,7 +81,17 @@ export class ChunkStorage {
     const lx = wx - (originX - CHUNK_SIZE / 2);
     const lz = wz - (originZ - CHUNK_SIZE / 2);
     if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return CubeType.Air;
-    return (entry.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air) as CubeType;
+    return (entry.chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air) as CubeType;
+  }
+
+  /** Returns the cached `Chunk` instance, or `null` if the chunk isn't loaded. */
+  getChunk(originX: number, originZ: number): Chunk | null {
+    return this.chunks.get(chunkKey(originX, originZ))?.chunk ?? null;
+  }
+
+  /** Iterates loaded `Chunk` instances. Consumers must not retain references past the next eviction. */
+  *loadedChunks(): IterableIterator<Chunk> {
+    for (const entry of this.chunks.values()) yield entry.chunk;
   }
 
   /**
@@ -95,6 +114,7 @@ export class ChunkStorage {
         return { accepted: false, previousType: current };
       }
       this.writeBlock(x, y, z, CubeType.Air);
+      this.activateFluidNeighbours(x, y, z);
       return { accepted: true, previousType: current };
     }
     if (current !== CubeType.Air) {
@@ -103,6 +123,34 @@ export class ChunkStorage {
     const blockType = (action.blockType ?? CubeType.Dirt) as CubeType;
     this.writeBlock(x, y, z, blockType);
     return { accepted: true, previousType: CubeType.Air };
+  }
+
+  /**
+   * Wakes any fluid cell adjacent to world coord (wx, wy, wz). Each of the six
+   * axis-aligned neighbours may live in a different chunk (across boundaries);
+   * unloaded chunks are skipped. No block state is mutated — only the owning
+   * chunk's `activeFluids` queue is updated — so no cache invalidation needed.
+   */
+  private activateFluidNeighbours(wx: number, wy: number, wz: number): void {
+    for (const [dx, dy, dz] of [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+      [0, 1, 0],
+      [0, -1, 0],
+    ] as const) {
+      const nx = wx + dx;
+      const ny = wy + dy;
+      const nz = wz + dz;
+      if (ny < 0 || ny >= CHUNK_HEIGHT) continue;
+      const [ox, oz] = chunkOrigin(nx, nz);
+      const entry = this.chunks.get(chunkKey(ox, oz));
+      if (!entry) continue;
+      const lx = nx - (ox - CHUNK_SIZE / 2);
+      const lz = nz - (oz - CHUNK_SIZE / 2);
+      entry.chunk.activateCellIfFluid(lx, ny, lz);
+    }
   }
 
   /**
@@ -120,7 +168,7 @@ export class ChunkStorage {
       const entry = this.chunks.get(key);
       if (entry) {
         this.touch(key);
-        hits.push({ originX, originZ, blocks: this.encodedOf(entry) });
+        hits.push({ originX, originZ, blocks: this.encodedBlocks(entry) });
       } else {
         misses.push({ originX, originZ });
       }
@@ -149,7 +197,7 @@ export class ChunkStorage {
       const key = chunkKey(originX, originZ);
       const entry = this.chunks.get(key);
       if (!entry) continue;
-      result.push({ originX, originZ, blocks: this.encodedOf(entry) });
+      result.push({ originX, originZ, blocks: this.encodedBlocks(entry) });
     }
     this.preGenerateNeighbors(generated);
     this.maybeEvict();
@@ -160,16 +208,32 @@ export class ChunkStorage {
     return this.dirtyChunks.size > 0;
   }
 
+  /**
+   * Marks the chunk containing (wx, wz) as dirty so its next flush persists the
+   * current state. Used by systems (e.g., fluid sim) that mutate `chunk.blocks`
+   * or `chunk.fluidLevels` directly, bypassing `writeBlock`.
+   */
+  markDirty(wx: number, wz: number): void {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const key = chunkKey(originX, originZ);
+    const entry = this.chunks.get(key);
+    if (!entry) return;
+    entry.encoded = undefined;
+    entry.encodedFluidLevels = undefined;
+    this.dirtyChunks.add(key);
+  }
+
   /** Persists every dirty chunk to SQLite and clears the dirty set. */
   flush(): void {
     for (const key of this.dirtyChunks) {
       const entry = this.chunks.get(key);
       if (!entry) continue;
-      const data = this.encodedOf(entry);
+      const data = this.encodedBlocks(entry);
+      const fluidLevels = this.encodedFluidLevels(entry);
       this.db
         .insert(schema.chunks)
-        .values({ key, data })
-        .onConflictDoUpdate({ target: schema.chunks.key, set: { data } })
+        .values({ key, data, fluidLevels })
+        .onConflictDoUpdate({ target: schema.chunks.key, set: { data, fluidLevels } })
         .run();
     }
     this.dirtyChunks.clear();
@@ -182,7 +246,7 @@ export class ChunkStorage {
     if (!entry) return;
     const lx = wx - (originX - CHUNK_SIZE / 2);
     const lz = wz - (originZ - CHUNK_SIZE / 2);
-    entry.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = blockType;
+    entry.chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = blockType;
     entry.encoded = undefined;
     this.dirtyChunks.add(key);
   }
@@ -194,25 +258,69 @@ export class ChunkStorage {
 
     const row = this.db.select().from(schema.chunks).where(eq(schema.chunks.key, key)).get();
     if (row) {
-      const encoded = new Uint8Array(row.data);
-      this.chunks.set(key, { blocks: rleDecodeBlocks(encoded, CHUNK_SIZE), encoded });
-      return true;
+      try {
+        const encoded = new Uint8Array(row.data);
+        const encodedFluidLevels = row.fluidLevels ? new Uint8Array(row.fluidLevels) : undefined;
+        const blocks = rleDecodeBlocks(encoded, CHUNK_SIZE);
+        const fluidLevels = encodedFluidLevels ? rleDecodeBlocks(encodedFluidLevels, CHUNK_SIZE) : undefined;
+        const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true, { blocks, fluidLevels });
+        this.chunks.set(key, { chunk, encoded, encodedFluidLevels });
+        this.primeFluidBoundaries(originX, originZ);
+        return true;
+      } catch (err) {
+        console.error(`Failed to decode chunk (${originX}, ${originZ}) from SQLite, will regenerate:`, err);
+      }
     }
 
     if (this.chunkGen) {
       const encoded = new Uint8Array(await this.chunkGen.generateChunk(originX, originZ, this.seed));
-      this.chunks.set(key, { blocks: rleDecodeBlocks(encoded, CHUNK_SIZE), encoded });
+      const blocks = rleDecodeBlocks(encoded, CHUNK_SIZE);
+      const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true, { blocks });
+      this.chunks.set(key, { chunk, encoded, encodedFluidLevels: undefined });
     } else {
       // Tests and local fallback: generate inline.
       const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true);
-      this.chunks.set(key, { blocks: chunk.blocks, encoded: undefined });
+      this.chunks.set(key, { chunk, encoded: undefined, encodedFluidLevels: undefined });
     }
+    this.primeFluidBoundaries(originX, originZ);
     return false;
   }
 
-  private encodedOf(entry: ChunkEntry): Uint8Array {
-    if (!entry.encoded) entry.encoded = rleEncodeBlocks(entry.blocks, CHUNK_SIZE);
+  /**
+   * After a chunk at (originX, originZ) is loaded, activates any boundary
+   * fluid cell in it — or in its 4 cardinal neighbours — that has a
+   * cross-chunk neighbour of Air or opposing fluid. Complements
+   * `Chunk.canFluidAct` (which only sees in-chunk neighbours) so fluids
+   * along shared boundaries are correctly woken without keeping every
+   * boundary cell permanently active.
+   */
+  private primeFluidBoundaries(originX: number, originZ: number): void {
+    const thisChunk = this.getChunk(originX, originZ);
+    if (!thisChunk) return;
+    for (const [dwx, dwz] of CARDINAL_CHUNK_DELTAS) {
+      const neighbor = this.getChunk(originX + dwx, originZ + dwz);
+      if (!neighbor) continue;
+      // Skip if neither chunk has any fluid on the shared face — saves the
+      // CHUNK_HEIGHT × CHUNK_SIZE scan for dry (e.g. mountain, desert surface)
+      // chunk pairs, which dominate initial world exploration.
+      if (thisChunk.maxFluidY < 0 && neighbor.maxFluidY < 0) continue;
+      const dx = Math.sign(dwx);
+      const dz = Math.sign(dwz);
+      thisChunk.primeAgainstNeighbor(neighbor, dx, dz);
+      neighbor.primeAgainstNeighbor(thisChunk, -dx, -dz);
+    }
+  }
+
+  private encodedBlocks(entry: ChunkEntry): Uint8Array {
+    if (!entry.encoded) entry.encoded = rleEncodeBlocks(entry.chunk.blocks, CHUNK_SIZE);
     return entry.encoded;
+  }
+
+  private encodedFluidLevels(entry: ChunkEntry): Uint8Array {
+    if (!entry.encodedFluidLevels) {
+      entry.encodedFluidLevels = rleEncodeBlocks(entry.chunk.fluidLevels, CHUNK_SIZE);
+    }
+    return entry.encodedFluidLevels;
   }
 
   private touch(key: string): void {
@@ -246,12 +354,7 @@ export class ChunkStorage {
       const [oxStr, ozStr] = key.split(",");
       const ox = Number(oxStr);
       const oz = Number(ozStr);
-      for (const [dx, dz] of [
-        [CHUNK_SIZE, 0],
-        [-CHUNK_SIZE, 0],
-        [0, CHUNK_SIZE],
-        [0, -CHUNK_SIZE],
-      ] as const) {
+      for (const [dx, dz] of CARDINAL_CHUNK_DELTAS) {
         const neighborKey = chunkKey(ox + dx, oz + dz);
         if (!this.chunks.has(neighborKey)) toPreGen.add(neighborKey);
       }
