@@ -1,3 +1,4 @@
+export { createEnemySnapshotTracker, enemyPassDef, enemyPipelineConfig } from "./enemy";
 export { LocalPrediction } from "./local-prediction";
 export type { EntityDrawData, EntityPassDef, EntityPipelineConfig, GpuBuffers } from "./pipeline";
 export { createEntityPipeline, ensureBuffer } from "./pipeline";

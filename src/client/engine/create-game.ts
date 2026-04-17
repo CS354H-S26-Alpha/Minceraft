@@ -1,6 +1,6 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
-import { Vec3 } from "gl-matrix";
+import { type Mat4, Vec3 } from "gl-matrix";
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { CubeType } from "@/client/engine/render/cube-types";
@@ -8,7 +8,7 @@ import { CHUNK_SIZE } from "@/game/chunk";
 import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
-import { findTargetedPlayerId } from "@/game/player-targeting";
+import { findTargetedEnemyHit, findTargetedPlayerHit, findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -16,8 +16,10 @@ import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import {
+  createEnemySnapshotTracker,
   createEntityPipeline,
   type EntityDrawData,
+  enemyPipelineConfig,
   type GpuBuffers,
   packPlacedObjects,
   packPlacedRocks,
@@ -26,12 +28,23 @@ import {
   playerPassDef,
   playerPipelineConfig,
 } from "./entities";
+import {
+  ATTACK_ANIM_RANGE,
+  ATTACK_CYCLE_MS,
+  computeFootOffset,
+  loadRobotMesh,
+  poseAttackArms,
+  poseSkeletonForPhase,
+  WALK_CYCLE_HZ,
+} from "./entities/enemy-skinning";
 import { createInput, type InputOptions } from "./input";
 import type { RaycastHit } from "./raycast";
 import { raycastVoxels } from "./raycast";
+import type { EnemyDrawState } from "./render/enemy-pass";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
 import { SceneLighting } from "./scene-lighting";
+import type { Mesh } from "./skinning/Mesh";
 
 export interface CreateGameArgs {
   glCanvas: () => HTMLCanvasElement | undefined;
@@ -98,6 +111,11 @@ export interface MinimapApi {
 
 export interface GameState extends Readonly<MutableGameState> {
   readonly minimap: MinimapApi;
+  readonly projectWorldToScreen: (
+    x: number,
+    y: number,
+    z: number,
+  ) => { x: number; y: number; depth: number } | undefined;
 }
 
 /** Sliding window for FPS / TPS / snap-rate averaging. */
@@ -158,6 +176,21 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
+  const remoteEnemies = createEntityPipeline(enemyPipelineConfig);
+  const enemySnapshots = createEnemySnapshotTracker();
+
+  // Robot mesh for skinned enemy rendering. Loaded async; until it resolves
+  // enemies are invisible (the cube pass was removed).
+  let robotMesh: Mesh | undefined;
+  let robotMeshUploaded = false;
+  let footOffset = 0;
+  const enemyPhaseOffsets = new Map<string, number>();
+  loadRobotMesh()
+    .then((mesh) => {
+      robotMesh = mesh;
+      footOffset = computeFootOffset(mesh);
+    })
+    .catch((err) => console.error("Failed to load enemy robot mesh", err));
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const packetMeter = createRateMeter(FPS_WINDOW_MS);
@@ -248,11 +281,47 @@ export function createGame(args: CreateGameArgs): GameState {
     s.sendBlockAction({ seq, action: "place", x: placeX, y: placeY, z: placeZ, blockType });
   };
 
+  const handleAttack = () => {
+    const player = room().player();
+    const session = room().session();
+    const camera = ctx?.camera;
+    if (!player || !session || !camera) return;
+
+    const now = performance.now();
+    const yaw = camera.yaw();
+    const pitch = camera.pitch();
+    const targetPlayer = findTargetedPlayerHit(
+      { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+      remotePlayers.states(now),
+    );
+    const targetEnemy = findTargetedEnemyHit(
+      { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+      remoteEnemies.states(now),
+    );
+    if (!targetPlayer && !targetEnemy) return;
+
+    const targetPlayerId =
+      targetPlayer && (!targetEnemy || targetPlayer.distance <= targetEnemy.distance) ? targetPlayer.id : undefined;
+    const targetEnemyId =
+      targetEnemy && (!targetPlayer || targetEnemy.distance < targetPlayer.distance) ? targetEnemy.id : undefined;
+
+    session.attack({
+      targetPlayerId,
+      targetEnemyId,
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw,
+      pitch,
+    });
+  };
+
   const input = createInput(args.glCanvas, {
     onReset: handleReset,
     onLeftClick: handleLeftClick,
     onRightClick: handleRightClick,
     ...args.shortcuts,
+    onAttack: handleAttack,
   });
 
   // TODO: refactor to be general packet handling rather than only inputs
@@ -299,7 +368,6 @@ export function createGame(args: CreateGameArgs): GameState {
   let fogFar = lastRenderDistance * CHUNK_SIZE;
   let fogNear = fogFar * 0.92;
   const fogColor = new Float32Array(3);
-
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
     const player = room().player();
@@ -394,6 +462,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
+      remoteEnemies.onSnapshot(enemySnapshots.decorate(unwrap(room().remoteEnemies), now), now);
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
@@ -428,12 +497,56 @@ export function createGame(args: CreateGameArgs): GameState {
     fogColor.set(lighting.backgroundColor.subarray(0, 3));
 
     // --- Render ---
-    const { buffers, count } = remotePlayers.frame(now);
+    const { buffers: playerBuffers, count: playerCount } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [
-      { key: "players", buffers, count },
+      { key: "players", buffers: playerBuffers, count: playerCount },
       { key: "placed-objects", buffers: placedObjectBuffers, count: renderedFoliageCount },
       { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
     ];
+
+    // Upload robot mesh to the GPU the first frame it's available.
+    if (robotMesh && !robotMeshUploaded) {
+      renderer.loadEnemyMesh(robotMesh);
+      robotMeshUploaded = true;
+    }
+
+    // Build skinned draw states from the interpolated server snapshots.
+    let skinnedEnemies: EnemyDrawState[] | undefined;
+    if (robotMesh && robotMeshUploaded) {
+      const enemyStates = remoteEnemies.states(now);
+      skinnedEnemies = [];
+      for (const enemy of enemyStates) {
+        // Per-enemy phase offset so they don't walk in lockstep.
+        if (!enemyPhaseOffsets.has(enemy.id)) enemyPhaseOffsets.set(enemy.id, Math.random());
+        const phaseOffset = enemyPhaseOffsets.get(enemy.id) ?? 0;
+        const phase = ((now / 1000) * WALK_CYCLE_HZ + phaseOffset) % 1;
+
+        poseSkeletonForPhase(robotMesh, phase);
+
+        // If the enemy is within attack range, override arm bones with a slam.
+        const dx = enemy.x - player.state.x;
+        const dz = enemy.z - player.state.z;
+        const distToPlayer = Math.sqrt(dx * dx + dz * dz);
+        if (distToPlayer < ATTACK_ANIM_RANGE) {
+          const attackPhase = (now % ATTACK_CYCLE_MS) / ATTACK_CYCLE_MS;
+          poseAttackArms(robotMesh, attackPhase);
+        }
+
+        skinnedEnemies.push({
+          viewMatrix,
+          projMatrix,
+          lightPosition: lighting.lightPosition,
+          ambientColor: lighting.ambientColor,
+          sunColor: lighting.sunColor,
+          offset: new Float32Array([enemy.x, enemy.y + 0.7 + footOffset, enemy.z]),
+          yaw: enemy.yaw,
+          flash: enemy.flash,
+          boneTranslations: robotMesh.getBoneTranslations(),
+          boneRotations: robotMesh.getBoneRotations(),
+        });
+      }
+    }
+
     renderer.render({
       viewMatrix,
       projMatrix,
@@ -452,6 +565,7 @@ export function createGame(args: CreateGameArgs): GameState {
       fogNear,
       fogFar,
       entities,
+      skinnedEnemies,
       highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
     });
 
@@ -499,5 +613,78 @@ export function createGame(args: CreateGameArgs): GameState {
       radiusBlocks: chunks.minimapRadiusBlocks,
       sampleSurface: (wx, wz) => chunks.sampleSurface(wx, wz),
     },
+    projectWorldToScreen: (x, y, z) => {
+      const gl = args.glCanvas();
+      const camera = ctx?.camera;
+      if (!gl || !camera) return undefined;
+      return projectWorldToScreen(x, y, z, camera.viewMatrix(), camera.projMatrix(), gl.clientWidth, gl.clientHeight);
+    },
+  };
+}
+
+function projectWorldToScreen(
+  x: number,
+  y: number,
+  z: number,
+  viewMatrix: Mat4,
+  projMatrix: Mat4,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const v0 = viewMatrix[0] ?? 0;
+  const v1 = viewMatrix[1] ?? 0;
+  const v2 = viewMatrix[2] ?? 0;
+  const v3 = viewMatrix[3] ?? 0;
+  const v4 = viewMatrix[4] ?? 0;
+  const v5 = viewMatrix[5] ?? 0;
+  const v6 = viewMatrix[6] ?? 0;
+  const v7 = viewMatrix[7] ?? 0;
+  const v8 = viewMatrix[8] ?? 0;
+  const v9 = viewMatrix[9] ?? 0;
+  const v10 = viewMatrix[10] ?? 0;
+  const v11 = viewMatrix[11] ?? 0;
+  const v12 = viewMatrix[12] ?? 0;
+  const v13 = viewMatrix[13] ?? 0;
+  const v14 = viewMatrix[14] ?? 0;
+  const v15 = viewMatrix[15] ?? 0;
+
+  const p0 = projMatrix[0] ?? 0;
+  const p1 = projMatrix[1] ?? 0;
+  const p2 = projMatrix[2] ?? 0;
+  const p3 = projMatrix[3] ?? 0;
+  const p4 = projMatrix[4] ?? 0;
+  const p5 = projMatrix[5] ?? 0;
+  const p6 = projMatrix[6] ?? 0;
+  const p7 = projMatrix[7] ?? 0;
+  const p8 = projMatrix[8] ?? 0;
+  const p9 = projMatrix[9] ?? 0;
+  const p10 = projMatrix[10] ?? 0;
+  const p11 = projMatrix[11] ?? 0;
+  const p12 = projMatrix[12] ?? 0;
+  const p13 = projMatrix[13] ?? 0;
+  const p14 = projMatrix[14] ?? 0;
+  const p15 = projMatrix[15] ?? 0;
+
+  const vx = v0 * x + v4 * y + v8 * z + v12;
+  const vy = v1 * x + v5 * y + v9 * z + v13;
+  const vz = v2 * x + v6 * y + v10 * z + v14;
+  const vw = v3 * x + v7 * y + v11 * z + v15;
+
+  const cx = p0 * vx + p4 * vy + p8 * vz + p12 * vw;
+  const cy = p1 * vx + p5 * vy + p9 * vz + p13 * vw;
+  const cz = p2 * vx + p6 * vy + p10 * vz + p14 * vw;
+  const cw = p3 * vx + p7 * vy + p11 * vz + p15 * vw;
+
+  if (cw <= 0) return undefined;
+
+  const ndcX = cx / cw;
+  const ndcY = cy / cw;
+  const ndcZ = cz / cw;
+  if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2 || ndcZ < -1 || ndcZ > 1) return undefined;
+
+  return {
+    x: (ndcX + 1) * 0.5 * viewportWidth,
+    y: (1 - ndcY) * 0.5 * viewportHeight,
+    depth: ndcZ,
   };
 }

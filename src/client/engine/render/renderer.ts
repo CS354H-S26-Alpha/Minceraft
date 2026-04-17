@@ -2,8 +2,10 @@ import type { Mat4 } from "gl-matrix";
 import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
+import type { Mesh } from "../skinning/Mesh";
 import { BlockHighlight } from "./block-highlight";
 import { Cube } from "./cube";
+import { type EnemyDrawState, EnemyPass } from "./enemy-pass";
 import { GpuTimer } from "./gpu-timer";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
@@ -38,6 +40,7 @@ export interface RenderView {
   /** Horizontal distance at which fog fully obscures fragments (blocks). */
   fogFar: number;
   entities: EntityDrawData[];
+  skinnedEnemies?: EnemyDrawState[];
   highlightBlock?: { x: number; y: number; z: number };
 }
 
@@ -54,6 +57,7 @@ export class Renderer {
   private readonly cloudRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
+  private readonly enemyPass: EnemyPass;
   private readonly blockHighlight: BlockHighlight;
   readonly gpuTimer: GpuTimer;
 
@@ -88,6 +92,12 @@ export class Renderer {
         instancedAttributes: def.instancedAttributes,
       });
     }
+
+    this.enemyPass = new EnemyPass(this.ctx);
+  }
+
+  loadEnemyMesh(mesh: Mesh): void {
+    this.enemyPass.loadMesh(mesh);
   }
 
   render(view: RenderView): void {
@@ -150,7 +160,21 @@ export class Renderer {
         view.highlightBlock.z,
       );
     }
-
+    if (view.skinnedEnemies) {
+      for (const enemy of view.skinnedEnemies) this.enemyPass.draw(enemy);
+    }
+    this.drawClouds();
+    if (view.highlightBlock) {
+      this.blockHighlight.draw(
+        view.viewMatrix,
+        view.projMatrix,
+        this.canvas.width,
+        this.canvas.height,
+        view.highlightBlock.x,
+        view.highlightBlock.y,
+        view.highlightBlock.z,
+      );
+    }
     this.gpuTimer.end();
   }
 

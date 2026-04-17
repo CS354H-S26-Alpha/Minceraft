@@ -24,6 +24,7 @@ import {
   MAX_COORDINATE,
   normalizeInventory,
   PLAYER_MAX_FALL_SPEED,
+  PLAYER_MAX_HEALTH,
   PLAYER_SPEED,
   Player,
   type PlayerAttackPacket,
@@ -327,35 +328,54 @@ export class PlayerSystem implements GameSystem {
     return true;
   }
 
-  attack(attackerId: string, packet: PlayerAttackPacket, onlinePlayerIds: ReadonlySet<string>): boolean {
+  attack(
+    attackerId: string,
+    packet: PlayerAttackPacket,
+    onlinePlayerIds: ReadonlySet<string>,
+    attackEnemy?: (attacker: Player, packet: PlayerAttackPacket) => boolean,
+  ): boolean {
     if (!this.isValidAttackPacket(packet)) return false;
     const attacker = this.players.get(attackerId);
     if (!attacker || attacker.state.health <= 0 || !onlinePlayerIds.has(attackerId)) return false;
-    if (!this.isPlausibleAttack(attacker.state, packet, this.lastAcceptedAt.get(attackerId) ?? Date.now()))
+    if (!this.isPlausibleAttack(attacker.state, packet, this.lastAcceptedAt.get(attackerId) ?? Date.now())) {
       return false;
-    if (packet.targetPlayerId === attackerId) return false;
-
-    const target = this.players.get(packet.targetPlayerId);
-    if (!target || target.state.health <= 0 || !onlinePlayerIds.has(packet.targetPlayerId)) return false;
-    if (!canTargetPlayer(packet, target.state)) return false;
+    }
 
     const attackerTurned = attacker.state.yaw !== packet.yaw || attacker.state.pitch !== packet.pitch;
     attacker.state.yaw = packet.yaw;
     attacker.state.pitch = packet.pitch;
     if (attackerTurned) this.dirty.add(attackerId);
-    if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
 
-    this.dirty.add(target.id);
-    if (target.state.health <= 0) {
-      this.pendingPackets.delete(target.id);
+    if (packet.targetEnemyId) {
+      return attackEnemy?.(attacker, packet) ?? false;
     }
-    this.pendingSelfStateSync.add(target.id);
-    return true;
+
+    const targetPlayerId = packet.targetPlayerId;
+    if (!targetPlayerId || targetPlayerId === attackerId) return false;
+    const target = this.players.get(targetPlayerId);
+    if (!target || target.state.health <= 0 || !onlinePlayerIds.has(targetPlayerId)) return false;
+    if (!canTargetPlayer(packet, target.state)) return false;
+    return this.applyDamageToPlayer(target.id, getHeldItemDamage(attacker.state), onlinePlayerIds);
+  }
+
+  damagePlayer(playerId: string, amount: number, onlinePlayerIds: ReadonlySet<string>): boolean {
+    const player = this.players.get(playerId);
+    if (!player || player.state.health <= 0 || !onlinePlayerIds.has(playerId)) return false;
+    return this.applyDamageToPlayer(playerId, amount, onlinePlayerIds);
   }
 
   /** Returns `true` if any player has unsaved changes. */
   hasDirty(): boolean {
     return this.dirty.size > 0;
+  }
+
+  onlinePlayers(onlinePlayerIds: ReadonlySet<string>): PlayerPublicState[] {
+    const result: PlayerPublicState[] = [];
+    for (const [id, player] of this.players) {
+      if (!onlinePlayerIds.has(id)) continue;
+      result.push(player.publicState());
+    }
+    return result;
   }
 
   /** UPSERTs all dirty players to SQLite and clears the dirty set. */
@@ -461,9 +481,13 @@ export class PlayerSystem implements GameSystem {
   }
 
   private isValidAttackPacket(packet: PlayerAttackPacket): boolean {
+    const targetCount = Number(Boolean(packet.targetPlayerId)) + Number(Boolean(packet.targetEnemyId));
     return (
-      typeof packet.targetPlayerId === "string" &&
-      packet.targetPlayerId.length > 0 &&
+      targetCount === 1 &&
+      (packet.targetPlayerId === undefined ||
+        (typeof packet.targetPlayerId === "string" && packet.targetPlayerId.length > 0)) &&
+      (packet.targetEnemyId === undefined ||
+        (typeof packet.targetEnemyId === "string" && packet.targetEnemyId.length > 0)) &&
       Number.isFinite(packet.x) &&
       Number.isFinite(packet.y) &&
       Number.isFinite(packet.z) &&
@@ -474,7 +498,6 @@ export class PlayerSystem implements GameSystem {
       Math.abs(packet.z) <= MAX_COORDINATE
     );
   }
-
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
     const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
@@ -484,7 +507,6 @@ export class PlayerSystem implements GameSystem {
     const dz = packet.z - prev.z;
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
-
   private isPlausibleAttack(prev: PlayerState, packet: PlayerAttackPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
     const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
@@ -493,6 +515,34 @@ export class PlayerSystem implements GameSystem {
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
+  }
+
+  private applyDamageToPlayer(playerId: string, amount: number, onlinePlayerIds: ReadonlySet<string>): boolean {
+    const player = this.players.get(playerId);
+    if (!player || player.state.health <= 0 || !onlinePlayerIds.has(playerId)) return false;
+    if (!player.takeDamage(amount)) return false;
+
+    this.dirty.add(playerId);
+    if (player.state.health <= 0) {
+      this.respawnPlayer(playerId, player);
+    } else {
+      this.pendingSelfStateSync.add(playerId);
+    }
+    return true;
+  }
+
+  private respawnPlayer(playerId: string, player: Player) {
+    player.state.x = SPAWN_POSITION.x;
+    player.state.y = SPAWN_POSITION.y;
+    player.state.z = SPAWN_POSITION.z;
+    player.state.yaw = SPAWN_POSITION.yaw;
+    player.state.pitch = SPAWN_POSITION.pitch;
+    player.state.vy = 0;
+    player.state.health = PLAYER_MAX_HEALTH;
+    this.pendingPackets.delete(playerId);
+    this.lastAcceptedAt.set(playerId, Date.now());
+    this.pendingSelfStateSync.delete(playerId);
+    this.pendingReconcile.add(playerId);
   }
 
   respawn(playerId: string): boolean {

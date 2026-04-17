@@ -3,6 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
 import { createInventoryUiState } from "@/game/crafting";
+import type { EnemyPublicState } from "@/game/enemy";
 import { Player, type PlayerPublicState, type PlayerState } from "@/game/player";
 import type { ChunkDataPacket, RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
 import { createSoundEffects } from "./sounds";
@@ -30,6 +31,7 @@ export function joinWorld(roomId: string) {
   });
 
   const [remotePlayers, setRemotePlayers] = createStore<Record<string, PlayerPublicState>>({});
+  const [remoteEnemies, setRemoteEnemies] = createStore<Record<string, EnemyPublicState>>({});
   const [tickInfo, setTickInfo] = createStore<TickInfo>({ tick: 0, tickTimeMs: 0, timeOfDayS: 0 });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
   const sounds = createSoundEffects();
@@ -57,6 +59,9 @@ export function joinWorld(roomId: string) {
     switch (packet.type) {
       case "players":
         setRemotePlayers(reconcile(packet.players));
+        return;
+      case "enemies":
+        setRemoteEnemies(reconcile(packet.enemies));
         return;
       case "ack":
         replicated()?.acknowledge(packet.sequence);
@@ -116,6 +121,7 @@ export function joinWorld(roomId: string) {
   return {
     player,
     remotePlayers,
+    remoteEnemies,
     tickInfo,
     snapCount,
     session,

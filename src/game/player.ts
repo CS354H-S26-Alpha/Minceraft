@@ -93,7 +93,6 @@ export function clampHotbarSlot(slotIndex: number): number {
   if (!Number.isFinite(slotIndex)) return DEFAULT_SELECTED_HOTBAR_SLOT;
   return Math.min(HOTBAR_SLOT_COUNT - 1, Math.max(0, Math.trunc(slotIndex)));
 }
-
 export function getSelectedHotbarInventoryIndex(selectedHotbarSlot: number): number {
   return HOTBAR_START_INDEX + clampHotbarSlot(selectedHotbarSlot);
 }
@@ -135,7 +134,6 @@ export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) 
     z: state.z,
   };
 }
-
 export function createPlayerState(
   args: PlayerPublicState & {
     vy?: number;
@@ -217,14 +215,14 @@ export interface PlayerPositionPacket {
 }
 
 export interface PlayerAttackPacket {
-  targetPlayerId: string;
+  targetPlayerId?: string;
+  targetEnemyId?: string;
   x: number;
   y: number;
   z: number;
   yaw: number;
   pitch: number;
 }
-
 /** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
   public static readonly CYLINDER_RADIUS = 0.3;

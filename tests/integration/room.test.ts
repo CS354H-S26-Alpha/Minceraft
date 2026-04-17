@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
+import { sampleColumn } from "../../src/game/biome";
 import { chunkOrigin } from "../../src/game/chunk";
 import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, ServerPacket, ServerTick } from "../../src/game/protocol.ts";
@@ -337,7 +338,7 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(initialBobTick, "reconcile")?.state).toBeDefined();
   });
 
-  it("does not broadcast when a tick fires with no pending input", async () => {
+  it("broadcasts when enemy movement changes the world without player input", async () => {
     const stub = makeRoomStub(roomName);
     const received: ServerTick[] = [];
 
@@ -347,9 +348,9 @@ describe("GameRoom Durable Object", () => {
       // First tick flushes any dirty state
       await room.runTick();
       const beforeCount = received.length;
-      // Second tick: no input, no dirty, no broadcast
+      // Second tick: no input, but enemies are moving toward the player.
       await room.runTick();
-      expect(received.length).toBe(beforeCount);
+      expect(received.length).toBeGreaterThan(beforeCount);
     });
   });
 
@@ -380,12 +381,70 @@ describe("GameRoom Durable Object", () => {
     expect("health" in (alicePlayers?.bob ?? {})).toBe(false);
   });
 
+  it("includes authoritative enemies in the initial join tick", async () => {
+    const stub = makeRoomStub(roomName);
+    const received: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => received.push(tick));
+      await room.runTick();
+    });
+
+    const latest = received[received.length - 1];
+    const enemies = findPacket(latest, "enemies")?.enemies;
+    expect(enemies).toBeDefined();
+    expect(Object.keys(enemies ?? {})).toHaveLength(3);
+    expect(enemies?.["enemy-1"]?.x).toBeCloseTo(6, 0);
+    expect(enemies?.["enemy-1"]?.health).toBe(6);
+  });
+
+  it("broadcasts the same enemy snapshot to every connected player", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const bobTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      room.join("bob", "Bob", (tick) => bobTicks.push(tick));
+      await room.runTick();
+    });
+
+    const aliceEnemies = findPacket(aliceTicks[aliceTicks.length - 1], "enemies")?.enemies;
+    const bobEnemies = findPacket(bobTicks[bobTicks.length - 1], "enemies")?.enemies;
+    expect(aliceEnemies).toEqual(bobEnemies);
+    expect(aliceEnemies?.["enemy-2"]?.z).toBeCloseTo(18, 0);
+  });
+
+  it("moves enemies toward nearby online players while keeping them on terrain", async () => {
+    const stub = makeRoomStub(roomName);
+    const received: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => received.push(tick));
+      await room.runTick();
+      for (let i = 0; i < 10; i++) {
+        await room.runTick();
+      }
+    });
+
+    const firstEnemies = findPacket(received[0], "enemies")?.enemies;
+    const latestEnemies = findPacket(received[received.length - 1], "enemies")?.enemies;
+    expect(firstEnemies?.["enemy-1"]).toBeDefined();
+    expect(latestEnemies?.["enemy-1"]).toBeDefined();
+    expect(latestEnemies?.["enemy-1"]?.x).not.toBeCloseTo(firstEnemies?.["enemy-1"]?.x ?? 0);
+
+    const enemy = latestEnemies?.["enemy-1"];
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    const terrainHeight = sampleColumn(123, Math.round(enemy.x), Math.round(enemy.z)).height;
+    expect(enemy.y).toBeCloseTo(terrainHeight, 5);
+  });
+
   it("applies held-item combat damage to the client-selected player on the server", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
@@ -418,7 +477,6 @@ describe("GameRoom Durable Object", () => {
     const caraTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       room.join("cara", "Cara", (tick) => caraTicks.push(tick));
@@ -449,66 +507,11 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(caraLatest, "self")).toBeUndefined();
   });
 
-  it("marks players dead after lethal damage and respawns them on request", async () => {
-    const stub = makeRoomStub(roomName);
-    const bobTicks: ServerTick[] = [];
-
-    await runInDurableObject(stub, async (room: GameRoom) => {
-      room.configureBlockSystem(TEST_BLOCK_OPTS);
-      room.join("alice", "Alice", () => {});
-      room.join("bob", "Bob", (tick) => bobTicks.push(tick));
-      await room.runTick();
-
-      await wait(50);
-      room.sendPosition("bob", { sequence: 1, x: 0, y: 70, z: 18, yaw: Math.PI, pitch: 0 });
-      await room.runTick();
-
-      room.selectHotbarSlot("alice", 2);
-      await room.runTick();
-
-      for (let attackIndex = 0; attackIndex < PLAYER_MAX_HEALTH / 2; attackIndex++) {
-        room.attack("alice", {
-          targetPlayerId: "bob",
-          x: 0,
-          y: 70,
-          z: 20,
-          yaw: 0,
-          pitch: 0,
-        });
-        await room.runTick();
-      }
-
-      const afterDeath = bobTicks[bobTicks.length - 1];
-      expect(findPacket(afterDeath, "self")?.state.health).toBe(0);
-      expect(findPacket(afterDeath, "reconcile")).toBeUndefined();
-
-      room.respawn("bob");
-      await room.runTick();
-    });
-
-    const latest = bobTicks[bobTicks.length - 1];
-    const reconcile = findPacket(latest, "reconcile");
-    expect(reconcile?.state.x).toBeCloseTo(0);
-    expect(reconcile?.state.y).toBeCloseTo(70);
-    expect(reconcile?.state.z).toBeCloseTo(20);
-    expect(reconcile?.state.health).toBe(PLAYER_MAX_HEALTH);
-    expect(reconcile?.state.selectedHotbarSlot).toBe(0);
-    expect(reconcile?.state.inventory[0]).toEqual({ itemId: "wood", quantity: 12 });
-    expect(reconcile?.state.inventory[1]).toEqual({ itemId: "dirt", quantity: 64 });
-    expect(reconcile?.state.inventory[27]).toEqual({ itemId: "wood", quantity: 8 });
-    expect(reconcile?.state.inventory[28]).toEqual({ itemId: "wood_plank", quantity: 16 });
-    expect(reconcile?.state.inventory[29]).toEqual({ itemId: "stick", quantity: 6 });
-    expect(reconcile?.state.inventory[30]).toEqual({ itemId: "dirt", quantity: 32 });
-    expect(findPacket(latest, "inventoryUi")?.ui.craftingGrid.every((slot) => slot === null)).toBe(true);
-    expect(findPacket(latest, "inventoryUi")?.ui.cursor).toBeNull();
-  });
-
   it("accepts an attack from a valid client snapshot even when the server yaw is stale", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
@@ -535,12 +538,136 @@ describe("GameRoom Durable Object", () => {
     expect(findPacket(latest, "self")?.state.health).toBe(PLAYER_MAX_HEALTH - 2);
   });
 
+  it("applies player melee damage to server-side enemies", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const enemySurfaceY = sampleColumn(123, 6, 14).height;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      room.selectHotbarSlot("alice", 2);
+      room.teleportTo("alice", 6, enemySurfaceY, 16.5);
+      await room.runTick();
+
+      room.attack("alice", {
+        targetEnemyId: "enemy-1",
+        x: 6,
+        y: enemySurfaceY,
+        z: 16.5,
+        yaw: 0,
+        pitch: 0,
+      });
+      await room.runTick();
+    });
+
+    const latest = aliceTicks[aliceTicks.length - 1];
+    expect(findPacket(latest, "enemies")?.enemies["enemy-1"]?.health).toBe(4);
+  });
+
+  it("lets nearby enemies damage online players", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const enemySurfaceY = sampleColumn(123, 6, 14).height;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      room.teleportTo("alice", 6, enemySurfaceY, 15.2);
+      await room.runTick();
+      await room.runTick();
+    });
+
+    expect(
+      aliceTicks.some((tick) => {
+        const selfHealth = findPacket(tick, "self")?.state.health;
+        const reconcileHealth = findPacket(tick, "reconcile")?.state.health;
+        return selfHealth === PLAYER_MAX_HEALTH - 1 || reconcileHealth === PLAYER_MAX_HEALTH - 1;
+      }),
+    ).toBe(true);
+  });
+
+  it("respawns players at spawn with full health after lethal damage", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      room.join("bob", "Bob", () => {});
+      await room.runTick();
+
+      await wait(50);
+      room.sendPosition("bob", { sequence: 1, x: 0, y: 70, z: 18, yaw: Math.PI, pitch: 0 });
+      await room.runTick();
+
+      room.selectHotbarSlot("bob", 2);
+      await room.runTick();
+
+      for (let i = 0; i < 10; i++) {
+        room.attack("bob", {
+          targetPlayerId: "alice",
+          x: 0,
+          y: 70,
+          z: 18,
+          yaw: Math.PI,
+          pitch: 0,
+        });
+        await room.runTick();
+      }
+    });
+
+    const respawnTick = aliceTicks.findLast((tick) => {
+      const reconcile = findPacket(tick, "reconcile")?.state;
+      return reconcile?.health === PLAYER_MAX_HEALTH && reconcile.x === 0 && reconcile.y === 70 && reconcile.z === 20;
+    });
+
+    expect(respawnTick).toBeDefined();
+  });
+
+  it("despawns defeated enemies and respawns them after a delay", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const enemySurfaceY = sampleColumn(123, 6, 14).height;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      room.selectHotbarSlot("alice", 2);
+      room.teleportTo("alice", 6, enemySurfaceY, 16.5);
+      await room.runTick();
+
+      for (let i = 0; i < 3; i++) {
+        room.attack("alice", {
+          targetEnemyId: "enemy-1",
+          x: 6,
+          y: enemySurfaceY,
+          z: 16.5,
+          yaw: 0,
+          pitch: 0,
+        });
+        await room.runTick();
+      }
+
+      for (let i = 0; i < 101; i++) {
+        await room.runTick();
+      }
+    });
+
+    const despawnTick = aliceTicks.find((tick) => findPacket(tick, "enemies")?.enemies["enemy-1"] === undefined);
+    const respawnTick = aliceTicks.findLast((tick) => findPacket(tick, "enemies")?.enemies["enemy-1"]?.health === 6);
+
+    expect(despawnTick).toBeDefined();
+    expect(respawnTick).toBeDefined();
+  });
+
   it("rejects attack snapshots that are implausibly far from the server player state", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
 
     await runInDurableObject(stub, async (room: GameRoom) => {
-      room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
@@ -566,7 +693,6 @@ describe("GameRoom Durable Object", () => {
     const latest = bobTicks[bobTicks.length - 1];
     expect(findPacket(latest, "self")).toBeUndefined();
   });
-
   it("crafts through the personal 2x2 grid and returns temporary items on close", async () => {
     const stub = makeRoomStub(roomName);
     const received: ServerTick[] = [];

@@ -3,6 +3,7 @@ import { createEffect, createSignal, on, Show } from "solid-js";
 import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { DeathScreen } from "../components/DeathScreen";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
+import { EnemyHealthBars } from "../components/EnemyHealthBars";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { Minimap } from "../components/Minimap";
 import { PauseMenu } from "../components/PauseMenu";
@@ -167,6 +168,12 @@ export default function GameView() {
             </div>
           </div>
         </Show>
+        <EnemyHealthBars
+          enemies={() => room.remoteEnemies}
+          frame={game.diagnostics.client.frameCount}
+          hidden={inventoryOpen()}
+          projectWorldToScreen={game.projectWorldToScreen}
+        />
         <PlayerHud
           hidden={inventoryOpen() || anyOverlayOpen()}
           onSelectHotbarSlot={selectHotbarSlot}

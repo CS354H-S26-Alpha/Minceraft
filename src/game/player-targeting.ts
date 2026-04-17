@@ -1,4 +1,5 @@
 import { getLookDirection } from "../utils/look-direction";
+import { ENEMY_HEIGHT, ENEMY_HIT_RADIUS, type EnemyPublicState } from "./enemy";
 import { getPlayerEyePosition, Player, type PlayerPublicState, type PlayerState } from "./player";
 
 const RAY_EPSILON = 1e-6;
@@ -6,12 +7,26 @@ export const MELEE_RANGE = 3;
 
 type AimState = Pick<PlayerState, "x" | "y" | "z" | "yaw" | "pitch">;
 type TargetCandidate = Pick<PlayerPublicState, "id" | "x" | "y" | "z">;
+type EnemyTargetCandidate = Pick<EnemyPublicState, "id" | "x" | "y" | "z">;
+
+export interface TargetHit {
+  id: string;
+  distance: number;
+}
 
 export function findTargetedPlayerId(
   attacker: AimState,
   candidates: Iterable<TargetCandidate>,
   maxDistance = MELEE_RANGE,
 ): string | undefined {
+  return findTargetedPlayerHit(attacker, candidates, maxDistance)?.id;
+}
+
+export function findTargetedPlayerHit(
+  attacker: AimState,
+  candidates: Iterable<TargetCandidate>,
+  maxDistance = MELEE_RANGE,
+): TargetHit | undefined {
   const origin = getPlayerEyePosition(attacker);
   const direction = getLookDirection(attacker.yaw, attacker.pitch);
   let nearestDistance = maxDistance;
@@ -25,35 +40,56 @@ export function findTargetedPlayerId(
     nearestTargetId = candidate.id;
   }
 
-  return nearestTargetId;
+  return nearestTargetId ? { id: nearestTargetId, distance: nearestDistance } : undefined;
+}
+
+export function findTargetedEnemyId(
+  attacker: AimState,
+  candidates: Iterable<EnemyTargetCandidate>,
+  maxDistance = MELEE_RANGE,
+): string | undefined {
+  return findTargetedEnemyHit(attacker, candidates, maxDistance)?.id;
+}
+
+export function findTargetedEnemyHit(
+  attacker: AimState,
+  candidates: Iterable<EnemyTargetCandidate>,
+  maxDistance = MELEE_RANGE,
+): TargetHit | undefined {
+  const origin = getPlayerEyePosition(attacker);
+  const direction = getLookDirection(attacker.yaw, attacker.pitch);
+  let nearestDistance = maxDistance;
+  let nearestTargetId: string | undefined;
+
+  for (const candidate of candidates) {
+    const hitDistance = intersectRayWithEnemyBounds(origin, direction, candidate, maxDistance);
+    if (hitDistance === undefined || hitDistance > nearestDistance) continue;
+
+    nearestDistance = hitDistance;
+    nearestTargetId = candidate.id;
+  }
+
+  return nearestTargetId ? { id: nearestTargetId, distance: nearestDistance } : undefined;
 }
 
 export function canTargetPlayer(
-  attacker: Pick<PlayerState, "x" | "y" | "z">,
+  attacker: AimState,
   target: Pick<PlayerPublicState, "x" | "y" | "z">,
   maxDistance = MELEE_RANGE,
 ) {
   const origin = getPlayerEyePosition(attacker);
-  const bounds = playerBounds(target);
-  const dx = origin.x - clamp(origin.x, bounds.minX, bounds.maxX);
-  const dy = origin.y - clamp(origin.y, bounds.minY, bounds.maxY);
-  const dz = origin.z - clamp(origin.z, bounds.minZ, bounds.maxZ);
-  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+  const direction = getLookDirection(attacker.yaw, attacker.pitch);
+  return intersectRayWithPlayerBounds(origin, direction, target, maxDistance) !== undefined;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return value < min ? min : value > max ? max : value;
-}
-
-function playerBounds(target: Pick<PlayerPublicState, "x" | "y" | "z">) {
-  return {
-    minX: target.x - Player.CYLINDER_RADIUS,
-    maxX: target.x + Player.CYLINDER_RADIUS,
-    minY: target.y,
-    maxY: target.y + Player.CYLINDER_HEIGHT,
-    minZ: target.z - Player.CYLINDER_RADIUS,
-    maxZ: target.z + Player.CYLINDER_RADIUS,
-  };
+export function canTargetEnemy(
+  attacker: AimState,
+  target: Pick<EnemyPublicState, "x" | "y" | "z">,
+  maxDistance = MELEE_RANGE,
+) {
+  const origin = getPlayerEyePosition(attacker);
+  const direction = getLookDirection(attacker.yaw, attacker.pitch);
+  return intersectRayWithEnemyBounds(origin, direction, target, maxDistance) !== undefined;
 }
 
 function intersectRayWithPlayerBounds(
@@ -62,7 +98,40 @@ function intersectRayWithPlayerBounds(
   target: Pick<PlayerPublicState, "x" | "y" | "z">,
   maxDistance: number,
 ): number | undefined {
-  return intersectRayWithAabb(origin, direction, playerBounds(target), maxDistance);
+  return intersectRayWithAabb(
+    origin,
+    direction,
+    {
+      minX: target.x - Player.CYLINDER_RADIUS,
+      maxX: target.x + Player.CYLINDER_RADIUS,
+      minY: target.y,
+      maxY: target.y + Player.CYLINDER_HEIGHT,
+      minZ: target.z - Player.CYLINDER_RADIUS,
+      maxZ: target.z + Player.CYLINDER_RADIUS,
+    },
+    maxDistance,
+  );
+}
+
+function intersectRayWithEnemyBounds(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  target: Pick<EnemyPublicState, "x" | "y" | "z">,
+  maxDistance: number,
+): number | undefined {
+  return intersectRayWithAabb(
+    origin,
+    direction,
+    {
+      minX: target.x - ENEMY_HIT_RADIUS,
+      maxX: target.x + ENEMY_HIT_RADIUS,
+      minY: target.y,
+      maxY: target.y + ENEMY_HEIGHT,
+      minZ: target.z - ENEMY_HIT_RADIUS,
+      maxZ: target.z + ENEMY_HIT_RADIUS,
+    },
+    maxDistance,
+  );
 }
 
 function intersectRayWithAabb(

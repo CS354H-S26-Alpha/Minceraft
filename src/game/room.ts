@@ -10,6 +10,7 @@ import * as schema from "../server/schema";
 import { BlockSystem, type BlockSystemOptions } from "./block-system";
 import { ChunkStorage } from "./chunk-storage";
 import type { InventoryClickTarget } from "./crafting";
+import { EnemySystem } from "./enemy-system";
 import { FluidSystem } from "./fluid-system";
 import type { GameSystem } from "./game-system";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
@@ -79,6 +80,10 @@ function notify(cb: TickListener, tick: ServerTick): Promise<unknown> | null {
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
+  private enemySystem = new EnemySystem(
+    () => this.playerSystem.onlinePlayers(new Set(this.listeners.keys())),
+    (playerId, amount) => this.playerSystem.damagePlayer(playerId, amount, new Set(this.listeners.keys())),
+  );
   private blockSystem!: BlockSystem;
   private chunkStorage!: ChunkStorage;
   private systems!: GameSystem[];
@@ -128,7 +133,7 @@ export class GameRoom extends DurableObject<Env> {
 
     this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
     const fluidSystem = new FluidSystem(this.chunkStorage);
-    this.systems = [this.playerSystem, this.blockSystem, fluidSystem];
+    this.systems = [this.playerSystem, this.enemySystem, this.blockSystem, fluidSystem];
 
     for (const system of this.systems) {
       system.hydrate(this.db);
@@ -248,11 +253,14 @@ export class GameRoom extends DurableObject<Env> {
   attack(playerId: string, packet: PlayerAttackPacket) {
     this.ensureInitialized();
     this.ensureJoined(playerId);
-    if (this.playerSystem.attack(playerId, packet, new Set(this.listeners.keys()))) {
+    if (
+      this.playerSystem.attack(playerId, packet, new Set(this.listeners.keys()), (attacker, attackPacket) =>
+        this.enemySystem.attack(attacker, attackPacket),
+      )
+    ) {
       this.needsBroadcast = true;
     }
   }
-
   setTimeOfDay(timeS: number) {
     if (!Number.isFinite(timeS)) return;
     const normalizedTimeS = ((timeS % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
