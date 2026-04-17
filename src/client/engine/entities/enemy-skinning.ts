@@ -1,6 +1,6 @@
+import { Quat, Vec3 } from "gl-matrix";
 import robotDaeUrl from "@/assets/models/robot.dae?url";
 import { CLoader } from "../skinning/AnimationFileLoader";
-import { Quat } from "../skinning/lib/TSM";
 import type { Mesh } from "../skinning/Mesh";
 
 /** Hardcoded bone indices for `robot.dae`. */
@@ -35,18 +35,15 @@ export const ATTACK_ANIM_RANGE = 2.0;
 export const ATTACK_CYCLE_MS = 500;
 
 function quatAroundX(angle: number): Quat {
-  const half = angle * 0.5;
-  return new Quat([Math.sin(half), 0, 0, Math.cos(half)]);
+  return Quat.setAxisAngle(new Quat(), new Vec3([1, 0, 0]), angle) as Quat;
 }
 
 function quatAroundY(angle: number): Quat {
-  const half = angle * 0.5;
-  return new Quat([0, Math.sin(half), 0, Math.cos(half)]);
+  return Quat.setAxisAngle(new Quat(), new Vec3([0, 1, 0]), angle) as Quat;
 }
 
 function quatAroundZ(angle: number): Quat {
-  const half = angle * 0.5;
-  return new Quat([0, 0, Math.sin(half), Math.cos(half)]);
+  return Quat.setAxisAngle(new Quat(), new Vec3([0, 0, 1]), angle) as Quat;
 }
 
 const REST_ARM_L = quatAroundZ(+Math.PI / 2);
@@ -102,10 +99,10 @@ export function poseSkeletonForPhase(mesh: Mesh, phase: number): void {
 
   bones[RIG.leftLeg].localRotation = quatAroundX(legL);
   bones[RIG.rightLeg].localRotation = quatAroundX(legR);
-  bones[RIG.leftArm].localRotation = Quat.product(quatAroundX(armL), REST_ARM_L);
-  bones[RIG.rightArm].localRotation = Quat.product(quatAroundX(armR), REST_ARM_R);
-  bones[RIG.leftElbow].localRotation = new Quat().setIdentity();
-  bones[RIG.rightElbow].localRotation = new Quat().setIdentity();
+  bones[RIG.leftArm].localRotation = Quat.multiply(new Quat(), quatAroundX(armL), REST_ARM_L) as Quat;
+  bones[RIG.rightArm].localRotation = Quat.multiply(new Quat(), quatAroundX(armR), REST_ARM_R) as Quat;
+  bones[RIG.leftElbow].localRotation = new Quat().identity();
+  bones[RIG.rightElbow].localRotation = new Quat().identity();
 
   // biome-ignore lint/suspicious/noExplicitAny: calling private method on vendored class
   (mesh as any).updateBoneTransform(RIG.root);
@@ -131,8 +128,8 @@ export function poseAttackArms(mesh: Mesh, attackPhase: number): void {
   // Shoulders: swing from pulled-back (-PULLBACK) to punched-forward (+FORWARD).
   // At t=0 the arm is cocked behind; at t=1 it's fully extended.
   const shoulderAngle = -SHOULDER_PULLBACK + t * (SHOULDER_FORWARD + SHOULDER_PULLBACK);
-  bones[RIG.leftArm].localRotation = Quat.product(quatAroundX(shoulderAngle), REST_ARM_L);
-  bones[RIG.rightArm].localRotation = Quat.product(quatAroundX(shoulderAngle), REST_ARM_R);
+  bones[RIG.leftArm].localRotation = Quat.multiply(new Quat(), quatAroundX(shoulderAngle), REST_ARM_L) as Quat;
+  bones[RIG.rightArm].localRotation = Quat.multiply(new Quat(), quatAroundX(shoulderAngle), REST_ARM_R) as Quat;
 
   // Elbows: bend forward from the upper-arm's frame. Forearm vertices
   // extend along ±X in rest pose, so rotation around Y swings them toward

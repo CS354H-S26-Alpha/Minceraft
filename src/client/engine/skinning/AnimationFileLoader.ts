@@ -1,12 +1,41 @@
-// @ts-nocheck
-// From CS354H Assignment 3 (mannequin skinning starter).
-import { ColladaLoader } from "./lib/threejs/examples/jsm/loaders/ColladaLoader.js";
-import type { Collada } from "./lib/threejs/examples/jsm/loaders/ColladaLoader.js";
-import type { Object3D, Scene, MeshLambertMaterial, SkinnedMesh, BufferGeometry } from "./lib/threejs/src/Three";
-import { Vec3 } from "./lib/tsm/Vec3.js";
-import { Mat4 } from "./lib/TSM.js";
-import { Quat } from "./lib/tsm/Quat.js";
+import { Mat4, Quat, Vec3 } from "gl-matrix";
+import type { BufferGeometry, MeshLambertMaterial, Object3D, Scene, SkinnedMesh } from "three";
+import type { Collada } from "three/examples/jsm/loaders/ColladaLoader.js";
+import { ColladaLoader } from "three/examples/jsm/loaders/ColladaLoader.js";
 import { Mesh } from "./Mesh.js";
+
+function transformPoint(matrix: Mat4, vector: Vec3): Vec3 {
+  return Vec3.transformMat4(new Vec3(), vector, matrix) as Vec3;
+}
+
+function transformDirection(matrix: Mat4, vector: Vec3): Vec3 {
+  const m0 = matrix[0] ?? 0;
+  const m1 = matrix[1] ?? 0;
+  const m2 = matrix[2] ?? 0;
+  const m4 = matrix[4] ?? 0;
+  const m5 = matrix[5] ?? 0;
+  const m6 = matrix[6] ?? 0;
+  const m8 = matrix[8] ?? 0;
+  const m9 = matrix[9] ?? 0;
+  const m10 = matrix[10] ?? 0;
+  return new Vec3([
+    m0 * vector.x + m4 * vector.y + m8 * vector.z,
+    m1 * vector.x + m5 * vector.y + m9 * vector.z,
+    m2 * vector.x + m6 * vector.y + m10 * vector.z,
+  ]);
+}
+
+function createVec3(x = 0, y = 0, z = 0): Vec3 {
+  return new Vec3([x, y, z]);
+}
+
+function getBone(bones: BoneLoader[], index: number): BoneLoader {
+  const bone = bones[index];
+  if (!bone) {
+    throw new Error(`Missing bone at index ${index}`);
+  }
+  return bone;
+}
 
 export class AttributeLoader {
   values: Float32Array;
@@ -32,19 +61,24 @@ export class MeshGeometryLoader {
   v3: AttributeLoader;
 
   constructor(geometry: BufferGeometry, wMat: Mat4) {
-    let gPosition = geometry.attributes.position;
+    const gPosition = geometry.attributes.position;
+    const gNormal = geometry.attributes.normal;
+    const gSkinIndex = geometry.attributes.skinIndex;
+    const gSkinWeight = geometry.attributes.skinWeight;
+
+    if (!gPosition || !gNormal || !gSkinIndex || !gSkinWeight) {
+      throw new Error("Skinned mesh geometry is missing required attributes");
+    }
+
     this.position = new AttributeLoader(gPosition.array as Float32Array, gPosition.count, gPosition.itemSize);
-    let gNormal = geometry.attributes.normal;
     this.normal = new AttributeLoader(gNormal.array as Float32Array, gNormal.count, gNormal.itemSize);
     if (geometry.attributes.uv) {
-      let gUV = geometry.attributes.uv;
+      const gUV = geometry.attributes.uv;
       this.uv = new AttributeLoader(gUV.array as Float32Array, gUV.count, gUV.itemSize);
     } else {
       this.uv = null;
     }
-    let gSkinIndex = geometry.attributes.skinIndex;
     this.skinIndex = new AttributeLoader(gSkinIndex.array as Float32Array, gSkinIndex.count, gSkinIndex.itemSize);
-    let gSkinWeight = geometry.attributes.skinWeight;
     this.skinWeight = new AttributeLoader(gSkinWeight.array as Float32Array, gSkinWeight.count, gSkinWeight.itemSize);
 
     this.v0 = new AttributeLoader(new Float32Array(gPosition.array.length), gPosition.count, 4);
@@ -53,49 +87,48 @@ export class MeshGeometryLoader {
     this.v3 = new AttributeLoader(new Float32Array(gPosition.array.length), gPosition.count, 4);
 
     for (let i = 0; i < gPosition.count; i++) {
-      let pos = this.position.values.slice(i * 3, i * 3 + 3);
-      let vPos = new Vec3([pos[0], pos[1], pos[2]]);
-      vPos = wMat.multiplyPt3(vPos);
+      const pos = this.position.values.slice(i * 3, i * 3 + 3);
+      let vPos = createVec3(pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? 0);
+      vPos = transformPoint(wMat, vPos);
       this.position.values[i * 3] = vPos.x;
       this.position.values[i * 3 + 1] = vPos.y;
       this.position.values[i * 3 + 2] = vPos.z;
 
-      let normals = this.normal.values.slice(i * 3, i * 3 + 3);
-      let vNorm = new Vec3([normals[0], normals[1], normals[2]]);
-      vNorm = wMat.multiplyVec3(vNorm);
+      const normals = this.normal.values.slice(i * 3, i * 3 + 3);
+      let vNorm = createVec3(normals[0] ?? 0, normals[1] ?? 0, normals[2] ?? 0);
+      vNorm = transformDirection(wMat, vNorm);
       this.normal.values[i * 3] = vNorm.x;
       this.normal.values[i * 3 + 1] = vNorm.y;
       this.normal.values[i * 3 + 2] = vNorm.z;
-
     }
   }
 
   public setVectorOffsets(bones: BoneLoader[]) {
     for (let i = 0; i < this.position.count; i++) {
       let bonePos = new Vec3();
-      let pos = this.position.values.slice(i * 3, i * 3 + 3);
-      let vertexPos = new Vec3([pos[0], pos[1], pos[2]]);
+      const pos = this.position.values.slice(i * 3, i * 3 + 3);
+      const vertexPos = createVec3(pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? 0);
 
-      bonePos = bones[this.skinIndex.values[i*4 + 0]].position.copy();
-      Vec3.difference(vertexPos, bonePos, bonePos);
+      bonePos = Vec3.clone(getBone(bones, Math.trunc(this.skinIndex.values[i * 4] ?? 0)).position);
+      Vec3.subtract(bonePos, vertexPos, bonePos);
       this.v0.values[i * 3] = bonePos.x;
       this.v0.values[i * 3 + 1] = bonePos.y;
       this.v0.values[i * 3 + 2] = bonePos.z;
       this.v0.values[i * 3 + 3] = 0;
-      bonePos = bones[this.skinIndex.values[i*4 + 1]].position.copy();
-      Vec3.difference(vertexPos, bonePos, bonePos);
+      bonePos = Vec3.clone(getBone(bones, Math.trunc(this.skinIndex.values[i * 4 + 1] ?? 0)).position);
+      Vec3.subtract(bonePos, vertexPos, bonePos);
       this.v1.values[i * 3] = bonePos.x;
       this.v1.values[i * 3 + 1] = bonePos.y;
       this.v1.values[i * 3 + 2] = bonePos.z;
       this.v1.values[i * 3 + 3] = 0;
-      bonePos = bones[this.skinIndex.values[i*4 + 2]].position.copy();
-      Vec3.difference(vertexPos, bonePos, bonePos);
+      bonePos = Vec3.clone(getBone(bones, Math.trunc(this.skinIndex.values[i * 4 + 2] ?? 0)).position);
+      Vec3.subtract(bonePos, vertexPos, bonePos);
       this.v2.values[i * 3] = bonePos.x;
       this.v2.values[i * 3 + 1] = bonePos.y;
       this.v2.values[i * 3 + 2] = bonePos.z;
       this.v2.values[i * 3 + 3] = 0;
-      bonePos = bones[this.skinIndex.values[i*4 + 3]].position.copy();
-      Vec3.difference(vertexPos, bonePos, bonePos);
+      bonePos = Vec3.clone(getBone(bones, Math.trunc(this.skinIndex.values[i * 4 + 3] ?? 0)).position);
+      Vec3.subtract(bonePos, vertexPos, bonePos);
       this.v3.values[i * 3] = bonePos.x;
       this.v3.values[i * 3 + 1] = bonePos.y;
       this.v3.values[i * 3 + 2] = bonePos.z;
@@ -118,15 +151,14 @@ export class BoneLoader {
   constructor(parentId: number, childrenIds: number[], offset: number, wmat: Mat4) {
     this.parent = parentId;
     this.children = childrenIds;
-    this.position = wmat.multiplyPt3(new Vec3([0, 0, 0]));
-    this.initialPosition = this.position.copy();
-    this.endpoint = wmat.multiplyPt3(new Vec3([0, offset, 0]));
-    this.initialEndpoint = this.endpoint.copy();
-    this.rotation = new Quat().setIdentity();
+    this.position = transformPoint(wmat, new Vec3([0, 0, 0]));
+    this.initialPosition = Vec3.clone(this.position);
+    this.endpoint = transformPoint(wmat, new Vec3([0, offset, 0]));
+    this.initialEndpoint = Vec3.clone(this.endpoint);
+    this.rotation = new Quat().identity();
     this.offset = offset;
-    this.initialTransformation = wmat.copy();
+    this.initialTransformation = Mat4.clone(wmat);
   }
-
 }
 export class MeshLoader {
   public geometry: MeshGeometryLoader;
@@ -139,7 +171,7 @@ export class MeshLoader {
   public bonePositions: Float32Array;
   public boneIndexAttribute: Float32Array;
 
-  public name: String;
+  public name: string;
 
   constructor(skinnedMesh: SkinnedMesh) {
     this.name = skinnedMesh.name;
@@ -148,11 +180,11 @@ export class MeshLoader {
     let y = skinnedMesh.rotation.y;
     let z = skinnedMesh.rotation.z;
     this.rotation = new Vec3([x, y, z]);
-    let rotMat = new Mat4().setIdentity();
-    rotMat.rotate(x, new Vec3([1, 0, 0]));
-    rotMat.rotate(y, new Vec3([0, 1, 0]));
-    rotMat.rotate(z, new Vec3([0, 0, 1]));
-    rotMat = rotMat.multiply(new Mat4(skinnedMesh.bindMatrix.elements));
+    let rotMat = new Mat4().identity();
+    rotMat.rotateX(x);
+    rotMat.rotateY(y);
+    rotMat.rotateZ(z);
+    rotMat.multiply(new Mat4(skinnedMesh.bindMatrix.elements));
     this.worldMatrix = rotMat;
     this.geometry = new MeshGeometryLoader(skinnedMesh.geometry as BufferGeometry, this.worldMatrix);
     this.bones = [];
@@ -163,27 +195,29 @@ export class MeshLoader {
     let material = skinnedMesh.material as MeshLambertMaterial;
     this.materialName = material.name;
 
-    skinnedMesh.skeleton.bones.forEach(bone => {
+    skinnedMesh.skeleton.bones.forEach((bone) => {
       if (bone.rotation.order !== "XYZ") {
         console.error("BONE ORDER NOT XYZ");
       }
       let parentId: number = -1;
-      if (bone.parent?.type !== 'SkinnedMesh') {
+      if (bone.parent?.type !== "SkinnedMesh") {
         let uuid: string = "";
         if (bone.parent?.uuid) {
           uuid = bone.parent?.uuid;
         }
         for (let i = 0; i < skinnedMesh.skeleton.bones.length; i++) {
-          if (skinnedMesh.skeleton.bones[i].uuid === uuid) {
+          const skeletonBone = skinnedMesh.skeleton.bones[i];
+          if (skeletonBone?.uuid === uuid) {
             parentId = i;
           }
         }
       }
       let children: number[] = [];
-      bone.children.forEach(child => {
+      bone.children.forEach((child) => {
         let uuid: string = child.uuid;
         for (let i = 0; i < skinnedMesh.skeleton.bones.length; i++) {
-          if (skinnedMesh.skeleton.bones[i].uuid === uuid) {
+          const skeletonBone = skinnedMesh.skeleton.bones[i];
+          if (skeletonBone?.uuid === uuid) {
             children.push(i);
           }
         }
@@ -191,8 +225,9 @@ export class MeshLoader {
       let tMat = bone.matrixWorld.clone();
       let tempMat = new Mat4(tMat.elements);
       let yVal = 1;
-      if (children.length > 0) {
-        yVal = skinnedMesh.skeleton.bones[children[0]].position.y;
+      const firstChild = children[0];
+      if (firstChild !== undefined) {
+        yVal = skinnedMesh.skeleton.bones[firstChild]?.position.y ?? 1;
       }
       this.bones.push(new BoneLoader(parentId, children, yVal, tempMat));
     });
@@ -220,7 +255,6 @@ export class MeshLoader {
       this.bonePositions[index * 6 + 5] = bone.initialEndpoint.z - bone.initialPosition.z;
     });
   }
-
 }
 class CLoader {
   private fileLocation: string;
@@ -237,75 +271,92 @@ class CLoader {
     this.meshes = [];
   }
 
-  public load(callback: Function): void {
-    this.loader.load(this.fileLocation, (collada: Collada) => {
-      console.log("File loaded successfully");
-      collada.scene.updateWorldMatrix(true, true);
-      console.log(collada);
-      this.scene = collada.scene;
-      this.findSkinnedMeshes();
-      this.skinnedMeshes.forEach(m => {
-        this.meshes.push(new Mesh(new MeshLoader(m)));
-      });
-      
-
-      // getting the images
-      let lib = collada.library as any;
-      let mats = lib.materials;
-      let imgs = lib.images;
-      let effects = lib.effects;
-      let matToTexture = new Map<String, String>();
-      for (let property in effects) {
-        let matName = "";
-        for (let matProp in mats) {
-          if (mats[matProp].url === property) {
-            matName = mats[matProp].name;
-            break;
-          }
+  public load(callback: () => void): void {
+    this.loader.load(
+      this.fileLocation,
+      (collada: Collada | null) => {
+        if (!collada) {
+          throw new Error(`Failed to parse Collada file at ${this.fileLocation}`);
         }
-
-        let imgName = "";
-        for (let imgProp in effects[property].profile.surfaces) {
-          imgName = effects[property].profile.surfaces[imgProp].init_from;
-        }
-
-        let imgSrc = "";
-        for (let imgProp in imgs) {
-          if (imgName === imgProp) {
-            imgSrc = imgs[imgProp].init_from;
-            break;
-          }
-        }
-        
-        if (imgSrc === "" || !imgSrc) {
-          console.log("Image source not found");
-        } else {
-          matToTexture.set(matName, imgSrc);
-        }
-
-        this.meshes.forEach(mesh => {
-          let imgSrc = matToTexture.get(mesh.materialName);
-          if (imgSrc) {
-            mesh.imgSrc = imgSrc;
-          }
+        console.log("File loaded successfully");
+        collada.scene.updateWorldMatrix(true, true);
+        console.log(collada);
+        this.scene = collada.scene;
+        this.findSkinnedMeshes();
+        this.skinnedMeshes.forEach((m) => {
+          this.meshes.push(new Mesh(new MeshLoader(m)));
         });
-      }
-      callback();
-    }, undefined, (event: ErrorEvent) => {
-      console.error("Loading collada file failed");
+
+        // getting the images
+        const lib = collada.library as Collada["library"];
+        if (!lib) {
+          callback();
+          return;
+        }
+        let mats = lib.materials;
+        let imgs = lib.images;
+        let effects = lib.effects;
+        let matToTexture = new Map<string, string>();
+        for (let property in effects) {
+          let matName = "";
+          for (let matProp in mats) {
+            const material = mats[matProp] as { url?: string; name?: string };
+            if (material.url === property) {
+              matName = material.name ?? "";
+              break;
+            }
+          }
+
+          let imgName = "";
+          const effect = effects[property] as { profile?: { surfaces?: Record<string, { init_from?: string }> } };
+          for (let imgProp in effect.profile?.surfaces) {
+            const surface = effect.profile?.surfaces?.[imgProp];
+            imgName = surface?.init_from ?? "";
+          }
+
+          let imgSrc = "";
+          for (let imgProp in imgs) {
+            if (imgName === imgProp) {
+              imgSrc = (imgs[imgProp] as { init_from?: string }).init_from ?? "";
+              break;
+            }
+          }
+
+          if (imgSrc === "" || !imgSrc) {
+            console.log("Image source not found");
+          } else {
+            matToTexture.set(matName, imgSrc);
+          }
+
+          this.meshes.forEach((mesh) => {
+            let imgSrc = matToTexture.get(mesh.materialName);
+            if (imgSrc) {
+              mesh.imgSrc = imgSrc;
+            }
+          });
+        }
+        callback();
+      },
+      undefined,
+      (event) => {
+        console.error("Loading collada file failed");
         console.error(event);
-    });
+      },
+    );
   }
 
   private findSkinnedMeshes(element?: Object3D): void {
     if (this.scene == null) {
-      console.error('Error loading scene');
-      throw new Error('Scene was null when finding skinned meshes');
+      console.error("Error loading scene");
+      throw new Error("Scene was null when finding skinned meshes");
     }
     let objArr: Object3D[];
-    if (element) { objArr = element.children; }
-    else { objArr = this.scene.children; }
-    objArr.forEach(child => {
+    if (element) {
+      objArr = element.children;
+    } else {
+      objArr = this.scene.children;
+    }
+    objArr.forEach((child) => {
       if (element) {
         child.rotateX(element.rotation.x);
         child.rotateY(element.rotation.y);
@@ -315,16 +366,13 @@ class CLoader {
         child.rotateY(this.scene.rotation.y);
         child.rotateZ(this.scene.rotation.z);
       }
-      if (child.type === 'SkinnedMesh') {
+      if (child.type === "SkinnedMesh") {
         this.skinnedMeshes.push(child as SkinnedMesh);
       } else {
         this.findSkinnedMeshes(child);
       }
     });
   }
-
 }
 
-export {
-  CLoader as CLoader,
-};
+export { CLoader as CLoader };

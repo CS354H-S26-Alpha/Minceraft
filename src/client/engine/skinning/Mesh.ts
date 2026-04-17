@@ -1,7 +1,5 @@
-// @ts-nocheck
-// Vendored from CS354H Assignment 3 (mannequin skinning starter).
-import { Mat4, Quat, Vec3 } from "./lib/TSM.js";
-import type { AttributeLoader, MeshGeometryLoader, BoneLoader, MeshLoader } from "./AnimationFileLoader.js";
+import { Mat4, Quat, Vec3 } from "gl-matrix";
+import type { AttributeLoader, BoneLoader, MeshGeometryLoader, MeshLoader } from "./AnimationFileLoader.js";
 //TODO: Generate cylinder geometry for highlighting bones
 
 //General class for handling GLSL attributes
@@ -32,7 +30,9 @@ export class MeshGeometry {
   constructor(mesh: MeshGeometryLoader) {
     this.position = new Attribute(mesh.position);
     this.normal = new Attribute(mesh.normal);
-    if (mesh.uv) { this.uv = new Attribute(mesh.uv); }
+    if (mesh.uv) {
+      this.uv = new Attribute(mesh.uv);
+    }
     this.skinIndex = new Attribute(mesh.skinIndex);
     this.skinWeight = new Attribute(mesh.skinWeight);
     this.v0 = new Attribute(mesh.v0);
@@ -50,20 +50,20 @@ export class Bone {
   public endpoint: Vec3; // current position of the bone's second (non-joint) endpoint, in world coordinates
   public rotation: Quat; // current orientation of the joint *with respect to world coordinates*
 
-  public initialPosition: Vec3; //rest joint position 
-  public initialEndpoint: Vec3; //rest endpoint 
-  public localRotation: Quat;   // R_i
+  public initialPosition: Vec3; //rest joint position
+  public initialEndpoint: Vec3; //rest endpoint
+  public localRotation: Quat; // R_i
 
   constructor(bone: BoneLoader) {
     this.parent = bone.parent;
     this.children = Array.from(bone.children);
-    this.position = bone.position.copy();
-    this.endpoint = bone.endpoint.copy();
-    this.rotation = bone.rotation.copy();
+    this.position = Vec3.clone(bone.position);
+    this.endpoint = Vec3.clone(bone.endpoint);
+    this.rotation = Quat.clone(bone.rotation);
 
-    this.initialPosition = bone.position.copy();
-    this.initialEndpoint = bone.endpoint.copy();
-    this.localRotation = new Quat().setIdentity();
+    this.initialPosition = Vec3.clone(bone.position);
+    this.initialEndpoint = Vec3.clone(bone.endpoint);
+    this.localRotation = new Quat().identity();
   }
 }
 
@@ -82,10 +82,10 @@ export class Mesh {
 
   constructor(mesh: MeshLoader) {
     this.geometry = new MeshGeometry(mesh.geometry);
-    this.worldMatrix = mesh.worldMatrix.copy();
-    this.rotation = mesh.rotation.copy();
+    this.worldMatrix = Mat4.clone(mesh.worldMatrix);
+    this.rotation = Vec3.clone(mesh.rotation);
     this.bones = [];
-    mesh.bones.forEach(bone => {
+    mesh.bones.forEach((bone) => {
       this.bones.push(new Bone(bone));
     });
     this.materialName = mesh.materialName;
@@ -97,22 +97,31 @@ export class Mesh {
 
   //TODO: Create functionality for bone manipulation/key-framing
 
+  private getBone(index: number): Bone {
+    const bone = this.bones[index];
+    if (!bone) {
+      throw new Error(`Missing bone at index ${index}`);
+    }
+    return bone;
+  }
+
   //Rotates bone by world-space dR. Updates hierarchy
   public rotateBone(boneIndex: number, dR: Quat): void {
-    const bone = this.bones[boneIndex];
+    const bone = this.getBone(boneIndex);
 
     let localDR: Quat;
-    if (bone.parent >= 0) { //non root
-      const parentWorldRot = this.bones[bone.parent].rotation;
-      const parentInv = parentWorldRot.copy().conjugate();
-      localDR = Quat.product(Quat.product(parentInv, dR), parentWorldRot); //rotation in parents frame
+    if (bone.parent >= 0) {
+      //non root
+      const parentWorldRot = this.getBone(bone.parent).rotation;
+      const parentInv = Quat.conjugate(new Quat(), parentWorldRot) as Quat;
+      localDR = Quat.multiply(new Quat(), Quat.multiply(new Quat(), parentInv, dR), parentWorldRot) as Quat; //rotation in parents frame
     } else {
-      localDR = dR.copy(); //root bone case
+      localDR = Quat.clone(dR); //root bone case
     }
 
     //rotate
-    bone.localRotation = Quat.product(localDR, bone.localRotation);
-    bone.localRotation.normalize();
+    bone.localRotation = Quat.multiply(new Quat(), localDR, bone.localRotation) as Quat;
+    Quat.normalize(bone.localRotation, bone.localRotation);
 
     //recompute subtree rooted at bone
     this.updateBoneTransform(boneIndex);
@@ -120,14 +129,14 @@ export class Mesh {
 
   // Translates a root bone and all descendants by a world-space displacement
   public translateRootBone(boneIndex: number, displacement: Vec3): void {
-    const bone = this.bones[boneIndex];
+    const bone = this.getBone(boneIndex);
     if (bone.parent !== -1) return; // only root bones can be translated
     this.translateSubtree(boneIndex, displacement);
     this.updateBoneTransform(boneIndex);
   }
 
   private translateSubtree(boneIndex: number, displacement: Vec3): void {
-    const bone = this.bones[boneIndex];
+    const bone = this.getBone(boneIndex);
     bone.initialPosition.add(displacement);
     bone.initialEndpoint.add(displacement);
     for (const childIdx of bone.children) {
@@ -148,24 +157,26 @@ export class Mesh {
   // }
 
   private updateBoneTransform(boneIndex: number): void {
-    const bone = this.bones[boneIndex];
+    const bone = this.getBone(boneIndex);
 
     if (bone.parent === -1) {
       //base case
-      bone.rotation = bone.localRotation.copy();
-      bone.position = bone.initialPosition.copy();
+      bone.rotation = Quat.clone(bone.localRotation);
+      bone.position = Vec3.clone(bone.initialPosition);
     } else {
-      const parent = this.bones[bone.parent];
+      const parent = this.getBone(bone.parent);
       //Q_i = Q_parent * R_i
-      bone.rotation = Quat.product(parent.rotation, bone.localRotation);
-      bone.rotation.normalize();
+      bone.rotation = Quat.multiply(new Quat(), parent.rotation, bone.localRotation) as Quat;
+      Quat.normalize(bone.rotation, bone.rotation);
 
-      const restOffset = Vec3.difference(bone.initialPosition, parent.initialPosition); //dist btw joints
-      bone.position = Vec3.sum(parent.position, parent.rotation.multiplyVec3(restOffset));
+      const restOffset = Vec3.subtract(new Vec3(), bone.initialPosition, parent.initialPosition) as Vec3; //dist btw joints
+      const rotatedOffset = Vec3.transformQuat(new Vec3(), restOffset, parent.rotation) as Vec3;
+      bone.position = Vec3.add(new Vec3(), parent.position, rotatedOffset) as Vec3;
     }
 
-    const localEndOffset = Vec3.difference(bone.initialEndpoint, bone.initialPosition);
-    bone.endpoint = Vec3.sum(bone.position, bone.rotation.multiplyVec3(localEndOffset));
+    const localEndOffset = Vec3.subtract(new Vec3(), bone.initialEndpoint, bone.initialPosition) as Vec3;
+    const rotatedEndOffset = Vec3.transformQuat(new Vec3(), localEndOffset, bone.rotation) as Vec3;
+    bone.endpoint = Vec3.add(new Vec3(), bone.position, rotatedEndOffset) as Vec3;
 
     //recurse
     for (const childIdx of bone.children) {
@@ -188,10 +199,9 @@ export class Mesh {
   public getBoneTranslations(): Float32Array {
     let trans = new Float32Array(3 * this.bones.length);
     this.bones.forEach((bone, index) => {
-      let res = bone.position.xyz;
-      for (let i = 0; i < res.length; i++) {
-        trans[3 * index + i] = res[i];
-      }
+      trans[3 * index] = bone.position.x;
+      trans[3 * index + 1] = bone.position.y;
+      trans[3 * index + 2] = bone.position.z;
     });
     return trans;
   }
@@ -199,10 +209,10 @@ export class Mesh {
   public getBoneRotations(): Float32Array {
     let trans = new Float32Array(4 * this.bones.length);
     this.bones.forEach((bone, index) => {
-      let res = bone.rotation.xyzw;
-      for (let i = 0; i < res.length; i++) {
-        trans[4 * index + i] = res[i];
-      }
+      trans[4 * index] = bone.rotation.x;
+      trans[4 * index + 1] = bone.rotation.y;
+      trans[4 * index + 2] = bone.rotation.z;
+      trans[4 * index + 3] = bone.rotation.w;
     });
     return trans;
   }
