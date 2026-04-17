@@ -68,8 +68,8 @@ export interface ChunkDataPacket {
     originX: number;
     originZ: number;
     blocks: Uint8Array;
-    placedObjects: PlacedObject[];
-    placedObjectCounts: Record<PlacedObjectType, number>;
+    placedObjects: readonly PlacedObject[];
+    placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
   }>;
 }
 
