@@ -12,6 +12,7 @@ import { createGame, requestPointerLock } from "../engine";
 import { createGameplayPreferences } from "../primitives/gameplay-preferences";
 import { createGameplayUiState } from "../primitives/gameplay-ui-state";
 import { joinWorld } from "../primitives/join-world";
+import { setWorldReady } from "../state/loading";
 
 const DEATH_Y_THRESHOLD = -20;
 
@@ -19,6 +20,7 @@ export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
   const [inventoryOpen, setInventoryOpen] = createSignal(false);
   const [hudHidden, setHudHidden] = createSignal(false);
+  const [debugVisible, setDebugVisible] = createSignal(false);
 
   const room = joinWorld("world-1");
   const {
@@ -48,6 +50,7 @@ export default function GameView() {
       onToggleInventory: toggleInventory,
       onCloseInventory: closeInventory,
       onToggleHud: () => setHudHidden((hidden) => !hidden),
+      onToggleDebug: () => setDebugVisible((visible) => !visible),
       onSelectHotbarSlot: selectHotbarSlot,
       onCycleHotbar: (direction) => {
         const player = room.player();
@@ -78,6 +81,10 @@ export default function GameView() {
   createEffect(() => {
     if (!anyOverlayOpen()) return;
     document.exitPointerLock?.();
+  });
+
+  createEffect(() => {
+    if (game.minimap.terrainVersion() > 0) setWorldReady(true);
   });
 
   createEventListener(window, "keydown", (event) => {
@@ -183,7 +190,7 @@ export default function GameView() {
         open={inventoryOpen()}
         onClickSlot={(target) => room.session()?.clickInventory(target)}
       />
-      <Show when={!hudHidden() && preferences.showDiagnostics && room.player()?.state}>
+      <Show when={(debugVisible() || preferences.showDiagnostics) && room.player()?.state}>
         {(playerState) => (
           <DiagnosticsPanel
             playerState={playerState()}

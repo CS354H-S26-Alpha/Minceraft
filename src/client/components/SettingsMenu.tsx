@@ -1,6 +1,7 @@
 import type { JSX } from "solid-js";
 import { MAX_RENDER_DISTANCE, MIN_RENDER_DISTANCE } from "../engine/chunks";
 import type { GameplayPreferences } from "../primitives/gameplay-preferences";
+import { Button } from "./Button";
 
 interface SettingsMenuProps {
   preferences: GameplayPreferences;
@@ -18,16 +19,12 @@ export function SettingsMenu(props: SettingsMenuProps) {
     <div class="absolute inset-0 z-40 flex items-center justify-center bg-[linear-gradient(rgba(0,0,0,0.46),rgba(0,0,0,0.62)),linear-gradient(45deg,rgba(255,255,255,0.05)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.05)_50%,rgba(255,255,255,0.05)_75%,transparent_75%,transparent)] bg-[length:100%_100%,16px_16px] px-4 py-6">
       <div class="w-full max-w-2xl">
         <div class="mb-6 flex items-center justify-between gap-4">
-          <h2 class="font-mono text-[32px] font-bold tracking-[0.04em] text-white [text-shadow:0_3px_0_rgba(0,0,0,0.88)]">
+          <h2 class="text-[32px] font-bold tracking-[0.04em] text-white [text-shadow:0_3px_0_rgba(0,0,0,0.88)]">
             Settings
           </h2>
-          <button
-            type="button"
-            class="border-2 border-black bg-[linear-gradient(180deg,#b8b8b8,#8d8d8d)] px-4 py-2 text-center font-mono text-xs font-bold tracking-[0.04em] text-white [box-shadow:inset_0_1px_0_rgba(255,255,255,0.38),inset_0_-2px_0_rgba(0,0,0,0.32)] [text-shadow:0_2px_0_rgba(0,0,0,0.72)] transition hover:bg-[linear-gradient(180deg,#cdcdcd,#9a9a9a)] focus:outline-none focus:ring-2 focus:ring-white/70"
-            onClick={props.onBack}
-          >
+          <Button class="px-4 py-2 text-sm" onClick={props.onBack}>
             Back
-          </button>
+          </Button>
         </div>
 
         <div class="grid gap-4 md:grid-cols-2">
@@ -93,13 +90,10 @@ export function SettingsMenu(props: SettingsMenuProps) {
                 class="w-full accent-[#d7d7d7]"
                 onInput={(event) => props.onRenderDistanceInput(Number(event.currentTarget.value))}
               />
-              <div class="w-20 text-right font-mono text-sm font-bold tracking-[0.04em] text-white [text-shadow:0_1px_0_rgba(0,0,0,0.7)]">
-                {props.preferences.renderDistance} ring{props.preferences.renderDistance === 1 ? "" : "s"}
+              <div class="w-24 text-right font-mono text-sm font-bold tracking-[0.04em] text-white [text-shadow:0_1px_0_rgba(0,0,0,0.7)]">
+                {props.preferences.renderDistance} chunk{props.preferences.renderDistance === 1 ? "" : "s"}
               </div>
             </div>
-            <p class="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-[#dcdcdc]">
-              1 ring matches the assignment's 3x3 active chunk target.
-            </p>
           </SettingCard>
         </div>
       </div>

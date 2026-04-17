@@ -40,7 +40,7 @@ export function createGameplayPreferences() {
     } satisfies GameplayPreferences);
 
     window.localStorage.setItem(STORAGE_KEY, serialized);
-    window.localStorage.setItem(PLAYER_NAME_STORAGE_KEY, preferences.pendingPlayerName);
+    window.localStorage.setItem(PLAYER_NAME_STORAGE_KEY, JSON.stringify(preferences.pendingPlayerName));
   });
 
   return {
@@ -69,7 +69,7 @@ export function createGameplayPreferences() {
 function readGameplayPreferences(): GameplayPreferences {
   if (typeof window === "undefined") return DEFAULT_PREFERENCES;
 
-  const storedName = window.localStorage.getItem(PLAYER_NAME_STORAGE_KEY)?.trim() ?? "";
+  const storedName = readStoredPlayerName();
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) {
     return {
@@ -95,6 +95,18 @@ function readGameplayPreferences(): GameplayPreferences {
       pendingPlayerName: storedName || DEFAULT_PREFERENCES.pendingPlayerName,
     };
   }
+}
+
+function readStoredPlayerName(): string {
+  const raw = window.localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed.trim();
+  } catch {
+    // Legacy raw-string value — fall through.
+  }
+  return raw.trim();
 }
 
 function sanitizePlayerName(name: string): string {

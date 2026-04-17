@@ -18,6 +18,7 @@ export interface InputOptions {
   onToggleInventory?: () => void;
   onCloseInventory?: () => void;
   onToggleHud?: () => void;
+  onToggleDebug?: () => void;
   onSelectHotbarSlot?: (slotIndex: number) => void;
   onCycleHotbar?: (direction: 1 | -1) => void;
   onLeftClick?: () => void;
@@ -45,6 +46,7 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   if (opts.onToggleInventory) createShortcut(["E"], opts.onToggleInventory);
   if (opts.onCloseInventory) createShortcut(["Escape"], opts.onCloseInventory);
   if (opts.onToggleHud) createShortcut(["F1"], opts.onToggleHud);
+  if (opts.onToggleDebug) createShortcut(["F3"], opts.onToggleDebug);
   if (opts.onSelectHotbarSlot) {
     const onSelect = opts.onSelectHotbarSlot;
     for (let i = 0; i < HOTBAR_SLOT_COUNT; i++) {

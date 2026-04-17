@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import type { PlayerState } from "@/game/player";
 import { DAY_LENGTH_S } from "@/game/time";
+import { Button } from "./Button";
 
 const FRAME_GRAPH_WIDTH = 240;
 const FRAME_GRAPH_HEIGHT = 80;
@@ -215,14 +216,10 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
         <ul class="mt-1">
           {props.onlinePlayers.map((p) => (
-            <li>
-              <button
-                type="button"
-                class="text-left text-white hover:text-blue-400 hover:underline"
-                onClick={() => props.onTeleportTo(p.id)}
-              >
+            <li class="mt-1">
+              <Button variant="ghost" class="w-full justify-start text-sm" onClick={() => props.onTeleportTo(p.id)}>
                 {p.name}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
