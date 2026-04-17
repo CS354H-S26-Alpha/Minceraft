@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
+import { CubeType } from "../../src/client/engine/render/cube-types";
 import { chunkOrigin } from "../../src/game/chunk";
 import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, ServerPacket, ServerTick } from "../../src/game/protocol.ts";
@@ -16,8 +17,23 @@ interface RoomBlockSystemInternals {
   playerChunkOrigins: Map<string, string>;
 }
 
+interface RoomChunkStorageInternals {
+  loadChunks(origins: Array<{ originX: number; originZ: number }>): Promise<Array<{ blocks: Uint8Array }>>;
+  getBlock(wx: number, wy: number, wz: number): CubeType | undefined;
+  applyMutation(action: { action: "place" | "break"; x: number; y: number; z: number; blockType?: number }): {
+    accepted: boolean;
+    previousType: number;
+  };
+}
+
+interface RoomPlayerSystemInternals {
+  players: Map<string, { state: { health: number } }>;
+}
+
 interface RoomTestInternals {
   blockSystem: RoomBlockSystemInternals;
+  chunkStorage: RoomChunkStorageInternals;
+  playerSystem: RoomPlayerSystemInternals;
 }
 
 /**
@@ -494,6 +510,391 @@ describe("GameRoom Durable Object", () => {
     expect(reconcile?.state.inventory[30]).toEqual({ itemId: "dirt", quantity: 32 });
     expect(findPacket(latest, "inventoryUi")?.ui.craftingGrid.every((slot) => slot === null)).toBe(true);
     expect(findPacket(latest, "inventoryUi")?.ui.cursor).toBeNull();
+  });
+
+  // Lava hazard cadence: first contact damages immediately, then repeats on the configured interval.
+  it("applies immediate lava damage, then repeats every 10 ticks while standing on lava", async () => {
+    const stub = makeRoomStub(roomName);
+    let healthAfterFirstTick = PLAYER_MAX_HEALTH;
+    let healthAfterTenTicks = PLAYER_MAX_HEALTH;
+    let healthAfterElevenTicks = PLAYER_MAX_HEALTH;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", () => {});
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      // Eye Y stores camera height; feetY = y - 1.62. To stand on top of a
+      // block at y=110 (top face y=111), eye Y must be 112.62.
+      room.teleportTo("alice", 0, 112.62, 20);
+      await room.runTick();
+
+      const placed = roomInternals.chunkStorage.applyMutation({
+        action: "place",
+        x: 0,
+        y: 110,
+        z: 20,
+        blockType: CubeType.Lava,
+      });
+      expect(placed.accepted).toBe(true);
+
+      // First lava-contact tick should damage immediately.
+      await room.runTick();
+      healthAfterFirstTick = roomInternals.playerSystem.players.get("alice")?.state.health ?? PLAYER_MAX_HEALTH;
+
+      // Nine more ticks should not apply a second hit yet.
+      for (let index = 0; index < 9; index++) {
+        await room.runTick();
+      }
+      healthAfterTenTicks = roomInternals.playerSystem.players.get("alice")?.state.health ?? PLAYER_MAX_HEALTH;
+
+      // The 11th contact tick should apply the second hit.
+      await room.runTick();
+      healthAfterElevenTicks = roomInternals.playerSystem.players.get("alice")?.state.health ?? PLAYER_MAX_HEALTH;
+    });
+
+    expect(healthAfterFirstTick).toBe(PLAYER_MAX_HEALTH - 2);
+    expect(healthAfterTenTicks).toBe(PLAYER_MAX_HEALTH - 2);
+    expect(healthAfterElevenTicks).toBe(PLAYER_MAX_HEALTH - 4);
+  });
+
+  // Side-face lava contact should count as hazard contact, not only standing on top.
+  it("applies lava damage when touching a lava side face", async () => {
+    const stub = makeRoomStub(roomName);
+    let healthAfterTouch = PLAYER_MAX_HEALTH;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", () => {});
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      const placed = roomInternals.chunkStorage.applyMutation({
+        action: "place",
+        x: 0,
+        y: 110,
+        z: 20,
+        blockType: CubeType.Lava,
+      });
+      expect(placed.accepted).toBe(true);
+
+      // Eye Y = 112.62 gives feet at y=111 (lava top). X=1.3 makes the
+      // player's cylinder touch the lava side at x=1.
+      room.teleportTo("alice", 1.3, 112.62, 20);
+      await room.runTick();
+
+      healthAfterTouch = roomInternals.playerSystem.players.get("alice")?.state.health ?? PLAYER_MAX_HEALTH;
+    });
+
+    expect(healthAfterTouch).toBe(PLAYER_MAX_HEALTH - 2);
+  });
+
+  // Matches in-game collision-stop distance where visuals show contact slightly before strict overlap.
+  it("applies lava damage when blocked just short of a lava side face", async () => {
+    const stub = makeRoomStub(roomName);
+    let healthNearSide = PLAYER_MAX_HEALTH;
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", () => {});
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      const placed = roomInternals.chunkStorage.applyMutation({
+        action: "place",
+        x: 0,
+        y: 110,
+        z: 20,
+        blockType: CubeType.Lava,
+      });
+      expect(placed.accepted).toBe(true);
+
+      // Model the in-game collision stop distance where the player can look
+      // side-touching while remaining slightly outside strict cylinder overlap.
+      room.teleportTo("alice", 1.36, 112.62, 20);
+      await room.runTick();
+
+      healthNearSide = roomInternals.playerSystem.players.get("alice")?.state.health ?? PLAYER_MAX_HEALTH;
+    });
+
+    expect(healthNearSide).toBe(PLAYER_MAX_HEALTH - 2);
+  });
+
+  // Fluid replacement rule: when placing into a deep lava column, only the lowest fluid cell is legal.
+  it("only allows replacing lava from the bottom of a deep column", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      // Find three consecutive air cells in this column so we can build a
+      // deterministic 3-deep lava stack regardless of terrain variation.
+      let topY = -1;
+      for (let y = 124; y >= 3; y--) {
+        if (
+          roomInternals.chunkStorage.getBlock(0, y, 20) === CubeType.Air &&
+          roomInternals.chunkStorage.getBlock(0, y - 1, 20) === CubeType.Air &&
+          roomInternals.chunkStorage.getBlock(0, y - 2, 20) === CubeType.Air
+        ) {
+          topY = y;
+          break;
+        }
+      }
+      expect(topY).toBeGreaterThan(0);
+
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY, z: 20, blockType: CubeType.Lava })
+          .accepted,
+      ).toBe(true);
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 1, z: 20, blockType: CubeType.Lava })
+          .accepted,
+      ).toBe(true);
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 2, z: 20, blockType: CubeType.Lava })
+          .accepted,
+      ).toBe(true);
+
+      // Stand on top of the lava surface (eye at feet + eye offset).
+      room.teleportTo("alice", 0, topY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "place",
+        x: 0,
+        y: topY,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const rejectAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+      expect(rejectAck?.accepted).toBe(false);
+
+      room.sendBlockAction("alice", {
+        seq: 2,
+        action: "place",
+        x: 0,
+        y: topY - 2,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const firstAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 2);
+      expect(firstAcceptAck?.accepted).toBe(true);
+      expect(roomInternals.chunkStorage.getBlock(0, topY - 2, 20)).toBe(CubeType.Dirt);
+
+      room.sendBlockAction("alice", {
+        seq: 3,
+        action: "place",
+        x: 0,
+        y: topY - 1,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const secondAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 3);
+      expect(secondAcceptAck?.accepted).toBe(true);
+      expect(roomInternals.chunkStorage.getBlock(0, topY - 1, 20)).toBe(CubeType.Dirt);
+
+      room.sendBlockAction("alice", {
+        seq: 4,
+        action: "place",
+        x: 0,
+        y: topY,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const thirdAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 4);
+      expect(thirdAcceptAck?.accepted).toBe(true);
+      expect(roomInternals.chunkStorage.getBlock(0, topY, 20)).toBe(CubeType.Dirt);
+    });
+  });
+
+  // Same bottom-up replacement enforcement as lava, but for water columns.
+  it("only allows replacing water from the bottom of a deep column", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      let topY = -1;
+      for (let y = 124; y >= 3; y--) {
+        if (
+          roomInternals.chunkStorage.getBlock(0, y, 20) === CubeType.Air &&
+          roomInternals.chunkStorage.getBlock(0, y - 1, 20) === CubeType.Air &&
+          roomInternals.chunkStorage.getBlock(0, y - 2, 20) === CubeType.Air
+        ) {
+          topY = y;
+          break;
+        }
+      }
+      expect(topY).toBeGreaterThan(0);
+
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY, z: 20, blockType: CubeType.Water })
+          .accepted,
+      ).toBe(true);
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 1, z: 20, blockType: CubeType.Water })
+          .accepted,
+      ).toBe(true);
+      expect(
+        roomInternals.chunkStorage.applyMutation({ action: "place", x: 0, y: topY - 2, z: 20, blockType: CubeType.Water })
+          .accepted,
+      ).toBe(true);
+
+      room.teleportTo("alice", 0, topY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "place",
+        x: 0,
+        y: topY,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const rejectAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+      expect(rejectAck?.accepted).toBe(false);
+
+      room.sendBlockAction("alice", {
+        seq: 2,
+        action: "place",
+        x: 0,
+        y: topY - 2,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const firstAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 2);
+      expect(firstAcceptAck?.accepted).toBe(true);
+      expect(roomInternals.chunkStorage.getBlock(0, topY - 2, 20)).toBe(CubeType.Dirt);
+
+      room.sendBlockAction("alice", {
+        seq: 3,
+        action: "place",
+        x: 0,
+        y: topY - 1,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const secondAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 3);
+      expect(secondAcceptAck?.accepted).toBe(true);
+      expect(roomInternals.chunkStorage.getBlock(0, topY - 1, 20)).toBe(CubeType.Dirt);
+
+      room.sendBlockAction("alice", {
+        seq: 4,
+        action: "place",
+        x: 0,
+        y: topY,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const thirdAcceptAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 4);
+      expect(thirdAcceptAck?.accepted).toBe(true);
+      expect(roomInternals.chunkStorage.getBlock(0, topY, 20)).toBe(CubeType.Dirt);
+    });
+  });
+
+  // Breaking fluid should resolve to the reachable support block beneath the fluid column.
+  it("breaking water or lava targets the reachable support block under the fluid column", async () => {
+    const stub = makeRoomStub(roomName);
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      room.join("dummy", "dummy", () => {});
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      const runBreakScenario = async (playerId: string, playerName: string, x: number, z: number, fluid: CubeType) => {
+        const ticks: ServerTick[] = [];
+        room.join(playerId, playerName, (tick) => ticks.push(tick));
+        await room.runTick();
+
+        let topY = -1;
+        for (let y = 124; y >= 2; y--) {
+          if (
+            roomInternals.chunkStorage.getBlock(x, y, z) === CubeType.Air &&
+            roomInternals.chunkStorage.getBlock(x, y - 1, z) === CubeType.Air
+          ) {
+            topY = y;
+            break;
+          }
+        }
+        expect(topY).toBeGreaterThan(0);
+
+        expect(roomInternals.chunkStorage.applyMutation({ action: "place", x, y: topY, z, blockType: fluid }).accepted).toBe(
+          true,
+        );
+        expect(
+          roomInternals.chunkStorage.applyMutation({ action: "place", x, y: topY - 1, z, blockType: CubeType.Dirt }).accepted,
+        ).toBe(true);
+
+        room.teleportTo(playerId, x, topY + 2.62, z);
+        await room.runTick();
+
+        room.sendBlockAction(playerId, {
+          seq: 1,
+          action: "break",
+          x,
+          y: topY,
+          z,
+        });
+        await room.runTick();
+
+        const breakAck = findPacket(ticks[ticks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+        expect(breakAck?.accepted).toBe(true);
+        const supportAfterBreak = roomInternals.chunkStorage.getBlock(x, topY - 1, z);
+        // The support block must be broken. Water may flow into the cell in
+        // the same tick, so we assert only that the original Dirt support is gone.
+        expect(supportAfterBreak).not.toBe(CubeType.Dirt);
+
+        room.leave(playerId);
+        await room.runTick();
+      };
+
+      await runBreakScenario("alice", "Alice", 0, 20, CubeType.Lava);
+      await runBreakScenario("bob", "Bob", 2, 20, CubeType.Water);
+    });
   });
 
   it("accepts an attack from a valid client snapshot even when the server yaw is stale", async () => {

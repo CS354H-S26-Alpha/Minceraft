@@ -67,3 +67,7 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
     baseColor: [0.58, 0.68, 0.72],
   },
 };
+
+export function isFluidCubeType(blockType: CubeType): boolean {
+  return blockType === CubeType.Water || blockType === CubeType.Lava;
+}

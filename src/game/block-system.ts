@@ -1,5 +1,5 @@
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
-import { CubeType } from "@/client/engine/render/cube-types";
+import { CubeType, isFluidCubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
 import type * as schema from "../server/schema";
 import type { ChunkBlob, ChunkStorage } from "./chunk-storage";
@@ -11,6 +11,7 @@ import type { BlockActionPacket, ServerPacket } from "./protocol";
 const MAX_INTERACT_DISTANCE_SQ = 7 * 7;
 const MAX_ACTIONS_PER_TICK = 20;
 const CHUNKS_PER_TICK = 30;
+type FluidType = CubeType.Water | CubeType.Lava;
 
 export interface BlockSystemOptions {
   /** Chunk radius for the initial load on join (default 5 → 10x10 grid). */
@@ -63,29 +64,59 @@ export class BlockSystem implements GameSystem {
       this.pushAck(playerId, action.seq, false);
       return;
     }
-    const dx = pos.x - action.x;
-    const dy = pos.y - action.y;
-    const dz = pos.z - action.z;
+
+    let targetX = action.x;
+    let targetY = action.y;
+    let targetZ = action.z;
+
+    if (action.action === "break") {
+      const resolvedBreakTarget = this.resolveFluidFloorBreakTarget(action.x, action.y, action.z);
+      if (!resolvedBreakTarget) {
+        this.pushAck(playerId, action.seq, false);
+        return;
+      }
+      targetX = resolvedBreakTarget.x;
+      targetY = resolvedBreakTarget.y;
+      targetZ = resolvedBreakTarget.z;
+    }
+
+    const dx = pos.x - targetX;
+    const dy = pos.y - targetY;
+    const dz = pos.z - targetZ;
     if (dx * dx + dy * dy + dz * dz > MAX_INTERACT_DISTANCE_SQ) {
       this.pushAck(playerId, action.seq, false);
       return;
     }
-    if (action.action === "place" && blockIntersectsPlayer(action.x, action.y, action.z, pos)) {
-      this.pushAck(playerId, action.seq, false);
-      return;
+    if (action.action === "place") {
+      const targetType = this.storage.getBlock(targetX, targetY, targetZ);
+      if (targetType !== undefined && isFluidCubeType(targetType)) {
+        const fluidType = targetType as FluidType;
+        const bottomFluidY = this.findBottomFluidY(targetX, targetY, targetZ, fluidType);
+        // Placing into fluid must always replace the lowest fluid cell in the
+        // column so deep pools are filled bottom-up.
+        if (bottomFluidY === null || targetY !== bottomFluidY) {
+          this.pushAck(playerId, action.seq, false);
+          return;
+        }
+      }
+
+      if (blockIntersectsPlayer(targetX, targetY, targetZ, pos)) {
+        this.pushAck(playerId, action.seq, false);
+        return;
+      }
     }
 
     const result = this.storage.applyMutation({
       action: action.action,
-      x: action.x,
-      y: action.y,
-      z: action.z,
+      x: targetX,
+      y: targetY,
+      z: targetZ,
       blockType: action.blockType,
     });
     this.pushAck(playerId, action.seq, result.accepted);
     if (result.accepted) {
       const blockType = action.action === "break" ? CubeType.Air : (action.blockType ?? CubeType.Dirt);
-      this.pendingChanges.push({ x: action.x, y: action.y, z: action.z, blockType });
+      this.pendingChanges.push({ x: targetX, y: targetY, z: targetZ, blockType });
     }
   }
 
@@ -290,6 +321,29 @@ export class BlockSystem implements GameSystem {
         this.pendingChunkRequests.set(playerId, { origins: [...origins] });
       }
     }
+  }
+
+  private findBottomFluidY(x: number, startY: number, z: number, fluidType: FluidType): number | null {
+    if (this.storage.getBlock(x, startY, z) !== fluidType) return null;
+    let y = startY;
+    while (y > 0 && this.storage.getBlock(x, y - 1, z) === fluidType) y--;
+    return y;
+  }
+
+  private resolveFluidFloorBreakTarget(x: number, y: number, z: number): { x: number; y: number; z: number } | null {
+    const targetType = this.storage.getBlock(x, y, z);
+    if (targetType === undefined) return null;
+    if (!isFluidCubeType(targetType)) return { x, y, z };
+
+    const bottomFluidY = this.findBottomFluidY(x, y, z, targetType as FluidType);
+    if (bottomFluidY === null || bottomFluidY <= 0) return null;
+
+    const supportY = bottomFluidY - 1;
+    const supportType = this.storage.getBlock(x, supportY, z);
+    // Breaking fluid only targets the non-fluid support block under the
+    // column's lowest fluid cell.
+    if (supportType === undefined || supportType === CubeType.Air || isFluidCubeType(supportType)) return null;
+    return { x, y: supportY, z };
   }
 
   private pushAck(playerId: string, seq: number, accepted: boolean): void {

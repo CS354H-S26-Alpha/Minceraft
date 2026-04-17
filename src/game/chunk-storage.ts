@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
-import { CubeType } from "@/client/engine/render/cube-types";
+import { CubeType, isFluidCubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey, chunkOrigin, rleDecodeBlocks, rleEncodeBlocks } from "@/game/chunk";
 import type { ChunkGen } from "@/server/chunk-gen";
 import * as schema from "@/server/schema";
@@ -110,14 +110,14 @@ export class ChunkStorage {
       return { accepted: false, previousType: CubeType.Air };
     }
     if (action.action === "break") {
-      if (current === CubeType.Air || current === CubeType.Bedrock) {
+      if (current === CubeType.Air || current === CubeType.Bedrock || isFluidCubeType(current)) {
         return { accepted: false, previousType: current };
       }
       this.writeBlock(x, y, z, CubeType.Air);
       this.activateFluidNeighbours(x, y, z);
       return { accepted: true, previousType: current };
     }
-    if (current !== CubeType.Air) {
+    if (current !== CubeType.Air && !isFluidCubeType(current)) {
       return { accepted: false, previousType: current };
     }
     const blockType = (action.blockType ?? CubeType.Dirt) as CubeType;

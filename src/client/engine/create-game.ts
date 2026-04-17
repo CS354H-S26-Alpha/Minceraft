@@ -3,7 +3,7 @@ import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { CubeType } from "@/client/engine/render/cube-types";
+import { CubeType, isFluidCubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE } from "@/game/chunk";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
 import { findTargetedPlayerId } from "@/game/player-targeting";
@@ -91,6 +91,8 @@ const FRAME_HISTORY_SIZE = 120;
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
+const MAX_BLOCK_INTERACT_DISTANCE_SQ = 7 * 7;
+type FluidType = CubeType.Water | CubeType.Lava;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
@@ -188,11 +190,45 @@ export function createGame(args: CreateGameArgs): GameState {
     const hit = latestHit;
     if (!hit || hit.blockType === CubeType.Bedrock) return;
 
+    let breakX = hit.blockX;
+    let breakY = hit.blockY;
+    let breakZ = hit.blockZ;
+
+    if (isFluidCubeType(hit.blockType)) {
+      const fluidType = hit.blockType as FluidType;
+      const bottomFluidY = findBottomFluidY(hit.blockX, hit.blockY, hit.blockZ, fluidType);
+      if (bottomFluidY <= 0) return;
+      const supportY = bottomFluidY - 1;
+      const supportType = chunks.getBlock(hit.blockX, supportY, hit.blockZ);
+      // Punching fluid breaks the reachable non-fluid block supporting the
+      // bottom of the fluid column.
+      if (supportType === CubeType.Air || supportType === CubeType.Bedrock || isFluidCubeType(supportType)) return;
+      breakX = hit.blockX;
+      breakY = supportY;
+      breakZ = hit.blockZ;
+      if (!canReachBlock(breakX, breakY, breakZ)) return;
+    }
+
     const seq = blockSeq++;
-    const previousType = chunks.modifyBlock(hit.blockX, hit.blockY, hit.blockZ, CubeType.Air);
+    const previousType = chunks.modifyBlock(breakX, breakY, breakZ, CubeType.Air);
     if (previousType == null) return;
-    pendingBlocks.set(seq, { x: hit.blockX, y: hit.blockY, z: hit.blockZ, previousType });
-    s.sendBlockAction({ seq, action: "break", x: hit.blockX, y: hit.blockY, z: hit.blockZ });
+    pendingBlocks.set(seq, { x: breakX, y: breakY, z: breakZ, previousType });
+    s.sendBlockAction({ seq, action: "break", x: breakX, y: breakY, z: breakZ });
+  };
+
+  const findBottomFluidY = (x: number, startY: number, z: number, fluidType: FluidType): number => {
+    let y = startY;
+    while (y > 0 && chunks.getBlock(x, y - 1, z) === fluidType) y--;
+    return y;
+  };
+
+  const canReachBlock = (x: number, y: number, z: number): boolean => {
+    const player = room().player();
+    if (!player) return false;
+    const dx = player.state.x - x;
+    const dy = player.state.y - y;
+    const dz = player.state.z - z;
+    return dx * dx + dy * dy + dz * dz <= MAX_BLOCK_INTERACT_DISTANCE_SQ;
   };
 
   const handleRightClick = () => {
@@ -200,12 +236,27 @@ export function createGame(args: CreateGameArgs): GameState {
     const s = room().session();
     if (!hit || !s) return;
 
-    const placeX = hit.blockX + hit.faceNormal[0];
-    const placeY = hit.blockY + hit.faceNormal[1];
-    const placeZ = hit.blockZ + hit.faceNormal[2];
+    let placeX: number;
+    let placeY: number;
+    let placeZ: number;
 
-    // Don't place if the target is already occupied
-    if (chunks.getBlock(placeX, placeY, placeZ) !== CubeType.Air) return;
+    if (isFluidCubeType(hit.blockType)) {
+      const fluidType = hit.blockType as FluidType;
+      // For fluid columns, always target the bottom-most fluid block so each
+      // placement removes one layer from the bottom up.
+      placeX = hit.blockX;
+      placeY = findBottomFluidY(hit.blockX, hit.blockY, hit.blockZ, fluidType);
+      placeZ = hit.blockZ;
+      if (!canReachBlock(placeX, placeY, placeZ)) return;
+    } else {
+      placeX = hit.blockX + hit.faceNormal[0];
+      placeY = hit.blockY + hit.faceNormal[1];
+      placeZ = hit.blockZ + hit.faceNormal[2];
+    }
+
+    // Allow replacing fluids directly; otherwise only place into Air.
+    const existingType = chunks.getBlock(placeX, placeY, placeZ);
+    if (existingType !== CubeType.Air && !isFluidCubeType(existingType)) return;
 
     // Don't place inside the local player's own cylinder
     const player = room().player();
