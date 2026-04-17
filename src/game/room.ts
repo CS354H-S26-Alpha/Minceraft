@@ -125,6 +125,7 @@ export class GameRoom extends DurableObject<Env> {
 
     this.chunkStorage = new ChunkStorage(this.db, this.env.ChunkGen as Service<typeof ChunkGen> | undefined);
     this.chunkStorage.hydrate(seed);
+    this.playerSystem.setEnvironmentQuery((wx, wy, wz) => this.chunkStorage.getBlock(wx, wy, wz));
 
     this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
     const fluidSystem = new FluidSystem(this.chunkStorage);
