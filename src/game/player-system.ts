@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { CubeType } from "@/client/engine/render/cube-types";
 import type * as schema from "../server/schema";
 import * as playerSchema from "../server/schema";
 import {
@@ -39,6 +40,11 @@ const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const BASE_MOVEMENT_WINDOW_MS = 100;
 const MOVEMENT_TOLERANCE = 3;
 const DEATH_Y_THRESHOLD = -20;
+const LAVA_DAMAGE_INTERVAL_TICKS = 10; // 10 * 50ms = 500ms at the room tick rate.
+const LAVA_DAMAGE_AMOUNT = 2;
+const LAVA_SURFACE_CONTACT_EPSILON = 0.05;
+const LAVA_CONTACT_EPSILON = 1e-4;
+const LAVA_SIDE_CONTACT_PADDING = 0.08;
 
 /**
  * Manages the set of players in a room — their in-memory state, latest pending
@@ -59,6 +65,12 @@ export class PlayerSystem implements GameSystem {
   private lastAcceptedAt = new Map<string, number>();
   private pendingReconcile = new Set<string>();
   private pendingSelfStateSync = new Set<string>();
+  private getBlockAt: ((wx: number, wy: number, wz: number) => CubeType | undefined) | undefined;
+  private lavaContactTicks = new Map<string, number>();
+
+  setEnvironmentQuery(getBlockAt: (wx: number, wy: number, wz: number) => CubeType | undefined): void {
+    this.getBlockAt = getBlockAt;
+  }
 
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
@@ -119,6 +131,7 @@ export class PlayerSystem implements GameSystem {
   /** Clears the departing player's input queue; their state remains for persistence. */
   leave(playerId: string): void {
     this.resetSession(playerId);
+    this.lavaContactTicks.delete(playerId);
     const player = this.players.get(playerId);
     const ui = this.inventoryUi.get(playerId);
     if (player && ui && this.returnCraftingItems(player, ui)) {
@@ -141,6 +154,7 @@ export class PlayerSystem implements GameSystem {
     this.pendingPackets.delete(playerId);
     this.acks.delete(playerId);
     this.lastAcceptedAt.set(playerId, Date.now());
+    this.lavaContactTicks.delete(playerId);
   }
 
   /**
@@ -232,9 +246,36 @@ export class PlayerSystem implements GameSystem {
       if (player.state.y >= DEATH_Y_THRESHOLD) continue;
       player.state.health = 0;
       this.pendingPackets.delete(id);
+      this.lavaContactTicks.delete(id);
       this.pendingSelfStateSync.add(id);
       this.dirty.add(id);
       changed = true;
+    }
+
+    for (const [id, player] of this.players) {
+      if (player.state.health <= 0) continue;
+      if (!this.isTouchingLava(player.state)) {
+        this.lavaContactTicks.delete(id);
+        continue;
+      }
+
+      // Count consecutive ticks of lava contact. The first contact tick should
+      // hurt immediately, then additional hits occur every N ticks after that.
+      const contactTicks = (this.lavaContactTicks.get(id) ?? 0) + 1;
+      this.lavaContactTicks.set(id, contactTicks);
+      const shouldDamageNow = contactTicks === 1 || (contactTicks - 1) % LAVA_DAMAGE_INTERVAL_TICKS === 0;
+      if (!shouldDamageNow) continue;
+      if (!player.takeDamage(LAVA_DAMAGE_AMOUNT)) continue;
+
+      this.dirty.add(id);
+      changed = true;
+      if (player.state.health <= 0) {
+        this.pendingPackets.delete(id);
+        this.lavaContactTicks.delete(id);
+        this.pendingSelfStateSync.add(id);
+      } else {
+        this.pendingSelfStateSync.add(id);
+      }
     }
     return changed;
   }
@@ -510,10 +551,82 @@ export class PlayerSystem implements GameSystem {
     this.inventoryUi.set(playerId, createInventoryUiState());
     this.pendingPackets.delete(playerId);
     this.lastAcceptedAt.set(playerId, Date.now());
+    this.lavaContactTicks.delete(playerId);
     this.pendingSelfStateSync.delete(playerId);
     this.pendingReconcile.add(playerId);
     this.dirty.add(playerId);
     return true;
+  }
+
+  private isTouchingLava(state: Pick<PlayerState, "x" | "y" | "z">): boolean {
+    const getBlockAt = this.getBlockAt;
+    if (!getBlockAt) return false;
+
+    const horizontalReach = Player.CYLINDER_RADIUS + LAVA_SIDE_CONTACT_PADDING;
+    // Expand by epsilon so tangent contact includes adjacent voxel bounds
+    // (e.g., center.x - radius landing exactly on an integer boundary).
+    const minX = Math.floor(state.x - horizontalReach - LAVA_CONTACT_EPSILON);
+    const maxX = Math.floor(state.x + horizontalReach + LAVA_CONTACT_EPSILON);
+    const minZ = Math.floor(state.z - horizontalReach - LAVA_CONTACT_EPSILON);
+    const maxZ = Math.floor(state.z + horizontalReach + LAVA_CONTACT_EPSILON);
+    const feetY = state.y - Player.EYE_OFFSET;
+    const headTopY = feetY + Player.CYLINDER_HEIGHT;
+    // Include one epsilon below feet so side-grazing contact at lava top edge
+    // still inspects the supporting lava voxel.
+    const minY = Math.floor(feetY - LAVA_CONTACT_EPSILON);
+    const maxY = Math.floor(headTopY);
+
+    // Contact mode 1: body volume intersects a lava voxel.
+    for (let by = minY; by <= maxY; by++) {
+      for (let bz = minZ; bz <= maxZ; bz++) {
+        for (let bx = minX; bx <= maxX; bx++) {
+          if (getBlockAt(bx, by, bz) !== CubeType.Lava) continue;
+          if (this.isLavaBlockTouchingPlayer(bx, by, bz, state)) return true;
+        }
+      }
+    }
+
+    // Contact mode 2: player is standing directly on lava's top face.
+    // The collision code keeps feet exactly at block-top level, so pure
+    // AABB overlap can miss this case unless we probe one block below feet.
+    const supportY = Math.floor(feetY - LAVA_SURFACE_CONTACT_EPSILON);
+    for (let bz = minZ; bz <= maxZ; bz++) {
+      for (let bx = minX; bx <= maxX; bx++) {
+        if (getBlockAt(bx, supportY, bz) !== CubeType.Lava) continue;
+        if (this.isWithinPlayerFootprintXZ(bx, bz, state.x, state.z)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  private isLavaBlockTouchingPlayer(
+    bx: number,
+    by: number,
+    bz: number,
+    state: Pick<PlayerState, "x" | "y" | "z">,
+  ): boolean {
+    const feetY = state.y - Player.EYE_OFFSET;
+    const headTopY = feetY + Player.CYLINDER_HEIGHT;
+    // Include boundary contact so grazing a lava side face still damages.
+    if (by + 1 < feetY - LAVA_CONTACT_EPSILON || by > headTopY + LAVA_CONTACT_EPSILON) return false;
+
+    const closestX = state.x < bx ? bx : state.x > bx + 1 ? bx + 1 : state.x;
+    const closestZ = state.z < bz ? bz : state.z > bz + 1 ? bz + 1 : state.z;
+    const dx = state.x - closestX;
+    const dz = state.z - closestZ;
+    const sideContactRadius = Player.CYLINDER_RADIUS + LAVA_SIDE_CONTACT_PADDING;
+    const maxRadiusSq = sideContactRadius * sideContactRadius + LAVA_CONTACT_EPSILON;
+    return dx * dx + dz * dz <= maxRadiusSq;
+  }
+
+  private isWithinPlayerFootprintXZ(bx: number, bz: number, px: number, pz: number): boolean {
+    const closestX = px < bx ? bx : px > bx + 1 ? bx + 1 : px;
+    const closestZ = pz < bz ? bz : pz > bz + 1 ? bz + 1 : pz;
+    const dx = px - closestX;
+    const dz = pz - closestZ;
+    const maxRadiusSq = Player.CYLINDER_RADIUS * Player.CYLINDER_RADIUS + LAVA_CONTACT_EPSILON;
+    return dx * dx + dz * dz <= maxRadiusSq;
   }
 }
 
