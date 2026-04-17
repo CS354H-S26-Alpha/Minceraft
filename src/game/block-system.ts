@@ -115,8 +115,15 @@ export class BlockSystem implements GameSystem {
     });
     this.pushAck(playerId, action.seq, result.accepted);
     if (result.accepted) {
-      const blockType = action.action === "break" ? CubeType.Air : (action.blockType ?? CubeType.Dirt);
-      this.pendingChanges.push({ x: targetX, y: targetY, z: targetZ, blockType });
+      // Prefer authoritative storage-side change list because one user action
+      // may produce multiple world edits (e.g., undermining block falls).
+      if (result.changes.length > 0) {
+        this.pendingChanges.push(...result.changes);
+      } else {
+        // Defensive fallback for older/simple mutation paths.
+        const blockType = action.action === "break" ? CubeType.Air : (action.blockType ?? CubeType.Dirt);
+        this.pendingChanges.push({ x: targetX, y: targetY, z: targetZ, blockType });
+      }
     }
   }
 
