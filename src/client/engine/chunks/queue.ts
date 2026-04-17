@@ -1,124 +1,35 @@
+/** biome-ignore-all lint/style/noNonNullAssertion: typed-array hot path with bounded indices */
+import { LRUCache } from "lru-cache";
 import { CubeType } from "@/client/engine/render/cube-types";
-import { CHUNK_SIZE, Chunk, chunkKey, chunkOrigin } from "@/game/chunk";
-import type { ChunkBatchData, ChunkOrigin, ChunkQueueArgs, SingleChunkData } from "./client";
+import {
+  CHUNK_HEIGHT,
+  CHUNK_SIZE,
+  chunkKey,
+  chunkOrigin,
+  computeHeightData,
+  decodeBlocks,
+  type RenderBlockResult,
+  renderBlockData,
+  SECTION_SIZE,
+  SECTIONS_PER_CHUNK,
+  sectionIndex,
+  sectionRegion,
+  updateColumnSurface,
+} from "@/game/chunk";
+import type { ChunkBatchData, WorkerChunkData } from "./client";
 
-interface ChunkLike {
-  renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void;
-  getBlockWorld(wx: number, wy: number, wz: number): CubeType;
-  cubePositions(): Float32Array;
-  cubeColors(): Float32Array;
+interface SectionRenderData {
+  cubePositions: Float32Array;
+  cubeColors: Float32Array;
+  cubeAmbientOcclusion: Uint8Array;
+  numCubes: number;
+}
+
+interface CachedChunkData {
   blocks: Uint8Array;
-  cubeAmbientOcclusion(): Uint8Array;
-  surfaceHeights(): Uint8Array;
-  surfaceTypes(): Uint8Array;
-  numCubes(): number;
-}
-
-type ChunkFactory = (centerX: number, centerZ: number, size: number, seed: number) => ChunkLike;
-
-interface QueuedChunk extends ChunkOrigin {
-  key: string;
-}
-// Chunk persistence
-interface LRUNode {
-  key: string;
-  chunk: ChunkLike;
-  prev: LRUNode | null;
-  next: LRUNode | null;
-}
-
-class LRUCache {
-  private readonly map = new Map<string, LRUNode>();
-  private head: LRUNode | null = null;
-  private tail: LRUNode | null = null;
-  private readonly capacity: number;
-
-  constructor(capacity: number) {
-    this.capacity = Math.max(1, capacity);
-  }
-
-  has(key: string): boolean {
-    return this.map.has(key);
-  }
-
-  get(key: string): ChunkLike | undefined {
-    const node = this.map.get(key);
-    if (!node) return undefined;
-    this.moveToHead(node);
-    return node.chunk;
-  }
-
-  set(key: string, chunk: ChunkLike): void {
-    if (this.map.has(key)) {
-      const node = this.map.get(key);
-      if (node) {
-        node.chunk = chunk;
-        this.moveToHead(node);
-        return;
-      }
-    }
-
-    const node: LRUNode = { key, chunk, prev: null, next: this.head };
-    if (this.head) this.head.prev = node;
-    this.head = node;
-    if (!this.tail) this.tail = node;
-    this.map.set(key, node);
-
-    if (this.map.size > this.capacity) this.evictTail();
-  }
-
-  delete(key: string): void {
-    const node = this.map.get(key);
-    if (!node) return;
-    this.unlink(node);
-    this.map.delete(key);
-  }
-
-  clear(): void {
-    this.map.clear();
-    this.head = null;
-    this.tail = null;
-  }
-
-  keys(): IterableIterator<string> {
-    return this.map.keys();
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-
-  private moveToHead(node: LRUNode): void {
-    if (node === this.head) return;
-    this.unlink(node);
-    node.next = this.head;
-    node.prev = null;
-    if (this.head) this.head.prev = node;
-    this.head = node;
-    if (!this.tail) this.tail = node;
-  }
-
-  private evictTail(): void {
-    if (!this.tail) return;
-    const key = this.tail.key;
-    this.unlink(this.tail);
-    this.map.delete(key);
-  }
-
-  private unlink(node: LRUNode): void {
-    if (node.prev) node.prev.next = node.next;
-    else this.head = node.next;
-    if (node.next) node.next.prev = node.prev;
-    else this.tail = node.prev;
-    node.prev = null;
-    node.next = null;
-  }
-}
-
-interface ChunkEntry {
-  chunkX: number;
-  chunkZ: number;
-  chunk: ChunkLike;
+  heightMap: Uint8Array;
+  surfaceTypes: Uint8Array;
+  sections: (SectionRenderData | null)[];
 }
 
 const CARDINAL_OFFSETS: [number, number][] = [
@@ -128,178 +39,288 @@ const CARDINAL_OFFSETS: [number, number][] = [
   [0, -CHUNK_SIZE],
 ];
 
-/** Manages chunk caching and incremental terrain generation. */
-export class ChunkGenerationQueue {
-  private readonly cache: LRUCache;
-  private visibleKeys = new Set<string>();
-  private activeSeed: number | undefined;
-  private activeGenerationId = -1;
-  private queuedChunks: QueuedChunk[] = [];
+interface ConcatenatedResult extends RenderBlockResult {
+  sectionOffsets: Uint32Array;
+  sectionCounts: Uint16Array;
+}
 
-  constructor(
-    private readonly chunkFactory: ChunkFactory = (cx, cz, size, seed) => new Chunk(cx, cz, size, seed),
-    cacheCapacity = 512,
-  ) {
-    this.cache = new LRUCache(cacheCapacity);
+function concatenateSections(sections: (SectionRenderData | null)[]): ConcatenatedResult {
+  const sectionOffsets = new Uint32Array(sections.length);
+  const sectionCounts = new Uint16Array(sections.length);
+
+  let totalCubes = 0;
+  for (let i = 0; i < sections.length; i++) {
+    sectionOffsets[i] = totalCubes;
+    const count = sections[i]?.numCubes ?? 0;
+    sectionCounts[i] = count;
+    totalCubes += count;
   }
 
-  /** Replaces the desired visible set and returns a render from already-cached chunks. */
-  setVisibleChunks(args: ChunkQueueArgs): ChunkBatchData {
-    this.ensureSeed(args.seed);
-    this.activeGenerationId = args.generationId;
-    this.visibleKeys = new Set(args.chunkOrigins.map((o) => chunkKey(o.originX, o.originZ)));
-    this.queuedChunks = this.buildQueue(args.chunkOrigins);
-    this.evictDistantChunks(args);
-    return this.renderAllVisible(args);
+  const cubePositions = new Float32Array(totalCubes * 4);
+  const cubeColors = new Float32Array(totalCubes * 3);
+  const cubeAmbientOcclusion = new Uint8Array(totalCubes * 24);
+  let posOff = 0;
+  let colOff = 0;
+  let aoOff = 0;
+  for (const s of sections) {
+    if (!s || s.numCubes === 0) continue;
+    cubePositions.set(s.cubePositions, posOff);
+    posOff += s.cubePositions.length;
+    cubeColors.set(s.cubeColors, colOff);
+    colOff += s.cubeColors.length;
+    cubeAmbientOcclusion.set(s.cubeAmbientOcclusion, aoOff);
+    aoOff += s.cubeAmbientOcclusion.length;
+  }
+  return { cubePositions, cubeColors, cubeAmbientOcclusion, numCubes: totalCubes, sectionOffsets, sectionCounts };
+}
+
+/**
+ * Sorts a full-chunk render result into section-contiguous order and computes
+ * per-section offset/count metadata. Two O(n) passes over cubePositions.
+ */
+function bucketBySections(result: RenderBlockResult, originX: number, originZ: number): ConcatenatedResult {
+  const n = result.numCubes;
+  const halfS = CHUNK_SIZE / 2;
+
+  // Pass 1: count cubes per section
+  const counts = new Uint16Array(SECTIONS_PER_CHUNK);
+  for (let i = 0; i < n; i++) {
+    const lx = result.cubePositions[i * 4]! - (originX - halfS);
+    const ly = result.cubePositions[i * 4 + 1]!;
+    const lz = result.cubePositions[i * 4 + 2]! - (originZ - halfS);
+    const si = sectionIndex(lx, ly, lz);
+    counts[si] = counts[si]! + 1;
   }
 
-  /** Generates one queued chunk and returns only the changed chunks, or `null` if done or stale. */
-  generateNext(args: ChunkQueueArgs): ChunkBatchData | null {
-    this.ensureSeed(args.seed);
-    if (args.generationId !== this.activeGenerationId) return null;
+  // Build prefix-sum offsets
+  const offsets = new Uint32Array(SECTIONS_PER_CHUNK);
+  const writeIdx = new Uint32Array(SECTIONS_PER_CHUNK);
+  let offset = 0;
+  for (let i = 0; i < SECTIONS_PER_CHUNK; i++) {
+    offsets[i] = offset;
+    writeIdx[i] = offset;
+    offset += counts[i]!;
+  }
 
-    while (this.queuedChunks.length > 0) {
-      const next = this.queuedChunks.shift();
-      if (!next) return null;
-      if (this.cache.has(next.key)) continue;
-      this.cache.set(next.key, this.chunkFactory(next.originX, next.originZ, CHUNK_SIZE, args.seed));
-      return this.renderIncremental(next.originX, next.originZ);
+  // Pass 2: scatter into section-sorted order
+  const cubePositions = new Float32Array(n * 4);
+  const cubeColors = new Float32Array(n * 3);
+  const cubeAmbientOcclusion = new Uint8Array(n * 24);
+
+  for (let i = 0; i < n; i++) {
+    const lx = result.cubePositions[i * 4]! - (originX - halfS);
+    const ly = result.cubePositions[i * 4 + 1]!;
+    const lz = result.cubePositions[i * 4 + 2]! - (originZ - halfS);
+    const si = sectionIndex(lx, ly, lz);
+    const dst = writeIdx[si]!;
+    writeIdx[si] = dst + 1;
+
+    cubePositions[dst * 4] = result.cubePositions[i * 4]!;
+    cubePositions[dst * 4 + 1] = result.cubePositions[i * 4 + 1]!;
+    cubePositions[dst * 4 + 2] = result.cubePositions[i * 4 + 2]!;
+    cubePositions[dst * 4 + 3] = result.cubePositions[i * 4 + 3]!;
+
+    cubeColors[dst * 3] = result.cubeColors[i * 3]!;
+    cubeColors[dst * 3 + 1] = result.cubeColors[i * 3 + 1]!;
+    cubeColors[dst * 3 + 2] = result.cubeColors[i * 3 + 2]!;
+
+    cubeAmbientOcclusion.set(result.cubeAmbientOcclusion.subarray(i * 24, i * 24 + 24), dst * 24);
+  }
+
+  return {
+    cubePositions,
+    cubeColors,
+    cubeAmbientOcclusion,
+    numCubes: n,
+    sectionOffsets: offsets,
+    sectionCounts: counts,
+  };
+}
+
+function buildChunkData(ox: number, oz: number, cached: CachedChunkData, result: ConcatenatedResult): WorkerChunkData {
+  return {
+    originX: ox,
+    originZ: oz,
+    cubePositions: result.cubePositions,
+    cubeColors: result.cubeColors,
+    blocks: cached.blocks,
+    cubeAmbientOcclusion: result.cubeAmbientOcclusion,
+    surfaceHeights: cached.heightMap.slice(),
+    surfaceTypes: cached.surfaceTypes.slice(),
+    numCubes: result.numCubes,
+    sectionOffsets: result.sectionOffsets,
+    sectionCounts: result.sectionCounts,
+  };
+}
+
+/** Receives server block data, decodes it, caches blocks, and builds render meshes. */
+export class ChunkMeshBuilder {
+  private readonly cache: LRUCache<string, CachedChunkData>;
+
+  constructor(cacheCapacity = 512) {
+    this.cache = new LRUCache<string, CachedChunkData>({ max: Math.max(1, cacheCapacity) });
+  }
+
+  loadChunks(incoming: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): ChunkBatchData {
+    for (const { originX, originZ, blocks: encoded } of incoming) {
+      const key = chunkKey(originX, originZ);
+      const blocks = decodeBlocks(encoded);
+      const { heightMap, surfaceTypes } = computeHeightData(blocks, CHUNK_SIZE);
+      this.cache.set(key, { blocks, heightMap, surfaceTypes, sections: new Array(SECTIONS_PER_CHUNK).fill(null) });
     }
 
-    return null;
+    const worldGetBlock = this.buildWorldGetBlock();
+
+    // Render all sections of incoming chunks + cardinal neighbor chunks
+    const toRender = new Set<string>();
+    for (const { originX, originZ } of incoming) {
+      toRender.add(chunkKey(originX, originZ));
+      for (const [dx, dz] of CARDINAL_OFFSETS) {
+        const nkey = chunkKey(originX + dx, originZ + dz);
+        if (this.cache.has(nkey)) toRender.add(nkey);
+      }
+    }
+
+    const chunks: WorkerChunkData[] = [];
+    for (const key of toRender) {
+      const [oxStr, ozStr] = key.split(",");
+      const ox = Number(oxStr);
+      const oz = Number(ozStr);
+      const cached = this.cache.get(key);
+      if (!cached) continue;
+
+      // Full-chunk render in one pass (fast), then bucket by section
+      const result = renderBlockData(cached.blocks, cached.heightMap, ox, oz, CHUNK_SIZE, worldGetBlock);
+      const sectioned = bucketBySections(result, ox, oz);
+      // Store sections in cache for future updateBlock calls
+      for (let i = 0; i < SECTIONS_PER_CHUNK; i++) {
+        const off = sectioned.sectionOffsets[i]!;
+        const cnt = sectioned.sectionCounts[i]!;
+        cached.sections[i] =
+          cnt > 0
+            ? {
+                cubePositions: sectioned.cubePositions.slice(off * 4, (off + cnt) * 4),
+                cubeColors: sectioned.cubeColors.slice(off * 3, (off + cnt) * 3),
+                cubeAmbientOcclusion: sectioned.cubeAmbientOcclusion.slice(off * 24, (off + cnt) * 24),
+                numCubes: cnt,
+              }
+            : null;
+      }
+      chunks.push(buildChunkData(ox, oz, cached, sectioned));
+    }
+
+    return { chunks };
+  }
+
+  updateBlock(wx: number, wy: number, wz: number, blockType: number): ChunkBatchData {
+    const [ox, oz] = chunkOrigin(wx, wz);
+    const key = chunkKey(ox, oz);
+    const cached = this.cache.get(key);
+    if (!cached) return { chunks: [] };
+
+    const lx = wx - (ox - CHUNK_SIZE / 2);
+    const lz = wz - (oz - CHUNK_SIZE / 2);
+    cached.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = blockType;
+
+    updateColumnSurface(cached.blocks, cached.heightMap, cached.surfaceTypes, lx, lz, wy, blockType, CHUNK_SIZE);
+
+    const worldGetBlock = this.buildWorldGetBlock();
+
+    // Determine which sections need re-rendering
+    const dirtyIdxs = new Set<number>();
+    dirtyIdxs.add(sectionIndex(lx, wy, lz));
+    // If at a section boundary, the adjacent section's AO/face culling may change
+    if (lx % SECTION_SIZE === 0 && lx > 0) dirtyIdxs.add(sectionIndex(lx - 1, wy, lz));
+    if (lx % SECTION_SIZE === SECTION_SIZE - 1 && lx < CHUNK_SIZE - 1) dirtyIdxs.add(sectionIndex(lx + 1, wy, lz));
+    if (lz % SECTION_SIZE === 0 && lz > 0) dirtyIdxs.add(sectionIndex(lx, wy, lz - 1));
+    if (lz % SECTION_SIZE === SECTION_SIZE - 1 && lz < CHUNK_SIZE - 1) dirtyIdxs.add(sectionIndex(lx, wy, lz + 1));
+    if (wy % SECTION_SIZE === 0 && wy > 0) dirtyIdxs.add(sectionIndex(lx, wy - 1, lz));
+    if (wy % SECTION_SIZE === SECTION_SIZE - 1 && wy < CHUNK_HEIGHT - 1) dirtyIdxs.add(sectionIndex(lx, wy + 1, lz));
+
+    for (const idx of dirtyIdxs) {
+      const region = sectionRegion(idx);
+      cached.sections[idx] = renderBlockData(
+        cached.blocks,
+        cached.heightMap,
+        ox,
+        oz,
+        CHUNK_SIZE,
+        worldGetBlock,
+        region,
+      );
+    }
+
+    // Rebuild chunk-level output from sections
+    const chunks: WorkerChunkData[] = [buildChunkData(ox, oz, cached, concatenateSections(cached.sections))];
+
+    // If block is at a chunk edge, also re-render the neighbor chunk's edge section
+    if (lx === 0 || lx === CHUNK_SIZE - 1 || lz === 0 || lz === CHUNK_SIZE - 1) {
+      this.rebuildEdgeNeighborSection(ox, oz, lx, lz, wy, worldGetBlock, chunks);
+    }
+
+    return { chunks };
+  }
+
+  syncBlock(wx: number, wy: number, wz: number, blockType: number): void {
+    const [ox, oz] = chunkOrigin(wx, wz);
+    const cached = this.cache.get(chunkKey(ox, oz));
+    if (!cached) return;
+    const lx = wx - (ox - CHUNK_SIZE / 2);
+    const lz = wz - (oz - CHUNK_SIZE / 2);
+    cached.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = blockType;
+    updateColumnSurface(cached.blocks, cached.heightMap, cached.surfaceTypes, lx, lz, wy, blockType, CHUNK_SIZE);
   }
 
   clearCache(): void {
     this.cache.clear();
-    this.queuedChunks = [];
-    this.activeGenerationId = -1;
   }
 
-  private ensureSeed(seed: number): void {
-    if (this.activeSeed === seed) return;
-    this.cache.clear();
-    this.queuedChunks = [];
-    this.visibleKeys = new Set();
-    this.activeSeed = seed;
-    this.activeGenerationId = -1;
-  }
+  private rebuildEdgeNeighborSection(
+    ox: number,
+    oz: number,
+    lx: number,
+    lz: number,
+    wy: number,
+    worldGetBlock: (wx: number, wy: number, wz: number) => CubeType,
+    chunks: WorkerChunkData[],
+  ): void {
+    const neighbors: [number, number, number, number][] = [];
+    if (lx === 0) neighbors.push([ox - CHUNK_SIZE, oz, CHUNK_SIZE - 1, lz]);
+    if (lx === CHUNK_SIZE - 1) neighbors.push([ox + CHUNK_SIZE, oz, 0, lz]);
+    if (lz === 0) neighbors.push([ox, oz - CHUNK_SIZE, lx, CHUNK_SIZE - 1]);
+    if (lz === CHUNK_SIZE - 1) neighbors.push([ox, oz + CHUNK_SIZE, lx, 0]);
 
-  private evictDistantChunks(args: ChunkQueueArgs): void {
-    const evictDist = args.evictDistance ?? args.renderDistance + 3;
-    const keysToDelete: string[] = [];
+    for (const [nox, noz, nlx, nlz] of neighbors) {
+      const nkey = chunkKey(nox, noz);
+      const ncached = this.cache.get(nkey);
+      if (!ncached) continue;
 
-    for (const key of this.cache.keys()) {
-      const [ox, oz] = key.split(",").map(Number) as [number, number];
-      const dx = Math.abs(ox - args.originX) / CHUNK_SIZE;
-      const dz = Math.abs(oz - args.originZ) / CHUNK_SIZE;
-      if (Math.max(dx, dz) > evictDist) {
-        keysToDelete.push(key);
-      }
+      const idx = sectionIndex(nlx, wy, nlz);
+      const region = sectionRegion(idx);
+      ncached.sections[idx] = renderBlockData(
+        ncached.blocks,
+        ncached.heightMap,
+        nox,
+        noz,
+        CHUNK_SIZE,
+        worldGetBlock,
+        region,
+      );
+
+      chunks.push(buildChunkData(nox, noz, ncached, concatenateSections(ncached.sections)));
     }
-
-    for (const key of keysToDelete) this.cache.delete(key);
-  }
-
-  private buildQueue(chunkOrigins: ChunkOrigin[]): QueuedChunk[] {
-    const queue: QueuedChunk[] = [];
-    const seenKeys = new Set<string>();
-
-    for (const origin of chunkOrigins) {
-      const key = chunkKey(origin.originX, origin.originZ);
-      if (seenKeys.has(key) || this.cache.has(key)) continue;
-      seenKeys.add(key);
-      queue.push({ ...origin, key });
-    }
-
-    return queue;
   }
 
   private buildWorldGetBlock(): (wx: number, wy: number, wz: number) => CubeType {
     return (wx, wy, wz) => {
-      const [ox, oz] = chunkOrigin(wx, wz);
-      const chunk = this.cache.get(chunkKey(ox, oz));
-      return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone;
+      if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
+      const [bOx, bOz] = chunkOrigin(wx, wz);
+      const cached = this.cache.get(chunkKey(bOx, bOz));
+      if (!cached) return CubeType.Stone;
+      const blx = wx - (bOx - CHUNK_SIZE / 2);
+      const blz = wz - (bOz - CHUNK_SIZE / 2);
+      if (blx < 0 || blx >= CHUNK_SIZE || blz < 0 || blz >= CHUNK_SIZE) return CubeType.Air;
+      return (cached.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + blz * CHUNK_SIZE + blx] ?? CubeType.Air) as CubeType;
     };
-  }
-
-  /** Render all visible cached chunks — used on initial setVisibleChunks. */
-  private renderAllVisible({ originX, originZ, renderDistance }: ChunkQueueArgs): ChunkBatchData {
-    const entries: ChunkEntry[] = [];
-
-    for (let cx = -renderDistance; cx <= renderDistance; cx++) {
-      for (let cz = -renderDistance; cz <= renderDistance; cz++) {
-        const chunkX = originX + cx * CHUNK_SIZE;
-        const chunkZ = originZ + cz * CHUNK_SIZE;
-        const chunk = this.cache.get(chunkKey(chunkX, chunkZ));
-        if (!chunk) continue;
-        entries.push({ chunkX, chunkZ, chunk });
-      }
-    }
-
-    const worldGetBlock = this.buildWorldGetBlock();
-    for (const { chunk } of entries) chunk.renderChunk(worldGetBlock);
-
-    return this.collectBatch(entries);
-  }
-
-  /**
-   * Render the new chunk + its cardinal neighbors (neighbors re-rendered for
-   * edge culling correctness), but only return chunks in the current visible
-   * set so stale cached chunks outside renderDistance can't leak back into the
-   * main thread's chunk map.
-   */
-  private renderIncremental(newOriginX: number, newOriginZ: number): ChunkBatchData {
-    const worldGetBlock = this.buildWorldGetBlock();
-    const rendered: ChunkEntry[] = [];
-
-    const newKey = chunkKey(newOriginX, newOriginZ);
-    const newChunk = this.cache.get(newKey);
-    if (newChunk) {
-      newChunk.renderChunk(worldGetBlock);
-      if (this.visibleKeys.has(newKey)) {
-        rendered.push({ chunkX: newOriginX, chunkZ: newOriginZ, chunk: newChunk });
-      }
-    }
-
-    for (const [dx, dz] of CARDINAL_OFFSETS) {
-      const nx = newOriginX + dx;
-      const nz = newOriginZ + dz;
-      const nkey = chunkKey(nx, nz);
-      const neighbor = this.cache.get(nkey);
-      if (neighbor) {
-        neighbor.renderChunk(worldGetBlock);
-        if (this.visibleKeys.has(nkey)) {
-          rendered.push({ chunkX: nx, chunkZ: nz, chunk: neighbor });
-        }
-      }
-    }
-
-    return this.collectBatch(rendered);
-  }
-
-  private collectBatch(entries: ChunkEntry[]): ChunkBatchData {
-    const chunks: SingleChunkData[] = [];
-    for (const { chunkX, chunkZ, chunk } of entries) {
-      const numCubes = chunk.numCubes();
-      if (numCubes === 0) continue;
-      chunks.push({
-        originX: chunkX,
-        originZ: chunkZ,
-        cubePositions: chunk.cubePositions(),
-        cubeColors: chunk.cubeColors(),
-        blocks: chunk.blocks,
-        cubeAmbientOcclusion: chunk.cubeAmbientOcclusion(),
-        surfaceHeights: chunk.surfaceHeights(),
-        surfaceTypes: chunk.surfaceTypes(),
-        numCubes,
-      });
-    }
-    return { chunks };
-  }
-
-  public getBlockWorld(wx: number, wy: number, wz: number): CubeType {
-    const [ox, oz] = chunkOrigin(wx, wz);
-    const chunk = this.cache.get(chunkKey(ox, oz));
-    return chunk ? chunk.getBlockWorld(wx, wy, wz) : CubeType.Stone; // THIS LINE IS FINE
   }
 }

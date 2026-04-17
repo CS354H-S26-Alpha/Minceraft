@@ -1,5 +1,6 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
 import type { EnemyPublicState } from "./enemy";
+import type { PlacedObject, PlacedObjectType } from "./object-placement";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
 /** Credentials returned after successful authentication. */
@@ -46,6 +47,40 @@ export interface InventoryUiPacket {
   ui: InventoryUiState;
 }
 
+/** A block mutation request sent by the client. */
+export interface BlockActionPacket {
+  seq: number;
+  action: "place" | "break";
+  x: number;
+  y: number;
+  z: number;
+  blockType?: number;
+}
+
+/** Per-player acknowledgement of block actions. */
+export interface BlockAckPacket {
+  type: "blockAck";
+  acks: Array<{ seq: number; accepted: boolean }>;
+}
+
+/** Block changes to apply to chunk data (broadcast to all clients). */
+export interface BlockChangesPacket {
+  type: "blockChanges";
+  changes: Array<{ x: number; y: number; z: number; blockType: number }>;
+}
+
+/** Server-pushed chunk block data (RLE-encoded) for the receiving client. */
+export interface ChunkDataPacket {
+  type: "chunkData";
+  chunks: Array<{
+    originX: number;
+    originZ: number;
+    blocks: Uint8Array;
+    placedObjects: readonly PlacedObject[];
+    placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
+  }>;
+}
+
 /** World-wide state — tick cost, time-of-day, etc. */
 export interface WorldStatePacket {
   type: "world";
@@ -63,7 +98,10 @@ export type ServerPacket =
   | SelfStatePacket
   | ReconcilePacket
   | InventoryUiPacket
-  | WorldStatePacket;
+  | WorldStatePacket
+  | BlockAckPacket
+  | BlockChangesPacket
+  | ChunkDataPacket;
 
 /** A single server tick delivered to one client. */
 export interface ServerTick {
@@ -77,10 +115,14 @@ export interface ServerTick {
 export interface RoomSessionApi {
   /** Sends the latest client-reported position packet to the server. */
   sendPosition(packet: PlayerPositionPacket): void;
+  /** Sends a block place/break action to the server. */
+  sendBlockAction(action: BlockActionPacket): void;
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState(): void;
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number): void;
+  /** Respawns this player at the world spawn with starter state. */
+  respawn(): void;
   /** Interacts with the inventory or crafting UI. */
   clickInventory(target: InventoryClickTarget): void;
   /** Returns crafting/cursor items back to the player's inventory. */

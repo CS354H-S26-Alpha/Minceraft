@@ -1,4 +1,5 @@
 import { releaseProxy, wrap } from "comlink";
+import type { PlacedObject, PlacedObjectType } from "@/game/object-placement";
 import ChunkWorkerConstructor from "./worker?worker";
 
 /** Render data for a single chunk, tagged with its world-space origin. */
@@ -15,50 +16,46 @@ export interface SingleChunkData {
   /** Detached copy of surface block type per column, indexed `z*S + x`. */
   surfaceTypes: Uint8Array;
   numCubes: number;
+  placedObjects: readonly PlacedObject[];
+  placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
+  /** Per-section cube offset into the render arrays (128 entries). */
+  sectionOffsets: Uint32Array;
+  /** Per-section cube count (128 entries). */
+  sectionCounts: Uint16Array;
 }
 
-/** Per-chunk render data for all loaded chunks in a generation. */
+/** Mesh-only chunk data returned by the worker (no placed objects). */
+export type WorkerChunkData = Omit<SingleChunkData, "placedObjects" | "placedObjectCounts">;
+
+/** Per-chunk mesh batch returned by the worker. */
 export interface ChunkBatchData {
-  chunks: SingleChunkData[];
-}
-
-export interface ChunkOrigin {
-  originX: number;
-  originZ: number;
-}
-
-/**
- * Parameters for a chunk generation pass. `generationId` increases
- * monotonically so both sides can discard stale work after the player
- * crosses into a new chunk.
- */
-export interface ChunkQueueArgs {
-  generationId: number;
-  originX: number;
-  originZ: number;
-  renderDistance: number;
-  loadDistance?: number;
-  evictDistance?: number;
-  seed: number;
-  chunkOrigins: ChunkOrigin[];
+  chunks: WorkerChunkData[];
 }
 
 export interface ChunkWorkerApi {
-  setVisibleChunks(args: ChunkQueueArgs): Promise<ChunkBatchData>;
-  generateNext(args: ChunkQueueArgs): Promise<ChunkBatchData | null>;
+  /** Receive server block data (RLE-encoded), build meshes, return render batch. */
+  loadChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): Promise<ChunkBatchData>;
+  /** Update a single block in the cache without re-rendering (fire-and-forget sync). */
+  syncBlock(wx: number, wy: number, wz: number, blockType: number): void;
+  /** Clear all cached block data. */
+  clearCache(): Promise<void>;
 }
 
-/** Comlink wrapper for the chunk generation web worker. */
+/** Comlink wrapper for the chunk mesh-building web worker. */
 export class ChunkWorkerClient {
   private readonly worker = new ChunkWorkerConstructor();
   private readonly remote = wrap<ChunkWorkerApi>(this.worker);
 
-  setVisibleChunks(args: ChunkQueueArgs) {
-    return this.remote.setVisibleChunks(args);
+  loadChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>) {
+    return this.remote.loadChunks(chunks);
   }
 
-  generateNext(args: ChunkQueueArgs) {
-    return this.remote.generateNext(args);
+  syncBlock(wx: number, wy: number, wz: number, blockType: number) {
+    void this.remote.syncBlock(wx, wy, wz, blockType);
+  }
+
+  clearCache() {
+    return this.remote.clearCache();
   }
 
   dispose(): void {

@@ -2,6 +2,15 @@ import dirtIcon from "@/assets/icons/dirt.png";
 import stickIcon from "@/assets/icons/stick.png";
 import woodIcon from "@/assets/icons/wood.png";
 import woodPlankIcon from "@/assets/icons/wood_plank.png";
+import bedrockIcon from "@/assets/textures/bedrock.png";
+import coalOreIcon from "@/assets/textures/coal.png";
+import diamondOreIcon from "@/assets/textures/diamond.png";
+import grassIcon from "@/assets/textures/dirt_top.png";
+import goldOreIcon from "@/assets/textures/gold.png";
+import ironOreIcon from "@/assets/textures/iron.png";
+import sandIcon from "@/assets/textures/sand.png";
+import snowIcon from "@/assets/textures/snow_top.png";
+import stoneIcon from "@/assets/textures/stone.png";
 
 export interface ItemDefinition {
   id: string;
@@ -37,6 +46,60 @@ const itemDefinitions = [
     id: "dirt",
     name: "Dirt",
     icon: dirtIcon,
+    maxStack: 64,
+  },
+  {
+    id: "grass",
+    name: "Grass",
+    icon: grassIcon,
+    maxStack: 64,
+  },
+  {
+    id: "stone",
+    name: "Stone",
+    icon: stoneIcon,
+    maxStack: 64,
+  },
+  {
+    id: "sand",
+    name: "Sand",
+    icon: sandIcon,
+    maxStack: 64,
+  },
+  {
+    id: "snow",
+    name: "Snow",
+    icon: snowIcon,
+    maxStack: 64,
+  },
+  {
+    id: "bedrock",
+    name: "Bedrock",
+    icon: bedrockIcon,
+    maxStack: 64,
+  },
+  {
+    id: "coal_ore",
+    name: "Coal Ore",
+    icon: coalOreIcon,
+    maxStack: 64,
+  },
+  {
+    id: "iron_ore",
+    name: "Iron Ore",
+    icon: ironOreIcon,
+    maxStack: 64,
+  },
+  {
+    id: "gold_ore",
+    name: "Gold Ore",
+    icon: goldOreIcon,
+    maxStack: 64,
+  },
+  {
+    id: "diamond_ore",
+    name: "Diamond Ore",
+    icon: diamondOreIcon,
     maxStack: 64,
   },
 ] as const satisfies readonly ItemDefinition[];

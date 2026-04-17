@@ -12,10 +12,10 @@ interface TrackedEntity<S> {
  * interpolates between them. Adds one tick of visual latency (~50 ms) but
  * produces smooth movement at any client frame rate.
  */
-export class RemoteEntityStore<S> {
+export class RemoteEntityStore<S, R = S> {
   private entities = new Map<string, TrackedEntity<S>>();
 
-  constructor(private interpolateFn: (prev: S, curr: S, t: number) => S) {}
+  constructor(private interpolateFn: (prev: S, curr: S, t: number) => R) {}
 
   /** Feed the latest snapshot keyed by entity id. */
   update(entities: Record<string, S>, now: number) {
@@ -37,8 +37,8 @@ export class RemoteEntityStore<S> {
   }
 
   /** Returns interpolated state for every tracked entity. */
-  interpolated(now: number): S[] {
-    const result: S[] = [];
+  interpolated(now: number): R[] {
+    const result: R[] = [];
     for (const entry of this.entities.values()) {
       const t = Math.min((now - entry.updatedAt) / SERVER_TICK_MS, 1);
       result.push(this.interpolateFn(entry.prev, entry.curr, t));

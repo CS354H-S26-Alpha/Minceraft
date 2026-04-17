@@ -14,6 +14,8 @@ interface MinimapProps {
 
 const MINIMAP_RESOLUTION = 128;
 const MINIMAP_RADIUS = MINIMAP_RESOLUTION / 2;
+const BLOCKS_PER_PIXEL = 2;
+const MINIMAP_WORLD_RADIUS = MINIMAP_RADIUS * BLOCKS_PER_PIXEL;
 const UNLOADED_PIXEL = [13, 21, 26] as const;
 const BLOCK_COLORS = Array.from({ length: Math.max(...Object.keys(CUBE_TYPE_INFO).map(Number)) + 1 }, (_, index) => {
   const info = CUBE_TYPE_INFO[index as CubeType];
@@ -41,12 +43,12 @@ export function Minimap(props: MinimapProps) {
     for (const other of Object.values(props.players())) {
       const dx = other.x - centerX;
       const dz = other.z - centerZ;
-      if (Math.abs(dx) > MINIMAP_RADIUS || Math.abs(dz) > MINIMAP_RADIUS) continue;
+      if (Math.abs(dx) > MINIMAP_WORLD_RADIUS || Math.abs(dz) > MINIMAP_WORLD_RADIUS) continue;
       markers.push({
         id: other.id,
         name: other.name,
-        left: ((dx + MINIMAP_RADIUS) / MINIMAP_RESOLUTION) * 100,
-        top: ((dz + MINIMAP_RADIUS) / MINIMAP_RESOLUTION) * 100,
+        left: ((dx + MINIMAP_WORLD_RADIUS) / (MINIMAP_WORLD_RADIUS * 2)) * 100,
+        top: ((dz + MINIMAP_WORLD_RADIUS) / (MINIMAP_WORLD_RADIUS * 2)) * 100,
       });
     }
 
@@ -58,8 +60,8 @@ export function Minimap(props: MinimapProps) {
     const self = props.player();
     if (!canvas || !self) return;
 
-    const centerBlockX = Math.floor(self.state.x);
-    const centerBlockZ = Math.floor(self.state.z);
+    const centerBlockX = Math.floor(self.state.x / BLOCKS_PER_PIXEL) * BLOCKS_PER_PIXEL;
+    const centerBlockZ = Math.floor(self.state.z / BLOCKS_PER_PIXEL) * BLOCKS_PER_PIXEL;
     if (
       terrainVersion === lastTerrainVersion &&
       centerBlockX === lastCenterBlockX &&
@@ -76,16 +78,15 @@ export function Minimap(props: MinimapProps) {
     if (!ctx) return;
 
     imageData ??= new ImageData(pixels, MINIMAP_RESOLUTION, MINIMAP_RESOLUTION);
-    const worldRadius = Math.min(MINIMAP_RADIUS, props.minimap.radiusBlocks);
-    const startX = centerBlockX - worldRadius;
-    const startZ = centerBlockZ - worldRadius;
+    const startX = centerBlockX - MINIMAP_WORLD_RADIUS;
+    const startZ = centerBlockZ - MINIMAP_WORLD_RADIUS;
     let offset = 0;
 
     for (let z = 0; z < MINIMAP_RESOLUTION; z++) {
-      const wz = startZ + z;
+      const baseWz = startZ + z * BLOCKS_PER_PIXEL;
       for (let x = 0; x < MINIMAP_RESOLUTION; x++) {
-        const wx = startX + x;
-        writePixel(pixels, offset, props.minimap.sampleSurface(wx, wz));
+        const baseWx = startX + x * BLOCKS_PER_PIXEL;
+        writeFilteredPixel(pixels, offset, props.minimap.sampleSurface, baseWx, baseWz);
         offset += 4;
       }
     }
@@ -153,23 +154,42 @@ export function Minimap(props: MinimapProps) {
   );
 }
 
-function writePixel(buffer: Uint8ClampedArray, offset: number, sample: number | undefined) {
-  if (sample === undefined) {
+function writeFilteredPixel(
+  buffer: Uint8ClampedArray,
+  offset: number,
+  sampleSurface: (wx: number, wz: number) => number | undefined,
+  baseWx: number,
+  baseWz: number,
+) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+
+  for (let sz = 0; sz < BLOCKS_PER_PIXEL; sz++) {
+    for (let sx = 0; sx < BLOCKS_PER_PIXEL; sx++) {
+      const sample = sampleSurface(baseWx + sx, baseWz + sz);
+      if (sample === undefined) continue;
+      const blockType = sample >> 8;
+      const height = sample & 0xff;
+      const baseColor = BLOCK_COLORS[blockType] ?? UNLOADED_PIXEL;
+      const brightness = 0.72 + (height / CHUNK_HEIGHT) * 0.38;
+      r += baseColor[0] * brightness;
+      g += baseColor[1] * brightness;
+      b += baseColor[2] * brightness;
+      count++;
+    }
+  }
+
+  if (count === 0) {
     buffer[offset] = UNLOADED_PIXEL[0];
     buffer[offset + 1] = UNLOADED_PIXEL[1];
     buffer[offset + 2] = UNLOADED_PIXEL[2];
-    buffer[offset + 3] = 255;
-    return;
+  } else {
+    buffer[offset] = clampByte(r / count);
+    buffer[offset + 1] = clampByte(g / count);
+    buffer[offset + 2] = clampByte(b / count);
   }
-
-  const blockType = sample >> 8;
-  const height = sample & 0xff;
-  const baseColor = BLOCK_COLORS[blockType] ?? UNLOADED_PIXEL;
-  const brightness = 0.72 + (height / CHUNK_HEIGHT) * 0.38;
-
-  buffer[offset] = clampByte(baseColor[0] * brightness);
-  buffer[offset + 1] = clampByte(baseColor[1] * brightness);
-  buffer[offset + 2] = clampByte(baseColor[2] * brightness);
   buffer[offset + 3] = 255;
 }
 

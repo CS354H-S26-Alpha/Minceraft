@@ -1,7 +1,6 @@
 #version 300 es
 precision mediump float;
 
-uniform vec4 uLightPos;
 uniform mat4 uView;
 uniform mat4 uProj;
 

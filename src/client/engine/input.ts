@@ -17,8 +17,12 @@ export interface InputOptions {
   onReset?: () => void;
   onToggleInventory?: () => void;
   onCloseInventory?: () => void;
+  onToggleHud?: () => void;
+  onToggleDebug?: () => void;
   onSelectHotbarSlot?: (slotIndex: number) => void;
   onCycleHotbar?: (direction: 1 | -1) => void;
+  onLeftClick?: () => void;
+  onRightClick?: () => void;
   onAttack?: () => void;
 }
 
@@ -42,6 +46,8 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   if (opts.onReset) createShortcut(["R"], opts.onReset);
   if (opts.onToggleInventory) createShortcut(["E"], opts.onToggleInventory);
   if (opts.onCloseInventory) createShortcut(["Escape"], opts.onCloseInventory);
+  if (opts.onToggleHud) createShortcut(["F1"], opts.onToggleHud);
+  if (opts.onToggleDebug) createShortcut(["F3"], opts.onToggleDebug);
   if (opts.onSelectHotbarSlot) {
     const onSelect = opts.onSelectHotbarSlot;
     for (let i = 0; i < HOTBAR_SLOT_COUNT; i++) {
@@ -107,6 +113,11 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   createEventListener(document, "contextmenu", (e) => {
     if (document.pointerLockElement === canvas()) e.preventDefault();
   });
+  createEventListener(document, "mousedown", (e) => {
+    if (document.pointerLockElement !== canvas()) return;
+    if (e.button === 0) opts.onLeftClick?.();
+    else if (e.button === 2) opts.onRightClick?.();
+  });
   if (opts.onCycleHotbar) {
     const onCycle = opts.onCycleHotbar;
     createEventListener(window, "wheel", (event: WheelEvent) => {
@@ -125,7 +136,6 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
       onAttack();
     });
   }
-
   return {
     walkKeys() {
       return { w: w(), a: a(), s: s(), d: d(), space: space(), shift: shift() };

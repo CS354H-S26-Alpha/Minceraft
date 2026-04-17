@@ -14,6 +14,11 @@ export enum CubeType {
   Water = 12,
   Lava = 13,
   Permafrost = 14,
+  OakLog = 15,
+  OakLeaf = 16,
+  ShrubLeaf = 17,
+  ShrubStem = 18,
+  Cactus = 19,
 }
 
 export interface CubeTypeInfo {
@@ -65,5 +70,20 @@ export const CUBE_TYPE_INFO: Record<CubeType, CubeTypeInfo> = {
   },
   [CubeType.Permafrost]: {
     baseColor: [0.58, 0.68, 0.72],
+  },
+  [CubeType.OakLog]: {
+    baseColor: [0.45, 0.3, 0.14],
+  },
+  [CubeType.OakLeaf]: {
+    baseColor: [0.2, 0.48, 0.12],
+  },
+  [CubeType.ShrubLeaf]: {
+    baseColor: [0.42, 0.56, 0.2],
+  },
+  [CubeType.ShrubStem]: {
+    baseColor: [0.36, 0.29, 0.16],
+  },
+  [CubeType.Cactus]: {
+    baseColor: [0.08, 0.56, 0.18],
   },
 };

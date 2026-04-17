@@ -1,10 +1,14 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { type Mat4, Vec3 } from "gl-matrix";
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
-import { findTargetedEnemyHit, findTargetedPlayerHit } from "@/game/player-targeting";
+import { CubeType } from "@/client/engine/render/cube-types";
+import { CHUNK_SIZE } from "@/game/chunk";
+import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
+import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
+import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
+import { findTargetedEnemyHit, findTargetedPlayerHit, findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
@@ -16,6 +20,11 @@ import {
   createEntityPipeline,
   type EntityDrawData,
   enemyPipelineConfig,
+  type GpuBuffers,
+  packPlacedObjects,
+  packPlacedRocks,
+  placedObjectPassDef,
+  placedRockPassDef,
   playerPassDef,
   playerPipelineConfig,
 } from "./entities";
@@ -29,6 +38,8 @@ import {
   WALK_CYCLE_HZ,
 } from "./entities/enemy-skinning";
 import { createInput, type InputOptions } from "./input";
+import type { RaycastHit } from "./raycast";
+import { raycastVoxels } from "./raycast";
 import type { EnemyDrawState } from "./render/enemy-pass";
 import { Renderer } from "./render/renderer";
 import { createRenderLoop } from "./render-loop";
@@ -36,10 +47,14 @@ import { SceneLighting } from "./scene-lighting";
 import type { Mesh } from "./skinning/Mesh";
 
 export interface CreateGameArgs {
-  /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
   /** Output of `joinWorld()` — provides player, remote players, tick info, input, etc. */
   room: ReturnType<typeof joinWorld>;
+  preferences: {
+    mouseSensitivity: () => number;
+    invertY: () => boolean;
+    renderDistance: () => number;
+  };
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
   shortcuts?: Omit<InputOptions, "onReset">;
@@ -107,13 +122,12 @@ export interface GameState extends Readonly<MutableGameState> {
 const FPS_WINDOW_MS = 500;
 /** Number of samples kept in the compute-time and mspt ring buffers. */
 const FRAME_HISTORY_SIZE = 120;
-const TEMP_START_SEED = 123; // TODO: On DO creation, create a random seed and send to client
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef]);
+  const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef, placedRockPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -153,10 +167,14 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   const [terrainVersion, setTerrainVersion] = createSignal(0);
-  const chunks = new ChunkManager(0.0, 0.0, TEMP_START_SEED, new ChunkWorkerClient(), () =>
+  const chunks = new ChunkManager(new ChunkWorkerClient(), args.preferences.renderDistance(), () =>
     setTerrainVersion((version) => version + 1),
   );
   const lighting = new SceneLighting();
+  onCleanup(() => {
+    chunks.dispose();
+  });
+
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const remoteEnemies = createEntityPipeline(enemyPipelineConfig);
   const enemySnapshots = createEnemySnapshotTracker();
@@ -179,17 +197,88 @@ export function createGame(args: CreateGameArgs): GameState {
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const placedObjectBuffers: GpuBuffers = {};
+  const placedRockBuffers: GpuBuffers = {};
   let frame = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
   let lastPacketCount = 0;
   let timeOffsetS = 0;
+  let lastPlacedObjects = chunks.getVisiblePlacedObjects();
+  let lastRenderCenterX = NaN;
+  let lastRenderCenterZ = NaN;
+  let renderedFoliageCount = 0;
+  let renderedRockCount = 0;
+  let lastRenderDistance = args.preferences.renderDistance();
   // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
 
+  let latestHit: RaycastHit | null = null;
+  let blockSeq = 1;
+  const pendingBlocks = new Map<number, { x: number; y: number; z: number; previousType: CubeType }>();
+
   const handleReset = () => {
     ctx?.camera.reset();
-    chunks.reset();
+  };
+
+  const handleLeftClick = () => {
+    const s = room().session();
+    if (!s) return;
+
+    const player = room().player();
+    const camera = ctx?.camera;
+    if (player && camera) {
+      const yaw = camera.yaw();
+      const pitch = camera.pitch();
+      const targetPlayerId = findTargetedPlayerId(
+        { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+        remotePlayers.states(performance.now()),
+      );
+      if (targetPlayerId) {
+        s.attack({
+          targetPlayerId,
+          x: player.state.x,
+          y: player.state.y,
+          z: player.state.z,
+          yaw,
+          pitch,
+        });
+        return;
+      }
+    }
+
+    const hit = latestHit;
+    if (!hit || hit.blockType === CubeType.Bedrock) return;
+
+    const seq = blockSeq++;
+    const previousType = chunks.modifyBlock(hit.blockX, hit.blockY, hit.blockZ, CubeType.Air);
+    if (previousType == null) return;
+    pendingBlocks.set(seq, { x: hit.blockX, y: hit.blockY, z: hit.blockZ, previousType });
+    s.sendBlockAction({ seq, action: "break", x: hit.blockX, y: hit.blockY, z: hit.blockZ });
+  };
+
+  const handleRightClick = () => {
+    const hit = latestHit;
+    const s = room().session();
+    if (!hit || !s) return;
+
+    const placeX = hit.blockX + hit.faceNormal[0];
+    const placeY = hit.blockY + hit.faceNormal[1];
+    const placeZ = hit.blockZ + hit.faceNormal[2];
+
+    // Don't place if the target is already occupied
+    if (chunks.getBlock(placeX, placeY, placeZ) !== CubeType.Air) return;
+
+    // Don't place inside the local player's own cylinder
+    const player = room().player();
+    if (player && blockIntersectsPlayer(placeX, placeY, placeZ, player.state)) return;
+
+    const blockType = CubeType.Dirt; // TODO: use selected hotbar item
+    const seq = blockSeq++;
+    const previousType = chunks.modifyBlock(placeX, placeY, placeZ, blockType);
+    if (previousType == null) return;
+    pendingBlocks.set(seq, { x: placeX, y: placeY, z: placeZ, previousType });
+    s.sendBlockAction({ seq, action: "place", x: placeX, y: placeY, z: placeZ, blockType });
   };
 
   const handleAttack = () => {
@@ -229,6 +318,8 @@ export function createGame(args: CreateGameArgs): GameState {
 
   const input = createInput(args.glCanvas, {
     onReset: handleReset,
+    onLeftClick: handleLeftClick,
+    onRightClick: handleRightClick,
     ...args.shortcuts,
     onAttack: handleAttack,
   });
@@ -251,12 +342,15 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   let packetCount = 0;
+  // Heartbeat: keep sending the latest known position at INPUT_SEND_INTERVAL_MS
+  // even when the player isn't moving. Regular RPC activity keeps the DO warm
+  // (setInterval alone doesn't prevent Cloudflare eviction); the server
+  // deduplicates by position delta and rate-limits faster-than-25ms packets.
   makeTimer(
     () => {
-      const s = room().session();
-      if (!pendingPacket || !s) return;
-      s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
-      pendingPacket = undefined;
+      const session = room().session();
+      if (!pendingPacket || !session) return;
+      session.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
       packetCount++;
     },
     INPUT_SEND_INTERVAL_MS,
@@ -268,6 +362,12 @@ export function createGame(args: CreateGameArgs): GameState {
     needsResize = true;
   });
 
+  // Match Minecraft 1.21: fog starts at 92% of render distance and completes
+  // at the hard chunk cutoff, so distant chunks fade into the sky instead of
+  // popping as the player walks around.
+  let fogFar = lastRenderDistance * CHUNK_SIZE;
+  let fogNear = fogFar * 0.92;
+  const fogColor = new Float32Array(3);
   createRenderLoop((dt, now) => {
     const gl = args.glCanvas();
     const player = room().player();
@@ -290,30 +390,75 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Input → server ---
     const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
-    camera.rotate(mouse.dx, mouse.dy);
+    const mouseSensitivity = args.preferences.mouseSensitivity();
+    const invertY = args.preferences.invertY() ? -1 : 1;
+    camera.rotate(mouse.dx * mouseSensitivity, mouse.dy * mouseSensitivity * invertY);
     const keys = input.walkKeys();
     const walk = inputEnabled() ? camera.walkDir(keys) : { x: 0, z: 0 };
     const jump = inputEnabled() && keys.space;
     const yaw = camera.yaw();
     const pitch = camera.pitch();
-    if (inputEnabled()) {
+    if (inputEnabled() && chunks.hasChunkAt(player.state.x, player.state.z)) {
       const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump };
       room().replicated()?.predict(next);
     }
     camera.setPosition(player.position);
 
+    const renderDistance = args.preferences.renderDistance();
+    if (renderDistance !== lastRenderDistance) {
+      lastRenderDistance = renderDistance;
+      chunks.setRenderDistance(renderDistance);
+      fogFar = renderDistance * CHUNK_SIZE;
+      fogNear = fogFar * 0.92;
+    }
+
     chunks.update(player.position.x, player.position.z);
+    chunks.processIncoming();
 
     const replicated = room().replicated();
     if (replicated) {
-      (replicated.entity as Player).collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
+      const entity = replicated.entity as Player;
+      entity.collisionQuery = (cx, cz, cy) => chunks.collisionQuery(cx, cz, cy);
+      entity.headQuery = (cx, cz, cy) => chunks.headQuery(cx, cz, cy);
     }
+
+    // --- Raycast for block targeting ---
+    const eye = camera.eye();
+    const lookDir = camera.lookDirection();
+    const currentHit = raycastVoxels(eye.x, eye.y, eye.z, lookDir.x, lookDir.y, lookDir.z, 6.0, (wx, wy, wz) =>
+      chunks.getBlock(Math.floor(wx), Math.floor(wy), Math.floor(wz)),
+    );
+    latestHit = currentHit;
 
     const viewMatrix = camera.viewMatrix();
     const projMatrix = camera.projMatrix();
     chunks.cull(viewMatrix, projMatrix);
 
-    // --- Remote entities ---
+    const placedObjects = chunks.getVisiblePlacedObjects();
+    const movedForObjectRepack =
+      Number.isNaN(lastRenderCenterX) ||
+      Math.abs(player.position.x - lastRenderCenterX) >= 4 ||
+      Math.abs(player.position.z - lastRenderCenterZ) >= 4;
+    if (placedObjects !== lastPlacedObjects || movedForObjectRepack) {
+      const renderablePlacedObjects = filterRenderablePlacedObjects(
+        placedObjects,
+        player.position.x,
+        player.position.z,
+      );
+      const foliageObjects = renderablePlacedObjects.filter(
+        (object) =>
+          object.type !== PlacedObjectType.Rock &&
+          (RENDERABLE_PLACED_OBJECT_TYPES as readonly PlacedObjectType[]).includes(object.type),
+      );
+      const rockObjects = renderablePlacedObjects.filter((object) => object.type === PlacedObjectType.Rock);
+      renderedFoliageCount = packPlacedObjects(foliageObjects, placedObjectBuffers);
+      renderedRockCount = packPlacedRocks(rockObjects, placedRockBuffers);
+      lastPlacedObjects = placedObjects;
+      lastRenderCenterX = player.position.x;
+      lastRenderCenterZ = player.position.z;
+    }
+
+    // --- Remote entities + block acks ---
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
@@ -321,14 +466,43 @@ export function createGame(args: CreateGameArgs): GameState {
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
+
+      // Queue server-pushed chunk data for incremental ingestion
+      for (const chunkBatch of room().chunkDataQueue.splice(0)) {
+        chunks.receiveChunks(chunkBatch);
+      }
+
+      // Process block acks
+      for (const ack of room().blockAckQueue.splice(0)) {
+        const pending = pendingBlocks.get(ack.seq);
+        if (!pending) continue;
+        pendingBlocks.delete(ack.seq);
+        if (!ack.accepted) {
+          chunks.modifyBlock(pending.x, pending.y, pending.z, pending.previousType);
+          chunks.clearLocalOverride(pending.x, pending.y, pending.z);
+        }
+      }
+
+      // Apply block changes from other players
+      const pendingCoords = new Set([...pendingBlocks.values()].map((p) => `${p.x},${p.y},${p.z}`));
+      for (const change of room().blockChangesQueue.splice(0)) {
+        if (!pendingCoords.has(`${change.x},${change.y},${change.z}`)) {
+          chunks.modifyBlock(change.x, change.y, change.z, change.blockType as CubeType);
+        }
+      }
     }
 
     const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
     lighting.update(timeOfDayS);
+    fogColor.set(lighting.backgroundColor.subarray(0, 3));
 
     // --- Render ---
     const { buffers: playerBuffers, count: playerCount } = remotePlayers.frame(now);
-    const entities: EntityDrawData[] = [{ key: "players", buffers: playerBuffers, count: playerCount }];
+    const entities: EntityDrawData[] = [
+      { key: "players", buffers: playerBuffers, count: playerCount },
+      { key: "placed-objects", buffers: placedObjectBuffers, count: renderedFoliageCount },
+      { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
+    ];
 
     // Upload robot mesh to the GPU the first frame it's available.
     if (robotMesh && !robotMeshUploaded) {
@@ -381,11 +555,18 @@ export function createGame(args: CreateGameArgs): GameState {
       cubeAmbientOcclusion: chunks.ambientOcclusion,
       numCubes: chunks.count,
       lightPosition: lighting.lightPosition,
+      sunPosition: lighting.sunPosition,
       backgroundColor: lighting.backgroundColor,
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
+      timeS: now / 1000,
+      cameraPos: eye,
+      fogColor,
+      fogNear,
+      fogFar,
       entities,
       skinnedEnemies,
+      highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
     });
 
     // --- Diagnostics (producers → store) ---

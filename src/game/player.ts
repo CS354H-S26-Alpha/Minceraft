@@ -54,6 +54,8 @@ export interface PlayerInput {
 const GROUND_EPSILON = 1e-3;
 
 export type CollisionQuery = (x: number, z: number, currentY: number) => number;
+/** Max allowed eye Y at (x, z) given the player is currently at `eyeY`. Returns +Infinity when no ceiling is in range. */
+export type HeadQuery = (x: number, z: number, eyeY: number) => number;
 
 export function createEmptyInventory(): InventorySlot[] {
   return Array.from({ length: INVENTORY_SLOT_COUNT }, () => null);
@@ -91,7 +93,6 @@ export function clampHotbarSlot(slotIndex: number): number {
   if (!Number.isFinite(slotIndex)) return DEFAULT_SELECTED_HOTBAR_SLOT;
   return Math.min(HOTBAR_SLOT_COUNT - 1, Math.max(0, Math.trunc(slotIndex)));
 }
-
 export function getSelectedHotbarInventoryIndex(selectedHotbarSlot: number): number {
   return HOTBAR_START_INDEX + clampHotbarSlot(selectedHotbarSlot);
 }
@@ -104,6 +105,28 @@ export function getHeldItemDamage(state: Pick<PlayerState, "inventory" | "select
   return getItemDamage(getSelectedHotbarItem(state)?.itemId);
 }
 
+/**
+ * True iff the block at integer coords (bx, by, bz) — AABB [bx,bx+1]³ — overlaps
+ * the player's cylinder centered at (pos.x, pos.z) with feet at pos.y - EYE_OFFSET
+ * and head top at pos.y + (CYLINDER_HEIGHT - EYE_OFFSET).
+ */
+export function blockIntersectsPlayer(
+  bx: number,
+  by: number,
+  bz: number,
+  pos: { x: number; y: number; z: number },
+): boolean {
+  const headOffset = Player.CYLINDER_HEIGHT - PLAYER_EYE_OFFSET;
+  const feetY = pos.y - PLAYER_EYE_OFFSET;
+  const headTopY = pos.y + headOffset;
+  if (by + 1 <= feetY || by >= headTopY) return false;
+  const closestX = pos.x < bx ? bx : pos.x > bx + 1 ? bx + 1 : pos.x;
+  const closestZ = pos.z < bz ? bz : pos.z > bz + 1 ? bz + 1 : pos.z;
+  const dx = pos.x - closestX;
+  const dz = pos.z - closestZ;
+  return dx * dx + dz * dz < Player.CYLINDER_RADIUS * Player.CYLINDER_RADIUS;
+}
+
 export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) {
   return {
     x: state.x,
@@ -111,7 +134,6 @@ export function getPlayerEyePosition(state: Pick<PlayerState, "x" | "y" | "z">) 
     z: state.z,
   };
 }
-
 export function createPlayerState(
   args: PlayerPublicState & {
     vy?: number;
@@ -201,7 +223,6 @@ export interface PlayerAttackPacket {
   yaw: number;
   pitch: number;
 }
-
 /** Server/client-shared player entity. The same class runs on both sides. */
 export class Player extends Entity<PlayerState, PlayerInput> {
   public static readonly CYLINDER_RADIUS = 0.3;
@@ -210,6 +231,7 @@ export class Player extends Entity<PlayerState, PlayerInput> {
   public static readonly EYE_OFFSET = PLAYER_EYE_OFFSET;
 
   public collisionQuery: CollisionQuery | undefined = undefined;
+  public headQuery: HeadQuery | undefined = undefined;
 
   /** Unique player identifier (alias for `state.id`). */
   get id() {
@@ -309,6 +331,13 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     if (vy < -PLAYER_MAX_FALL_SPEED) vy = -PLAYER_MAX_FALL_SPEED;
 
     let nextY = clampCoord(currentY + vy * dtSeconds);
+    if (vy > 0 && this.headQuery) {
+      const ceilingY = this.headQuery(nextX, nextZ, nextY);
+      if (nextY > ceilingY) {
+        nextY = ceilingY;
+        vy = 0;
+      }
+    }
     if (nextY < floorY) {
       nextY = floorY;
       vy = 0;

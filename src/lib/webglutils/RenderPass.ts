@@ -79,6 +79,9 @@ export class RenderPass {
     /* Setup Attributes */
     this.attributes.forEach((attr) => {
       const attrLoc = gl.getAttribLocation(this.shaderProgram, attr.name);
+      if (attrLoc < 0) {
+        return;
+      }
       const attrBuffer = this.attributeBuffers.get(attr.bufferName);
       if (attrLoc >= 0 && attrBuffer) {
         gl.bindBuffer(gl.ARRAY_BUFFER, attrBuffer.bufferId);
@@ -168,7 +171,14 @@ export class RenderPass {
     if (buf) {
       buf.data = data;
       gl.bindBuffer(gl.ARRAY_BUFFER, buf.bufferId);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      if (data.byteLength > buf.byteCapacity) {
+        const nextCapacity = Math.max(data.byteLength, Math.max(256, buf.byteCapacity * 2));
+        gl.bufferData(gl.ARRAY_BUFFER, nextCapacity, gl.DYNAMIC_DRAW);
+        buf.byteCapacity = nextCapacity;
+      }
+      if (data.byteLength > 0) {
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+      }
     } else {
       console.error("Attribute buffer not found:", attribName);
     }
@@ -311,10 +321,12 @@ class Attribute {
 class AttributeBuffer {
   public bufferId: WebGLBuffer;
   public data: BufferData;
+  public byteCapacity: number;
 
   constructor(bufferId: WebGLBuffer, data: BufferData) {
     this.bufferId = bufferId;
     this.data = data;
+    this.byteCapacity = data.byteLength;
   }
 }
 

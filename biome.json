@@ -9,6 +9,12 @@
     "indentWidth": 2,
     "lineWidth": 120
   },
+  "css": {
+    "parser": {
+      "cssModules": false,
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -25,7 +31,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/lib/webglutils/**"],
+      "includes": ["src/lib/webglutils/**", "worker-configuration.d.ts"],
       "linter": {
         "enabled": false
       }
