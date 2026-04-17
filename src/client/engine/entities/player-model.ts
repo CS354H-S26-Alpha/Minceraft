@@ -31,6 +31,7 @@ interface BoxDef {
   part: number;
   pivot: readonly [number, number, number];
   color: readonly [number, number, number];
+  shirtMask: number;
   min: readonly [number, number, number];
   max: readonly [number, number, number];
 }
@@ -40,6 +41,7 @@ interface MeshBuffers {
   normals: number[];
   uvs: number[];
   colors: number[];
+  shirtMasks: number[];
   parts: number[];
   pivots: number[];
   indices: number[];
@@ -51,6 +53,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
     normals: [],
     uvs: [],
     colors: [],
+    shirtMasks: [],
     parts: [],
     pivots: [],
     indices: [],
@@ -68,6 +71,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_HEAD,
       pivot: [0, HEAD_BOTTOM_Y, 0],
       color: skin,
+      shirtMask: 0,
       min: [-HALF_HEAD, HEAD_BOTTOM_Y, -HALF_HEAD],
       max: [HALF_HEAD, HEAD_BOTTOM_Y + HEAD_SIZE, HALF_HEAD],
     },
@@ -75,6 +79,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_TORSO,
       pivot: [0, SHOULDER_Y, 0],
       color: shirt,
+      shirtMask: 1,
       min: [-HALF_TORSO_WIDTH, HIP_Y, -HALF_BODY_DEPTH],
       max: [HALF_TORSO_WIDTH, SHOULDER_Y, HALF_BODY_DEPTH],
     },
@@ -82,6 +87,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_LEFT_ARM,
       pivot: [leftArmCenterX, SHOULDER_Y, 0],
       color: shirt,
+      shirtMask: 1,
       min: [leftArmCenterX - HALF_LIMB_WIDTH, ARM_SPLIT_Y, -HALF_BODY_DEPTH],
       max: [leftArmCenterX + HALF_LIMB_WIDTH, SHOULDER_Y, HALF_BODY_DEPTH],
     },
@@ -89,6 +95,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_LEFT_ARM,
       pivot: [leftArmCenterX, SHOULDER_Y, 0],
       color: skin,
+      shirtMask: 0,
       min: [leftArmCenterX - HALF_LIMB_WIDTH, HIP_Y, -HALF_BODY_DEPTH],
       max: [leftArmCenterX + HALF_LIMB_WIDTH, ARM_SPLIT_Y, HALF_BODY_DEPTH],
     },
@@ -96,6 +103,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_RIGHT_ARM,
       pivot: [rightArmCenterX, SHOULDER_Y, 0],
       color: shirt,
+      shirtMask: 1,
       min: [rightArmCenterX - HALF_LIMB_WIDTH, ARM_SPLIT_Y, -HALF_BODY_DEPTH],
       max: [rightArmCenterX + HALF_LIMB_WIDTH, SHOULDER_Y, HALF_BODY_DEPTH],
     },
@@ -103,6 +111,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_RIGHT_ARM,
       pivot: [rightArmCenterX, SHOULDER_Y, 0],
       color: skin,
+      shirtMask: 0,
       min: [rightArmCenterX - HALF_LIMB_WIDTH, HIP_Y, -HALF_BODY_DEPTH],
       max: [rightArmCenterX + HALF_LIMB_WIDTH, ARM_SPLIT_Y, HALF_BODY_DEPTH],
     },
@@ -110,6 +119,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_LEFT_LEG,
       pivot: [-HALF_LIMB_WIDTH, HIP_Y, 0],
       color: pants,
+      shirtMask: 0,
       min: [-LIMB_WIDTH, 0, -HALF_BODY_DEPTH],
       max: [0, HIP_Y, HALF_BODY_DEPTH],
     },
@@ -117,6 +127,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
       part: PART_RIGHT_LEG,
       pivot: [HALF_LIMB_WIDTH, HIP_Y, 0],
       color: pants,
+      shirtMask: 0,
       min: [0, 0, -HALF_BODY_DEPTH],
       max: [LIMB_WIDTH, HIP_Y, HALF_BODY_DEPTH],
     },
@@ -133,6 +144,7 @@ export function createPlayerModelGeometry(): EntityPassDef["geometry"] {
     uvs: new Float32Array(mesh.uvs),
     extraAttributes: [
       { name: "aColor", size: 3, data: new Float32Array(mesh.colors) },
+      { name: "aShirtMask", size: 1, data: new Float32Array(mesh.shirtMasks) },
       { name: "aPart", size: 1, data: new Float32Array(mesh.parts) },
       { name: "aPivot", size: 3, data: new Float32Array(mesh.pivots) },
     ],
@@ -223,6 +235,7 @@ function appendBox(mesh: MeshBuffers, box: BoxDef): void {
       mesh.normals.push(...face.normal);
       mesh.uvs.push(u, v);
       mesh.colors.push(...box.color);
+      mesh.shirtMasks.push(box.shirtMask);
       mesh.parts.push(box.part);
       mesh.pivots.push(...box.pivot);
     }

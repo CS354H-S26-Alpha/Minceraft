@@ -11,9 +11,11 @@ attribute vec4 aOffset; // xyz = position, w = yaw
 attribute float aPitch;
 attribute vec2 aUV;
 attribute vec3 aColor;
+attribute float aShirtMask;
 attribute float aPart;
 attribute vec3 aPivot;
 attribute vec2 aMotion; // x = planar speed, y = phase offset
+attribute vec3 aShirtColor;
 
 varying vec4 normal;
 varying vec4 wsPos;
@@ -86,6 +88,6 @@ void main() {
   vec3 rotatedNormal = rotateAroundY(localNorm, yaw);
   normal = vec4(normalize(rotatedNormal), 0.0);
   uv = aUV;
-  baseColor = aColor;
+  baseColor = mix(aColor, aShirtColor, aShirtMask);
   headFrontFace = abs(aPart - PART_HEAD) < 0.5 && aNorm.z > 0.5 ? 1.0 : 0.0;
 }

@@ -25,5 +25,6 @@ export const playerPassDef: EntityPassDef = {
     { name: "aOffset", size: 4 },
     { name: "aPitch", size: 1 },
     { name: "aMotion", size: 2 },
+    { name: "aShirtColor", size: 3 },
   ],
 };

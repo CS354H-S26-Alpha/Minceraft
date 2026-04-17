@@ -3,6 +3,7 @@ import { PLAYER_EYE_OFFSET, PLAYER_SPEED, type PlayerPublicState } from "../src/
 import {
   interpolatePlayerRenderState,
   packPlayerRenderStates,
+  shirtColorFromName,
 } from "../src/client/engine/entities/player-render-state";
 
 function createPublicPlayerState(overrides: Partial<PlayerPublicState> = {}): PlayerPublicState {
@@ -47,6 +48,9 @@ describe("playerPipelineConfig", () => {
     expect(buffers.aPitch[0]).toBeCloseTo(state.pitch);
     expect(buffers.aMotion[0]).toBeCloseTo(state.walkSpeed);
     expect(buffers.aMotion[1]).toBeCloseTo(state.phaseOffset);
+    expect(buffers.aShirtColor[0]).toBeCloseTo(shirtColorFromName(state.name)[0]);
+    expect(buffers.aShirtColor[1]).toBeCloseTo(shirtColorFromName(state.name)[1]);
+    expect(buffers.aShirtColor[2]).toBeCloseTo(shirtColorFromName(state.name)[2]);
   });
 
   it("keeps stationary remote players idle", () => {
@@ -54,5 +58,26 @@ describe("playerPipelineConfig", () => {
 
     expect(state.walkSpeed).toBe(0);
     expect(state.phaseOffset).toBeCloseTo(interpolatePlayerRenderState(state, state, 0.5).phaseOffset);
+  });
+
+  it("returns remote players to idle after interpolation fully settles", () => {
+    const prev = createPublicPlayerState();
+    const curr = createPublicPlayerState({
+      x: PLAYER_SPEED * 0.05,
+      z: PLAYER_SPEED * 0.025,
+    });
+
+    expect(interpolatePlayerRenderState(prev, curr, 0.5).walkSpeed).toBeGreaterThan(0);
+    expect(interpolatePlayerRenderState(prev, curr, 1).walkSpeed).toBe(0);
+  });
+
+  it("derives stable shirt colors from player names", () => {
+    const alice = shirtColorFromName("Alice");
+    const aliceAgain = shirtColorFromName("Alice");
+    const bob = shirtColorFromName("Bob");
+
+    expect(alice).toEqual(aliceAgain);
+    expect(alice.every((channel) => channel >= 0 && channel <= 1)).toBe(true);
+    expect(alice.some((channel, index) => Math.abs(channel - bob[index]) > 0.001)).toBe(true);
   });
 });
