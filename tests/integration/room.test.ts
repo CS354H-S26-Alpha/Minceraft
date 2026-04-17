@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports as workerExports } from "cloudflare:workers";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
+import { CubeType } from "../../src/client/engine/render/cube-types";
 import { chunkOrigin } from "../../src/game/chunk";
 import { PLAYER_MAX_HEALTH } from "../../src/game/player";
 import type { GameApi, ServerPacket, ServerTick } from "../../src/game/protocol.ts";
@@ -16,8 +17,26 @@ interface RoomBlockSystemInternals {
   playerChunkOrigins: Map<string, string>;
 }
 
+interface RoomChunkStorageInternals {
+  loadChunks(origins: Array<{ originX: number; originZ: number }>): Promise<Array<{ blocks: Uint8Array }>>;
+  getBlock(wx: number, wy: number, wz: number): Promise<CubeType | undefined>;
+  applyMutation(action: {
+    action: "place" | "break";
+    x: number;
+    y: number;
+    z: number;
+    blockType?: number;
+    settleOnPlace?: boolean;
+  }): Promise<{
+    accepted: boolean;
+    previousType: number;
+    changes: Array<{ x: number; y: number; z: number; blockType: number }>;
+  }>;
+}
+
 interface RoomTestInternals {
   blockSystem: RoomBlockSystemInternals;
+  chunkStorage: RoomChunkStorageInternals;
 }
 
 /**
@@ -501,6 +520,212 @@ describe("GameRoom Durable Object", () => {
     expect(reconcile?.state.inventory[30]).toEqual({ itemId: "dirt", quantity: 32 });
     expect(findPacket(latest, "inventoryUi")?.ui.craftingGrid.every((slot) => slot === null)).toBe(true);
     expect(findPacket(latest, "inventoryUi")?.ui.cursor).toBeNull();
+  });
+
+  it("drops unsupported sand when a supporting block is broken", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      let baseY = -1;
+      for (let y = 124; y >= 3; y--) {
+        if (
+          (await roomInternals.chunkStorage.getBlock(0, y, 20)) === CubeType.Air &&
+          (await roomInternals.chunkStorage.getBlock(0, y + 1, 20)) === CubeType.Air
+        ) {
+          baseY = y;
+          break;
+        }
+      }
+      expect(baseY).toBeGreaterThan(0);
+
+      expect(
+        (
+          await roomInternals.chunkStorage.applyMutation({
+            action: "place",
+            x: 0,
+            y: baseY,
+            z: 20,
+            blockType: CubeType.Dirt,
+          })
+        ).accepted,
+      ).toBe(true);
+      expect(
+        (
+          await roomInternals.chunkStorage.applyMutation({
+            action: "place",
+            x: 0,
+            y: baseY + 1,
+            z: 20,
+            blockType: CubeType.Sand,
+          })
+        ).accepted,
+      ).toBe(true);
+
+      let expectedLandingY = baseY + 1;
+      while (expectedLandingY > 0) {
+        const belowY = expectedLandingY - 1;
+        const belowType =
+          belowY === baseY
+            ? CubeType.Air
+            : ((await roomInternals.chunkStorage.getBlock(0, belowY, 20)) ?? CubeType.Air);
+        if (belowType !== CubeType.Air) break;
+        expectedLandingY--;
+      }
+
+      room.teleportTo("alice", 0, baseY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "break",
+        x: 0,
+        y: baseY,
+        z: 20,
+      });
+
+      let breakAck: { seq: number; accepted: boolean } | undefined;
+      for (let tries = 0; tries < 5; tries++) {
+        await wait(5);
+        await room.runTick();
+        breakAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+        if (breakAck) break;
+      }
+      expect(breakAck?.accepted).toBe(true);
+
+      expect(await roomInternals.chunkStorage.getBlock(0, expectedLandingY, 20)).toBe(CubeType.Sand);
+      expect(await roomInternals.chunkStorage.getBlock(0, baseY + 1, 20)).toBe(CubeType.Air);
+
+      const changes = findPacket(aliceTicks[aliceTicks.length - 1], "blockChanges")?.changes ?? [];
+      expect(changes).toContainEqual({ x: 0, y: expectedLandingY, z: 20, blockType: CubeType.Sand });
+      expect(changes).toContainEqual({ x: 0, y: baseY + 1, z: 20, blockType: CubeType.Air });
+    });
+  });
+
+  it("settles unsupported sand placements instead of leaving them floating", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      let placeY = -1;
+      for (let y = 124; y >= 2; y--) {
+        if (
+          (await roomInternals.chunkStorage.getBlock(0, y, 20)) === CubeType.Air &&
+          (await roomInternals.chunkStorage.getBlock(0, y - 1, 20)) === CubeType.Air
+        ) {
+          placeY = y;
+          break;
+        }
+      }
+      expect(placeY).toBeGreaterThan(0);
+
+      let expectedLandingY = placeY;
+      while (
+        expectedLandingY > 0 &&
+        (await roomInternals.chunkStorage.getBlock(0, expectedLandingY - 1, 20)) === CubeType.Air
+      ) {
+        expectedLandingY--;
+      }
+
+      room.teleportTo("alice", 0, placeY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "place",
+        x: 0,
+        y: placeY,
+        z: 20,
+        blockType: CubeType.Sand,
+      });
+
+      let placeAck: { seq: number; accepted: boolean } | undefined;
+      for (let tries = 0; tries < 5; tries++) {
+        await wait(5);
+        await room.runTick();
+        placeAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+        if (placeAck) break;
+      }
+      expect(placeAck?.accepted).toBe(true);
+
+      expect(await roomInternals.chunkStorage.getBlock(0, expectedLandingY, 20)).toBe(CubeType.Sand);
+      expect(await roomInternals.chunkStorage.getBlock(0, placeY, 20)).toBe(
+        expectedLandingY === placeY ? CubeType.Sand : CubeType.Air,
+      );
+
+      const changes = findPacket(aliceTicks[aliceTicks.length - 1], "blockChanges")?.changes ?? [];
+      expect(changes).toContainEqual({ x: 0, y: expectedLandingY, z: 20, blockType: CubeType.Sand });
+    });
+  });
+
+  it("keeps unsupported non-sand placements at the placed position", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      let placeY = -1;
+      for (let y = 124; y >= 2; y--) {
+        if (
+          (await roomInternals.chunkStorage.getBlock(0, y, 20)) === CubeType.Air &&
+          (await roomInternals.chunkStorage.getBlock(0, y - 1, 20)) === CubeType.Air
+        ) {
+          placeY = y;
+          break;
+        }
+      }
+      expect(placeY).toBeGreaterThan(0);
+
+      room.teleportTo("alice", 0, placeY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "place",
+        x: 0,
+        y: placeY,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+
+      let placeAck: { seq: number; accepted: boolean } | undefined;
+      for (let tries = 0; tries < 5; tries++) {
+        await wait(5);
+        await room.runTick();
+        placeAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+        if (placeAck) break;
+      }
+      expect(placeAck?.accepted).toBe(true);
+
+      expect(await roomInternals.chunkStorage.getBlock(0, placeY, 20)).toBe(CubeType.Dirt);
+
+      const changes = findPacket(aliceTicks[aliceTicks.length - 1], "blockChanges")?.changes ?? [];
+      expect(changes).toContainEqual({ x: 0, y: placeY, z: 20, blockType: CubeType.Dirt });
+      expect(changes).not.toContainEqual({ x: 0, y: placeY - 1, z: 20, blockType: CubeType.Dirt });
+    });
   });
 
   it("accepts an attack from a valid client snapshot even when the server yaw is stale", async () => {
