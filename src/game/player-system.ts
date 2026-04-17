@@ -83,6 +83,16 @@ export class PlayerSystem implements GameSystem {
     }
   }
 
+  onlinePlayerIds(): Iterable<string> {
+    return this.players.keys();
+  }
+
+  getPlayerPosition(playerId: string): { x: number; y: number; z: number } | null {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+    return { x: player.state.x, y: player.state.y, z: player.state.z };
+  }
+
   /** Adds a new player at the spawn position if they aren't already tracked. */
   join(playerId: string, name: string): void {
     if (!this.players.has(playerId)) {
@@ -101,6 +111,8 @@ export class PlayerSystem implements GameSystem {
     this.resetSession(playerId);
     this.inventoryUi.set(playerId, createInventoryUiState());
     this.pendingReconcile.add(playerId);
+
+    console.log(`Player ${name} joined room`);
   }
 
   /** Clears the departing player's input queue; their state remains for persistence. */
@@ -114,6 +126,8 @@ export class PlayerSystem implements GameSystem {
     this.inventoryUi.delete(playerId);
     this.pendingReconcile.delete(playerId);
     this.pendingSelfStateSync.delete(playerId);
+
+    console.log(`Player ${player?.state.name} left room`);
   }
 
   /**
@@ -130,31 +144,34 @@ export class PlayerSystem implements GameSystem {
 
   /**
    * Accepts the newest client position packet and ignores anything older than
-   * the last applied sequence for this player. Flags a reconcile on invalid
-   * inputs so the client snaps back to authoritative state.
+   * the last applied sequence for this player. Returns the validated X/Z
+   * coordinates when the packet was accepted so downstream systems can use the
+   * authoritative movement target. Flags a reconcile on invalid inputs so the
+   * client snaps back to authoritative state.
    */
-  queuePosition(playerId: string, packet: PlayerPositionPacket): void {
+  queuePosition(playerId: string, packet: PlayerPositionPacket): { x: number; z: number } | null {
     if (!this.isValidPacket(packet)) {
       this.pendingReconcile.add(playerId);
-      return;
+      return null;
     }
 
     const lastAck = this.acks.get(playerId) ?? 0;
     const pending = this.pendingPackets.get(playerId);
     const newestKnown = Math.max(lastAck, pending?.sequence ?? 0);
-    if (packet.sequence <= newestKnown) return;
+    if (packet.sequence <= newestKnown) return null;
 
     const player = this.players.get(playerId);
     if (!player) {
       this.pendingReconcile.add(playerId);
-      return;
+      return null;
     }
     if (!this.isPlausibleMovement(player.state, packet, this.lastAcceptedAt.get(playerId) ?? Date.now())) {
       this.pendingReconcile.add(playerId);
-      return;
+      return null;
     }
 
     this.pendingPackets.set(playerId, packet);
+    return { x: packet.x, z: packet.z };
   }
 
   /** Asks for an authoritative state snapshot to be sent to the player next tick. */

@@ -2,6 +2,7 @@ import { Entrypoint, handler } from "@cloudflare/actors";
 import { newWorkersRpcResponse } from "capnweb";
 import { GameRoom, GameServer } from "../game/room";
 
+export { ChunkGen } from "./chunk-gen";
 export { GameRoom };
 
 // NOTE: not really enforced on the actual RPC calls since those are made via capnweb

@@ -34,6 +34,10 @@ export function joinWorld(roomId: string) {
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
   const sounds = createSoundEffects();
 
+  const blockAckQueue: Array<{ seq: number; accepted: boolean }> = [];
+  const blockChangesQueue: Array<{ x: number; y: number; z: number; blockType: number }> = [];
+  const chunkDataQueue: Array<Array<{ originX: number; originZ: number; blocks: Uint8Array }>> = [];
+
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
 
@@ -82,6 +86,15 @@ export function joinWorld(roomId: string) {
         setTickInfo("tickTimeMs", packet.tickTimeMs);
         setTickInfo("timeOfDayS", packet.timeOfDayS);
         return;
+      case "blockAck":
+        blockAckQueue.push(...packet.acks);
+        return;
+      case "blockChanges":
+        blockChangesQueue.push(...packet.changes);
+        return;
+      case "chunkData":
+        chunkDataQueue.push(packet.chunks);
+        return;
     }
   }
 
@@ -100,5 +113,16 @@ export function joinWorld(roomId: string) {
     session()?.leave();
   });
 
-  return { player, remotePlayers, tickInfo, snapCount, session, replicated, inventoryUi } as const;
+  return {
+    player,
+    remotePlayers,
+    tickInfo,
+    snapCount,
+    session,
+    replicated,
+    inventoryUi,
+    blockAckQueue,
+    blockChangesQueue,
+    chunkDataQueue,
+  } as const;
 }

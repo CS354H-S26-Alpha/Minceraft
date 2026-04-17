@@ -1,11 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
 import { Alarms } from "@cloudflare/actors/alarms";
 import { RpcTarget } from "capnweb";
+import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
+import type { ChunkGen } from "../server/chunk-gen";
 import * as schema from "../server/schema";
+import { BlockSystem, type BlockSystemOptions } from "./block-system";
+import { ChunkStorage } from "./chunk-storage";
 import type { InventoryClickTarget } from "./crafting";
+import { FluidSystem } from "./fluid-system";
 import type { GameSystem } from "./game-system";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
 import { PlayerSystem } from "./player-system";
@@ -40,21 +45,21 @@ type TickListener = ((tick: ServerTick) => unknown) & {
 };
 
 /**
- * Calls a tick listener, catching synchronous throws and rejected promises.
- * Returns `false` if the call failed, signalling a broken connection.
+ * Fires a tick listener without waiting for the client ack. capnweb's
+ * WebSocket transport sends the call synchronously, so we don't need to
+ * await the returned promise for delivery. Returns `false` if the call
+ * threw synchronously (a dead stub); async rejections are silenced and
+ * detected separately via `onRpcBroken`.
  */
-function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
+function notify(cb: TickListener, tick: ServerTick): boolean {
   try {
     const result = cb(tick);
     if (result && typeof (result as Promise<unknown>).then === "function") {
-      return (result as Promise<unknown>).then(
-        () => true,
-        () => false,
-      );
+      (result as Promise<unknown>).catch(() => {});
     }
-    return Promise.resolve(true);
+    return true;
   } catch {
-    return Promise.resolve(false);
+    return false;
   }
 }
 
@@ -66,16 +71,20 @@ function notify(cb: TickListener, tick: ServerTick): Promise<boolean> {
 export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
-  private systems: GameSystem[] = [this.playerSystem];
+  private blockSystem!: BlockSystem;
+  private chunkStorage!: ChunkStorage;
+  private systems!: GameSystem[];
   private listeners = new Map<string, TickListener>();
   private lastInputTime = new Map<string, number>();
   private needsBroadcast = false;
+  private tickRunning = false;
   private gameTick = 0;
   private timeOffsetS = 0;
   private lastTickTimeMs = 0;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private db: DrizzleSqliteDODatabase<typeof schema>;
   private initialized = false;
+  private blockSystemOptions?: BlockSystemOptions;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -84,16 +93,39 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Lazy one-time setup: runs DB migrations and hydrates all systems from
-   * SQLite. Called before any operation that needs entity state.
+   * Lazy one-time setup: runs DB migrations, hydrates chunk storage, and
+   * hydrates all systems from SQLite.
    */
   private ensureInitialized() {
     if (this.initialized) return;
     this.initialized = true;
+
     migrate(this.db, migrations);
+    const seed = this.getOrCreateSeed();
+
+    this.chunkStorage = new ChunkStorage(this.db, this.env.ChunkGen as Service<typeof ChunkGen> | undefined);
+    this.chunkStorage.hydrate(seed);
+
+    this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
+    const fluidSystem = new FluidSystem(this.chunkStorage);
+    this.systems = [this.playerSystem, this.blockSystem, fluidSystem];
+
     for (const system of this.systems) {
       system.hydrate(this.db);
     }
+    console.log("GameRoom initialized");
+  }
+
+  private getOrCreateSeed(): number {
+    const row = this.db.select().from(schema.roomConfig).where(eq(schema.roomConfig.key, "seed")).get();
+    if (row) return Number(row.value);
+
+    const seed = Math.floor(Math.random() * 2147483647);
+    this.db
+      .insert(schema.roomConfig)
+      .values({ key: "seed", value: String(seed) })
+      .run();
+    return seed;
   }
 
   /**
@@ -110,6 +142,7 @@ export class GameRoom extends DurableObject<Env> {
       this.onListenerLost(playerId);
     });
     this.listeners.set(playerId, listener);
+    this.blockSystem.onPlayerJoin(playerId);
     this.needsBroadcast = true;
     this.startTickLoop();
   }
@@ -124,7 +157,16 @@ export class GameRoom extends DurableObject<Env> {
     const last = this.lastInputTime.get(playerId) ?? 0;
     if (now - last < MIN_INPUT_INTERVAL_MS) return;
     this.lastInputTime.set(playerId, now);
-    this.playerSystem.queuePosition(playerId, packet);
+    const acceptedPosition = this.playerSystem.queuePosition(playerId, packet);
+    if (acceptedPosition) {
+      this.blockSystem.onPlayerPosition(playerId, acceptedPosition.x, acceptedPosition.z);
+    }
+    this.needsBroadcast = true;
+  }
+
+  sendBlockAction(playerId: string, action: import("./protocol").BlockActionPacket) {
+    this.ensureInitialized();
+    this.blockSystem.queueAction(playerId, action);
     this.needsBroadcast = true;
   }
 
@@ -185,12 +227,18 @@ export class GameRoom extends DurableObject<Env> {
   leave(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
+    this.blockSystem?.onPlayerLeave(playerId);
     this.playerSystem.leave(playerId);
     this.needsBroadcast = true;
   }
 
   override async alarm(info?: AlarmInvocationInfo) {
     await this.alarms.alarm(info);
+  }
+
+  /** Configures block system options. Must be called before the first join. */
+  configureBlockSystem(opts: BlockSystemOptions) {
+    this.blockSystemOptions = opts;
   }
 
   /** Runs a single tick; exposed publicly for external callers (e.g. tests). */
@@ -203,35 +251,53 @@ export class GameRoom extends DurableObject<Env> {
    * notifications to connected clients, and persists dirty state.
    */
   private async tick() {
-    this.ensureInitialized();
+    if (this.tickRunning) return;
+    this.tickRunning = true;
+    try {
+      this.ensureInitialized();
 
-    const tickStart = performance.now();
-    this.gameTick++;
-    for (const system of this.systems) {
-      if (system.tick()) this.needsBroadcast = true;
-    }
-    this.lastTickTimeMs = performance.now() - tickStart;
+      const tickStart = performance.now();
+      this.gameTick++;
+      for (const system of this.systems) {
+        const tickStart = performance.now();
+        const changed = await system.tick();
+        const tickMs = performance.now() - tickStart;
+        if (tickMs > 20) {
+          console.warn(`System ${system.constructor.name} tick took ${tickMs.toFixed(1)}ms`);
+        }
 
-    if (this.needsBroadcast && this.listeners.size > 0) {
-      this.needsBroadcast = false;
-      await this.broadcast();
-    }
-    if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
-      this.flushAll();
-    }
-    if (this.listeners.size === 0) {
-      this.stopTickLoop();
-      if (this.hasDirty()) this.flushAll();
+        if (changed) this.needsBroadcast = true;
+      }
+      this.lastTickTimeMs = performance.now() - tickStart;
+
+      if (this.needsBroadcast && this.listeners.size > 0) {
+        this.needsBroadcast = false;
+        this.broadcast();
+      }
+      if (this.gameTick % PERSIST_EVERY_N_TICKS === 0 && this.hasDirty()) {
+        this.flushAll();
+      }
+      if (this.listeners.size === 0) {
+        this.stopTickLoop();
+        if (this.hasDirty()) this.flushAll();
+      }
+
+      if (this.lastTickTimeMs > TICK_MS) {
+        console.warn(`Tick ${this.gameTick} took ${this.lastTickTimeMs.toFixed(1)}ms`);
+      }
+    } finally {
+      this.tickRunning = false;
     }
   }
 
   /**
    * Sends a per-client `ServerTick` to all registered listeners. Each listener
    * receives the packets produced by every system for that specific player,
-   * plus a room-level `WorldStatePacket`. Broken listeners are removed and a
-   * re-broadcast is queued for the next tick.
+   * plus a room-level `WorldStatePacket`. Fires notifications without awaiting
+   * client acks — capnweb's WebSocket transport sends synchronously and
+   * disconnect detection is handled separately via `onRpcBroken`.
    */
-  private async broadcast(): Promise<void> {
+  private broadcast(): void {
     const entries = [...this.listeners.entries()];
     const onlinePlayerIds = new Set(this.listeners.keys());
     const ctx = { onlinePlayerIds };
@@ -240,20 +306,20 @@ export class GameRoom extends DurableObject<Env> {
       tickTimeMs: this.lastTickTimeMs,
       timeOfDayS: (((Date.now() / 1000 + this.timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S,
     };
-    const results = await Promise.all(
-      entries.map(([id, cb]) => {
-        const packets: ServerPacket[] = [];
-        for (const system of this.systems) {
-          packets.push(...system.packetsFor(id, ctx));
-        }
-        packets.push(worldPacket);
-        return notify(cb, { tick: this.gameTick, packets });
-      }),
-    );
+    const broken: string[] = [];
+    for (const [id, cb] of entries) {
+      const packets: ServerPacket[] = [];
+      for (const system of this.systems) {
+        packets.push(...system.packetsFor(id, ctx));
+      }
+      packets.push(worldPacket);
+      if (!notify(cb, { tick: this.gameTick, packets })) {
+        broken.push(id);
+      }
+    }
     for (const system of this.systems) {
       system.clearPending();
     }
-    const broken = entries.filter((_, i) => !results[i]).map(([id]) => id);
     for (const id of broken) {
       this.onListenerLost(id);
     }
@@ -272,6 +338,7 @@ export class GameRoom extends DurableObject<Env> {
   private onListenerLost(playerId: string) {
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
+    this.blockSystem?.onPlayerLeave(playerId);
     this.playerSystem.leave(playerId);
     this.needsBroadcast = true;
   }
@@ -315,61 +382,65 @@ type GameRoomStub = DurableObjectStub<GameRoom>;
  * send inputs and leave the room. The session is invalidated after `leave()`.
  */
 export class RoomSession extends RpcTarget implements RoomSessionApi {
-  #room: GameRoomStub;
+  #getRoom: () => GameRoomStub;
   #playerId: string;
   #left = false;
 
-  constructor(room: GameRoomStub, playerId: string) {
+  constructor(getRoom: () => GameRoomStub, playerId: string) {
     super();
-    this.#room = room;
+    this.#getRoom = getRoom;
     this.#playerId = playerId;
   }
 
   /** Forwards client position packets to the authoritative `GameRoom`. */
   sendPosition(packet: PlayerPositionPacket) {
-    return this.#room.sendPosition(this.#playerId, packet);
+    return this.#getRoom().sendPosition(this.#playerId, packet);
+  }
+
+  sendBlockAction(action: import("./protocol").BlockActionPacket) {
+    return this.#getRoom().sendBlockAction(this.#playerId, action);
   }
 
   /** Asks the server to include own state in the next tick. */
   requestState() {
-    return this.#room.requestState(this.#playerId);
+    return this.#getRoom().requestState(this.#playerId);
   }
 
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number) {
-    return this.#room.teleportTo(this.#playerId, x, y, z);
+    return this.#getRoom().teleportTo(this.#playerId, x, y, z);
   }
 
   /** Applies an inventory or crafting interaction. */
   clickInventory(target: InventoryClickTarget) {
-    return this.#room.clickInventory(this.#playerId, target);
+    return this.#getRoom().clickInventory(this.#playerId, target);
   }
 
   /** Returns crafting-grid items and the cursor to the player's inventory. */
   closeInventory() {
-    return this.#room.closeInventory(this.#playerId);
+    return this.#getRoom().closeInventory(this.#playerId);
   }
 
   /** Changes the selected hotbar slot. */
   selectHotbarSlot(slotIndex: number) {
-    return this.#room.selectHotbarSlot(this.#playerId, slotIndex);
+    return this.#getRoom().selectHotbarSlot(this.#playerId, slotIndex);
   }
 
   /** Attempts a melee attack from the local client snapshot. */
   attack(packet: PlayerAttackPacket) {
-    return this.#room.attack(this.#playerId, packet);
+    return this.#getRoom().attack(this.#playerId, packet);
   }
 
   /** Sets the server-authoritative time of day. */
   setTimeOfDay(timeS: number) {
-    return this.#room.setTimeOfDay(timeS);
+    return this.#getRoom().setTimeOfDay(timeS);
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */
   leave() {
     if (this.#left) return;
     this.#left = true;
-    return this.#room.leave(this.#playerId);
+    return this.#getRoom().leave(this.#playerId);
   }
 
   /** Called automatically when the RPC session is disposed. */
@@ -405,9 +476,9 @@ export class AuthSession extends RpcTarget implements AuthenticatedApi {
    */
   async join(roomId: string, onTick: TickListener) {
     const id = this.#env.GameRoom.idFromName(roomId);
-    const stub = this.#env.GameRoom.get(id);
-    await stub.join(this.#playerId, this.#name, onTick);
-    return new RoomSession(stub, this.#playerId);
+    const getRoom = () => this.#env.GameRoom.get(id);
+    await getRoom().join(this.#playerId, this.#name, onTick);
+    return new RoomSession(getRoom, this.#playerId);
   }
 }
 

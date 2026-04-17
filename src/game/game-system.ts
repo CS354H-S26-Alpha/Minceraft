@@ -19,7 +19,7 @@ export interface GameSystem {
   /** Load all persisted state from SQLite into memory. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void;
   /** Advance the system by one tick; return `true` if any client-visible state changed. */
-  tick(): boolean;
+  tick(): boolean | Promise<boolean>;
   /** Build the set of packets this system wants to send to the given player. */
   packetsFor(playerId: string, ctx: SystemContext): ServerPacket[];
   /** Clear any per-broadcast pending flags set during this tick. */

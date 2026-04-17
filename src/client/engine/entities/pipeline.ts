@@ -2,9 +2,10 @@ import { RemoteEntityStore } from "./store";
 
 export type GpuBuffers = Record<string, Float32Array>;
 
-export interface EntityPipelineConfig<S> {
-  interpolate: (prev: S, curr: S, t: number) => S;
-  pack: (states: S[], buffers: GpuBuffers) => number;
+export interface StaticEntityAttribute {
+  name: string;
+  size: number;
+  data: Float32Array;
 }
 
 export interface EntityPassDef {
@@ -16,6 +17,7 @@ export interface EntityPassDef {
     indices: Uint32Array;
     normals: Float32Array;
     uvs: Float32Array;
+    extraAttributes?: StaticEntityAttribute[];
   };
   instancedAttributes: { name: string; size: number }[];
   cullFace?: boolean;
@@ -37,15 +39,22 @@ export function ensureBuffer(buffers: GpuBuffers, name: string, minLength: numbe
   return existing;
 }
 
-export function createEntityPipeline<S>(config: EntityPipelineConfig<S>) {
-  const store = new RemoteEntityStore<S>(config.interpolate);
+export interface EntityPipelineConfig<SnapshotState, RenderState = SnapshotState> {
+  interpolate: (prev: SnapshotState, curr: SnapshotState, t: number) => RenderState;
+  pack: (states: RenderState[], buffers: GpuBuffers) => number;
+}
+
+export function createEntityPipeline<SnapshotState, RenderState = SnapshotState>(
+  config: EntityPipelineConfig<SnapshotState, RenderState>,
+) {
+  const store = new RemoteEntityStore<SnapshotState, RenderState>(config.interpolate);
   const buffers: GpuBuffers = {};
 
   return {
-    onSnapshot(entities: Record<string, S>, now: number) {
+    onSnapshot(entities: Record<string, SnapshotState>, now: number) {
       store.update(structuredClone(entities), now);
     },
-    states(now: number): S[] {
+    states(now: number): RenderState[] {
       return store.interpolated(now);
     },
     frame(now: number): { buffers: GpuBuffers; count: number } {

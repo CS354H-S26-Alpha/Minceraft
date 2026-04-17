@@ -38,6 +38,34 @@ export interface InventoryUiPacket {
   ui: InventoryUiState;
 }
 
+/** A block mutation request sent by the client. */
+export interface BlockActionPacket {
+  seq: number;
+  action: "place" | "break";
+  x: number;
+  y: number;
+  z: number;
+  blockType?: number;
+}
+
+/** Per-player acknowledgement of block actions. */
+export interface BlockAckPacket {
+  type: "blockAck";
+  acks: Array<{ seq: number; accepted: boolean }>;
+}
+
+/** Block changes to apply to chunk data (broadcast to all clients). */
+export interface BlockChangesPacket {
+  type: "blockChanges";
+  changes: Array<{ x: number; y: number; z: number; blockType: number }>;
+}
+
+/** Server-pushed chunk block data (RLE-encoded) for the receiving client. */
+export interface ChunkDataPacket {
+  type: "chunkData";
+  chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>;
+}
+
 /** World-wide state — tick cost, time-of-day, etc. */
 export interface WorldStatePacket {
   type: "world";
@@ -54,7 +82,10 @@ export type ServerPacket =
   | SelfStatePacket
   | ReconcilePacket
   | InventoryUiPacket
-  | WorldStatePacket;
+  | WorldStatePacket
+  | BlockAckPacket
+  | BlockChangesPacket
+  | ChunkDataPacket;
 
 /** A single server tick delivered to one client. */
 export interface ServerTick {
@@ -68,6 +99,8 @@ export interface ServerTick {
 export interface RoomSessionApi {
   /** Sends the latest client-reported position packet to the server. */
   sendPosition(packet: PlayerPositionPacket): void;
+  /** Sends a block place/break action to the server. */
+  sendBlockAction(action: BlockActionPacket): void;
   /** Asks the server to include own state in the next tick's snapshot. */
   requestState(): void;
   /** Teleports this player to the given coordinates. */
