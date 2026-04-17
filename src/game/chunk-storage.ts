@@ -11,6 +11,9 @@ export interface BlockMutation {
   y: number;
   z: number;
   blockType?: number;
+  // Opt-in: when true, placing into unsupported air should immediately settle
+  // downward so players cannot create floating blocks from side placement.
+  settleOnPlace?: boolean;
 }
 
 export interface BlockChange {
@@ -134,12 +137,21 @@ export class ChunkStorage {
       return { accepted: false, previousType: current, changes: [] };
     }
     const blockType = (action.blockType ?? CubeType.Dirt) as CubeType;
-    this.writeBlock(x, y, z, blockType);
-    return {
-      accepted: true,
-      previousType: CubeType.Air,
-      changes: [{ x, y, z, blockType }],
-    };
+    // Only apply anti-floating settle on explicit player place actions into
+    // Air. This avoids changing direct setup mutations in tests/tools and
+    // avoids affecting fluid-replacement paths.
+    const shouldSettlePlacedBlock = action.settleOnPlace === true && current === CubeType.Air;
+    if (!shouldSettlePlacedBlock) {
+      this.writeBlock(x, y, z, blockType);
+      return {
+        accepted: true,
+        previousType: CubeType.Air,
+        changes: [{ x, y, z, blockType }],
+      };
+    }
+
+    const changes = this.applyPlaceWithFallingBlocks(x, y, z, blockType);
+    return { accepted: true, previousType: CubeType.Air, changes };
   }
 
   private applyBreakWithFallingBlocks(wx: number, wy: number, wz: number): BlockChange[] {
@@ -154,14 +166,43 @@ export class ChunkStorage {
     this.activateFluidNeighbours(wx, wy, wz);
     recordChange(wx, wy, wz, CubeType.Air);
 
-    // After support is removed, settle any unsupported non-fluid blocks in
-    // this column downward until they reach non-Air support.
-    for (let scanY = wy + 1; scanY < CHUNK_HEIGHT; scanY++) {
+    // Start above the broken cell: only blocks that lost support can move.
+    this.settleUnsupportedColumn(wx, wy + 1, wz, recordChange);
+
+    return [...changesByCoord.values()];
+  }
+
+  private applyPlaceWithFallingBlocks(wx: number, wy: number, wz: number, blockType: CubeType): BlockChange[] {
+    const changesByCoord = new Map<string, BlockChange>();
+    const recordChange = (x: number, y: number, z: number, type: number) => {
+      changesByCoord.set(`${x},${y},${z}`, { x, y, z, blockType: type });
+    };
+
+    this.writeBlock(wx, wy, wz, blockType);
+    recordChange(wx, wy, wz, blockType);
+
+    // If the newly placed block (or stack above it) has no support beneath,
+    // settle it immediately so players cannot create floating structures.
+    this.settleUnsupportedColumn(wx, wy, wz, recordChange);
+
+    return [...changesByCoord.values()];
+  }
+
+  private settleUnsupportedColumn(
+    wx: number,
+    startY: number,
+    wz: number,
+    recordChange: (x: number, y: number, z: number, blockType: number) => void,
+  ): void {
+    // Bottom-up scan allows higher blocks to correctly settle onto blocks that
+    // have already moved lower in this same pass.
+    for (let scanY = Math.max(1, startY); scanY < CHUNK_HEIGHT; scanY++) {
       const blockType = this.getBlock(wx, scanY, wz);
       if (!this.shouldFallWhenUnsupported(blockType)) continue;
       if (this.getBlock(wx, scanY - 1, wz) !== CubeType.Air) continue;
 
       let destinationY = scanY;
+      // Move directly to final supported Y in one authoritative update.
       while (destinationY > 0 && this.getBlock(wx, destinationY - 1, wz) === CubeType.Air) {
         destinationY--;
       }
@@ -174,8 +215,6 @@ export class ChunkStorage {
       recordChange(wx, scanY, wz, CubeType.Air);
       recordChange(wx, destinationY, wz, blockType);
     }
-
-    return [...changesByCoord.values()];
   }
 
   private shouldFallWhenUnsupported(blockType: CubeType | undefined): blockType is CubeType {

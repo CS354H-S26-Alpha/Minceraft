@@ -112,6 +112,8 @@ export class BlockSystem implements GameSystem {
       y: targetY,
       z: targetZ,
       blockType: action.blockType,
+      // Player-driven place actions opt into anti-floating settle behavior.
+      settleOnPlace: action.action === "place",
     });
     this.pushAck(playerId, action.seq, result.accepted);
     if (result.accepted) {
