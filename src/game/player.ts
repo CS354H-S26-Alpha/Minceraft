@@ -1,5 +1,6 @@
 import { Vec3 } from "gl-matrix";
 import { Entity } from "./entity";
+import { type ForceVector, isForceVector } from "./forces";
 import { getItemDamage, ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./items";
 
 // minceraft yoinked
@@ -17,6 +18,7 @@ export const HOTBAR_START_INDEX = MAIN_INVENTORY_SLOT_COUNT;
 const MAX_DT_SECONDS = 2;
 export const MAX_COORDINATE = 100_000;
 const DEFAULT_SELECTED_HOTBAR_SLOT = 0;
+const EXTERNAL_FORCE_DAMPING = 8;
 
 export interface ItemStack {
   itemId: ItemId;
@@ -234,6 +236,8 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
   public collisionQuery: CollisionQuery | undefined = undefined;
   public headQuery: HeadQuery | undefined = undefined;
+  private externalVelocityX = 0;
+  private externalVelocityZ = 0;
 
   /** Unique player identifier (alias for `state.id`). */
   get id() {
@@ -258,6 +262,33 @@ export class Player extends Entity<PlayerState, PlayerInput> {
 
   addItem(stack: ItemStack): ItemStack | null {
     return addItemToInventory(this.state.inventory, stack);
+  }
+
+  applyForce(force: ForceVector): boolean {
+    if (!isForceVector(force)) return false;
+    this.externalVelocityX += force.x;
+    this.externalVelocityZ += force.z;
+    this.state.vy += force.y;
+    return true;
+  }
+
+  clearAppliedForces(): void {
+    this.externalVelocityX = 0;
+    this.externalVelocityZ = 0;
+    this.state.vy = 0;
+  }
+
+  horizontalForceTravel(dtSeconds: number): number {
+    if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) return 0;
+    const dx = integrateVelocity(this.externalVelocityX, dtSeconds);
+    const dz = integrateVelocity(this.externalVelocityZ, dtSeconds);
+    return Math.hypot(dx, dz);
+  }
+
+  decayAppliedForces(dtSeconds: number): void {
+    if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) return;
+    this.externalVelocityX = decayVelocity(this.externalVelocityX, dtSeconds);
+    this.externalVelocityZ = decayVelocity(this.externalVelocityZ, dtSeconds);
   }
 
   takeDamage(amount: number): boolean {
@@ -306,6 +337,9 @@ export class Player extends Entity<PlayerState, PlayerInput> {
       nextX = clampCoord(currentX + dx * inv);
       nextZ = clampCoord(currentZ + dz * inv);
     }
+    nextX = clampCoord(nextX + integrateVelocity(this.externalVelocityX, dtSeconds));
+    nextZ = clampCoord(nextZ + integrateVelocity(this.externalVelocityZ, dtSeconds));
+    this.decayAppliedForces(dtSeconds);
 
     if (this.collisionQuery === undefined) {
       this.state.x = nextX;
@@ -356,6 +390,16 @@ function clampCoord(v: number): number {
   if (v > MAX_COORDINATE) return MAX_COORDINATE;
   if (v < -MAX_COORDINATE) return -MAX_COORDINATE;
   return v;
+}
+
+function integrateVelocity(velocity: number, dtSeconds: number): number {
+  if (velocity === 0) return 0;
+  return (velocity * (1 - Math.exp(-EXTERNAL_FORCE_DAMPING * dtSeconds))) / EXTERNAL_FORCE_DAMPING;
+}
+
+function decayVelocity(velocity: number, dtSeconds: number): number {
+  if (velocity === 0) return 0;
+  return velocity * Math.exp(-EXTERNAL_FORCE_DAMPING * dtSeconds);
 }
 
 function normalizeInventorySlot(slot: InventorySlot | undefined): InventorySlot {
