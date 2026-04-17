@@ -106,16 +106,15 @@ export class BlockSystem implements GameSystem {
       }
     }
 
-    const result = await this.storage.applyMutation(
-      {
-        action: action.action,
-        x: targetX,
-        y: targetY,
-        z: targetZ,
-        blockType: action.blockType,
-      },
-      { x: pos.x, z: pos.z },
-    );
+    const result = this.storage.applyMutation({
+      action: action.action,
+      x: targetX,
+      y: targetY,
+      z: targetZ,
+      blockType: action.blockType,
+      // Player-driven place actions opt into anti-floating settle behavior.
+      settleOnPlace: action.action === "place",
+    });
     this.pushAck(playerId, action.seq, result.accepted);
     if (result.accepted) {
       // Prefer authoritative storage-side change list because one user action

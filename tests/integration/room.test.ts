@@ -1017,6 +1017,69 @@ describe("GameRoom Durable Object", () => {
     });
   });
 
+  it("settles unsupported placed blocks so they do not float", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      await room.runTick();
+
+      const roomInternals = room as unknown as RoomTestInternals;
+      const [originX, originZ] = chunkOrigin(0, 20);
+      await roomInternals.chunkStorage.loadChunks([{ originX, originZ }]);
+
+      // Find a vertical air shaft so placing at placeY would otherwise float.
+      let placeY = -1;
+      for (let y = 124; y >= 2; y--) {
+        if (
+          roomInternals.chunkStorage.getBlock(0, y, 20) === CubeType.Air &&
+          roomInternals.chunkStorage.getBlock(0, y - 1, 20) === CubeType.Air
+        ) {
+          placeY = y;
+          break;
+        }
+      }
+      expect(placeY).toBeGreaterThan(0);
+
+      // Expected final supported landing for the newly placed dirt block.
+      let expectedLandingY = placeY;
+      while (
+        expectedLandingY > 0 &&
+        roomInternals.chunkStorage.getBlock(0, expectedLandingY - 1, 20) === CubeType.Air
+      ) {
+        expectedLandingY--;
+      }
+
+      room.teleportTo("alice", 0, placeY + 2.62, 20);
+      await room.runTick();
+
+      room.sendBlockAction("alice", {
+        seq: 1,
+        action: "place",
+        x: 0,
+        y: placeY,
+        z: 20,
+        blockType: CubeType.Dirt,
+      });
+      await room.runTick();
+
+      const placeAck = findPacket(aliceTicks[aliceTicks.length - 1], "blockAck")?.acks.find((ack) => ack.seq === 1);
+      expect(placeAck?.accepted).toBe(true);
+
+      // Final world state: no floating block remains at the original target.
+      expect(roomInternals.chunkStorage.getBlock(0, expectedLandingY, 20)).toBe(CubeType.Dirt);
+      expect(roomInternals.chunkStorage.getBlock(0, placeY, 20)).toBe(
+        expectedLandingY === placeY ? CubeType.Dirt : CubeType.Air,
+      );
+
+      // Broadcast must include the landed dirt destination for client sync.
+      const changes = findPacket(aliceTicks[aliceTicks.length - 1], "blockChanges")?.changes ?? [];
+      expect(changes).toContainEqual({ x: 0, y: expectedLandingY, z: 20, blockType: CubeType.Dirt });
+    });
+  });
+
   it("accepts an attack from a valid client snapshot even when the server yaw is stale", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];

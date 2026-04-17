@@ -12,6 +12,9 @@ export interface BlockMutation {
   y: number;
   z: number;
   blockType?: number;
+  // Opt-in: when true, placing into unsupported air should immediately settle
+  // downward so players cannot create floating blocks from side placement.
+  settleOnPlace?: boolean;
 }
 
 export interface BlockChange {
@@ -130,34 +133,16 @@ export class ChunkStorage {
     this.seed = seed;
   }
 
-  /**
-   * Returns the block type at the world coord. If `playerPos` is supplied and
-   * the containing chunk is within 1 chunk (Chebyshev) of the player's chunk
-   * but not yet resident, it is loaded (SQLite or ChunkGen) before reading.
-   * Returns `undefined` only when the chunk is out of range and not loaded.
-   */
-  async getBlock(
-    wx: number,
-    wy: number,
-    wz: number,
-    playerPos?: { x: number; z: number },
-  ): Promise<CubeType | undefined> {
+  /** Returns the cached block type at the world coord, if its chunk is loaded. */
+  getBlock(wx: number, wy: number, wz: number): CubeType | undefined {
     if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
     const [originX, originZ] = chunkOrigin(wx, wz);
     const key = chunkKey(originX, originZ);
-    if (!this.chunks.has(key) && playerPos && this.isWithinPlayerChunkRange(originX, originZ, playerPos)) {
-      await this.ensureChunk(originX, originZ);
-    }
     const entry = this.chunks.peek(key);
     if (!entry) return undefined;
     const lx = wx - (originX - CHUNK_SIZE / 2);
     const lz = wz - (originZ - CHUNK_SIZE / 2);
     return (entry.chunk.blocks[wy * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] ?? CubeType.Air) as CubeType;
-  }
-
-  private isWithinPlayerChunkRange(originX: number, originZ: number, playerPos: { x: number; z: number }): boolean {
-    const [playerOriginX, playerOriginZ] = chunkOrigin(playerPos.x, playerPos.z);
-    return Math.abs(originX - playerOriginX) <= CHUNK_SIZE && Math.abs(originZ - playerOriginZ) <= CHUNK_SIZE;
   }
 
   /** Resolves the cached chunk entry (+ local coords) for a world (wx, wz). */
@@ -193,12 +178,12 @@ export class ChunkStorage {
    * non-Air). Returns the previous block type and full resulting block changes
    * for accepted mutations; otherwise `accepted: false`.
    */
-  async applyMutation(action: BlockMutation, playerPos?: { x: number; z: number }): Promise<BlockMutationResult> {
+  applyMutation(action: BlockMutation): BlockMutationResult {
     const { x, y, z } = action;
     if (y < 0 || y >= CHUNK_HEIGHT) {
       return { accepted: false, previousType: CubeType.Air, changes: [] };
     }
-    const current = await this.getBlock(x, y, z, playerPos);
+    const current = this.getBlock(x, y, z);
     if (current === undefined) {
       return { accepted: false, previousType: CubeType.Air, changes: [] };
     }
@@ -215,12 +200,21 @@ export class ChunkStorage {
       return { accepted: false, previousType: current, changes: [] };
     }
     const blockType = (action.blockType ?? CubeType.Dirt) as CubeType;
-    this.writeBlock(x, y, z, blockType);
-    return {
-      accepted: true,
-      previousType: CubeType.Air,
-      changes: [{ x, y, z, blockType }],
-    };
+    // Only apply anti-floating settle on explicit player place actions into
+    // Air. This avoids changing direct setup mutations in tests/tools and
+    // avoids affecting fluid-replacement paths.
+    const shouldSettlePlacedBlock = action.settleOnPlace === true && current === CubeType.Air;
+    if (!shouldSettlePlacedBlock) {
+      this.writeBlock(x, y, z, blockType);
+      return {
+        accepted: true,
+        previousType: CubeType.Air,
+        changes: [{ x, y, z, blockType }],
+      };
+    }
+
+    const changes = this.applyPlaceWithFallingBlocks(x, y, z, blockType);
+    return { accepted: true, previousType: CubeType.Air, changes };
   }
 
   private applyBreakWithFallingBlocks(wx: number, wy: number, wz: number): BlockChange[] {
@@ -235,14 +229,43 @@ export class ChunkStorage {
     this.activateFluidNeighbours(wx, wy, wz);
     recordChange(wx, wy, wz, CubeType.Air);
 
-    // After support is removed, settle any unsupported non-fluid blocks in
-    // this column downward until they reach non-Air support.
-    for (let scanY = wy + 1; scanY < CHUNK_HEIGHT; scanY++) {
+    // Start above the broken cell: only blocks that lost support can move.
+    this.settleUnsupportedColumn(wx, wy + 1, wz, recordChange);
+
+    return [...changesByCoord.values()];
+  }
+
+  private applyPlaceWithFallingBlocks(wx: number, wy: number, wz: number, blockType: CubeType): BlockChange[] {
+    const changesByCoord = new Map<string, BlockChange>();
+    const recordChange = (x: number, y: number, z: number, type: number) => {
+      changesByCoord.set(`${x},${y},${z}`, { x, y, z, blockType: type });
+    };
+
+    this.writeBlock(wx, wy, wz, blockType);
+    recordChange(wx, wy, wz, blockType);
+
+    // If the newly placed block (or stack above it) has no support beneath,
+    // settle it immediately so players cannot create floating structures.
+    this.settleUnsupportedColumn(wx, wy, wz, recordChange);
+
+    return [...changesByCoord.values()];
+  }
+
+  private settleUnsupportedColumn(
+    wx: number,
+    startY: number,
+    wz: number,
+    recordChange: (x: number, y: number, z: number, blockType: number) => void,
+  ): void {
+    // Bottom-up scan allows higher blocks to correctly settle onto blocks that
+    // have already moved lower in this same pass.
+    for (let scanY = Math.max(1, startY); scanY < CHUNK_HEIGHT; scanY++) {
       const blockType = this.getBlock(wx, scanY, wz);
       if (!this.shouldFallWhenUnsupported(blockType)) continue;
       if (this.getBlock(wx, scanY - 1, wz) !== CubeType.Air) continue;
 
       let destinationY = scanY;
+      // Move directly to final supported Y in one authoritative update.
       while (destinationY > 0 && this.getBlock(wx, destinationY - 1, wz) === CubeType.Air) {
         destinationY--;
       }
@@ -255,8 +278,6 @@ export class ChunkStorage {
       recordChange(wx, scanY, wz, CubeType.Air);
       recordChange(wx, destinationY, wz, blockType);
     }
-
-    return [...changesByCoord.values()];
   }
 
   private shouldFallWhenUnsupported(blockType: CubeType | undefined): blockType is CubeType {
