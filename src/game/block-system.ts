@@ -147,6 +147,7 @@ export class BlockSystem implements GameSystem {
     const chunkData = this.pendingChunkData.get(playerId);
     if (chunkData?.length) {
       packets.push({ type: "chunkData", chunks: chunkData });
+      this.pendingChunkData.delete(playerId);
     }
 
     const acks = this.pendingAcks.get(playerId);
@@ -164,7 +165,6 @@ export class BlockSystem implements GameSystem {
   clearPending(): void {
     this.pendingAcks.clear();
     this.pendingChanges = [];
-    this.pendingChunkData.clear();
   }
 
   hasDirty(): boolean {

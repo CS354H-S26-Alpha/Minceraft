@@ -91,7 +91,6 @@ const FRAME_HISTORY_SIZE = 120;
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
-/** How often fluid flow is advanced. Slow enough to be visible and cheap. */
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
   const renderer = new Renderer(gl, [playerPassDef]);
@@ -160,34 +159,34 @@ export function createGame(args: CreateGameArgs): GameState {
     chunks.reset();
   };
 
-  const handleAttack = () => {
-    const player = room().player();
-    const session = room().session();
-    const camera = ctx?.camera;
-    if (!player || !session || !camera) return;
-
-    const yaw = camera.yaw();
-    const pitch = camera.pitch();
-    const targetPlayerId = findTargetedPlayerId(
-      { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
-      remotePlayers.states(performance.now()),
-    );
-    if (!targetPlayerId) return;
-
-    session.attack({
-      targetPlayerId,
-      x: player.state.x,
-      y: player.state.y,
-      z: player.state.z,
-      yaw,
-      pitch,
-    });
-  };
-
   const handleLeftClick = () => {
-    const hit = latestHit;
     const s = room().session();
-    if (!hit || !s || hit.blockType === CubeType.Bedrock) return;
+    if (!s) return;
+
+    const player = room().player();
+    const camera = ctx?.camera;
+    if (player && camera) {
+      const yaw = camera.yaw();
+      const pitch = camera.pitch();
+      const targetPlayerId = findTargetedPlayerId(
+        { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+        remotePlayers.states(performance.now()),
+      );
+      if (targetPlayerId) {
+        s.attack({
+          targetPlayerId,
+          x: player.state.x,
+          y: player.state.y,
+          z: player.state.z,
+          yaw,
+          pitch,
+        });
+        return;
+      }
+    }
+
+    const hit = latestHit;
+    if (!hit || hit.blockType === CubeType.Bedrock) return;
 
     const seq = blockSeq++;
     const previousType = chunks.modifyBlock(hit.blockX, hit.blockY, hit.blockZ, CubeType.Air);
@@ -224,7 +223,6 @@ export function createGame(args: CreateGameArgs): GameState {
     onReset: handleReset,
     onLeftClick: handleLeftClick,
     onRightClick: handleRightClick,
-    onAttack: handleAttack,
     ...args.shortcuts,
   });
 

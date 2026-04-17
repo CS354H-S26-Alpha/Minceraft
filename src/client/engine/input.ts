@@ -22,7 +22,6 @@ export interface InputOptions {
   onCycleHotbar?: (direction: 1 | -1) => void;
   onLeftClick?: () => void;
   onRightClick?: () => void;
-  onAttack?: () => void;
 }
 
 export interface InputHandle {
@@ -125,16 +124,6 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
       onCycle(direction as 1 | -1);
     });
   }
-  if (opts.onAttack) {
-    const onAttack = opts.onAttack;
-    createEventListener(document, "mousedown", (event: MouseEvent) => {
-      if (event.button !== 0) return;
-      if (document.pointerLockElement !== canvas()) return;
-      event.preventDefault();
-      onAttack();
-    });
-  }
-
   return {
     walkKeys() {
       return { w: w(), a: a(), s: s(), d: d(), space: space(), shift: shift() };
