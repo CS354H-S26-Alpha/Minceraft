@@ -629,16 +629,32 @@ export class Chunk {
         const south = localZ + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX] as number) : center;
         const east = localX + 1 < this.size ? (this.heightMap[localZ * this.size + localX + 1] as number) : center;
         const west = localX > 0 ? (this.heightMap[localZ * this.size + localX - 1] as number) : center;
-        const northEast = localZ > 0 && localX + 1 < this.size ? (this.heightMap[(localZ - 1) * this.size + localX + 1] as number) : center;
-        const northWest = localZ > 0 && localX > 0 ? (this.heightMap[(localZ - 1) * this.size + localX - 1] as number) : center;
-        const southEast = localZ + 1 < this.size && localX + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX + 1] as number) : center;
-        const southWest = localZ + 1 < this.size && localX > 0 ? (this.heightMap[(localZ + 1) * this.size + localX - 1] as number) : center;
+        const northEast =
+          localZ > 0 && localX + 1 < this.size
+            ? (this.heightMap[(localZ - 1) * this.size + localX + 1] as number)
+            : center;
+        const northWest =
+          localZ > 0 && localX > 0 ? (this.heightMap[(localZ - 1) * this.size + localX - 1] as number) : center;
+        const southEast =
+          localZ + 1 < this.size && localX + 1 < this.size
+            ? (this.heightMap[(localZ + 1) * this.size + localX + 1] as number)
+            : center;
+        const southWest =
+          localZ + 1 < this.size && localX > 0
+            ? (this.heightMap[(localZ + 1) * this.size + localX - 1] as number)
+            : center;
         return {
           biome: this.biomeMap[idx] as number,
           surfaceY,
           surfaceBlock: this.getBlock(localX, surfaceY, localZ),
-          northY: north, southY: south, eastY: east, westY: west,
-          northEastY: northEast, northWestY: northWest, southEastY: southEast, southWestY: southWest,
+          northY: north,
+          southY: south,
+          eastY: east,
+          westY: west,
+          northEastY: northEast,
+          northWestY: northWest,
+          southEastY: southEast,
+          southWestY: southWest,
           isSubmerged: false,
           distanceToChunkEdge: Math.min(localX, localZ, this.size - 1 - localX, this.size - 1 - localZ),
         };

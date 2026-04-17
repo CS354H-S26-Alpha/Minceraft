@@ -64,7 +64,13 @@ export interface BlockChangesPacket {
 /** Server-pushed chunk block data (RLE-encoded) for the receiving client. */
 export interface ChunkDataPacket {
   type: "chunkData";
-  chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array; placedObjects: PlacedObject[]; placedObjectCounts: Record<PlacedObjectType, number> }>;
+  chunks: Array<{
+    originX: number;
+    originZ: number;
+    blocks: Uint8Array;
+    placedObjects: PlacedObject[];
+    placedObjectCounts: Record<PlacedObjectType, number>;
+  }>;
 }
 
 /** World-wide state — tick cost, time-of-day, etc. */

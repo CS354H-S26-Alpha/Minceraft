@@ -41,8 +41,17 @@ export class ChunkManager {
 
   private chunkDataMap = new Map<string, SingleChunkData>();
   private localOverrides = new Map<string, Map<number, CubeType>>();
-  private ingestQueue: Array<{ originX: number; originZ: number; blocks: Uint8Array; placedObjects: readonly PlacedObject[]; placedObjectCounts: Readonly<Record<PlacedObjectType, number>> }> = [];
-  private pendingPlacedObjects = new Map<string, { objects: readonly PlacedObject[]; counts: Readonly<Record<PlacedObjectType, number>> }>();
+  private ingestQueue: Array<{
+    originX: number;
+    originZ: number;
+    blocks: Uint8Array;
+    placedObjects: readonly PlacedObject[];
+    placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
+  }> = [];
+  private pendingPlacedObjects = new Map<
+    string,
+    { objects: readonly PlacedObject[]; counts: Readonly<Record<PlacedObjectType, number>> }
+  >();
   private workerBusy = false;
   private resetGeneration = 0;
   private positionBuffer = new Float32Array(0);
@@ -69,7 +78,15 @@ export class ChunkManager {
   }
 
   /** Queues server-pushed chunk data for incremental ingestion. */
-  receiveChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array; placedObjects: readonly PlacedObject[]; placedObjectCounts: Readonly<Record<PlacedObjectType, number>> }>): void {
+  receiveChunks(
+    chunks: Array<{
+      originX: number;
+      originZ: number;
+      blocks: Uint8Array;
+      placedObjects: readonly PlacedObject[];
+      placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
+    }>,
+  ): void {
     this.ingestQueue.push(...chunks);
   }
 

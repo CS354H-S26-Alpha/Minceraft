@@ -64,5 +64,4 @@ describe("ChunkManager", () => {
     expect(manager.getBlock(0, 0, 0)).toBe(CubeType.Air);
     expect(manager.modifyBlock(0, 0, 0, CubeType.Stone)).toBeNull();
   });
-
 });
