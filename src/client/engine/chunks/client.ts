@@ -24,9 +24,12 @@ export interface SingleChunkData {
   sectionCounts: Uint16Array;
 }
 
-/** Per-chunk render data for all loaded chunks in a generation. */
+/** Mesh-only chunk data returned by the worker (no placed objects). */
+export type WorkerChunkData = Omit<SingleChunkData, "placedObjects" | "placedObjectCounts">;
+
+/** Per-chunk mesh batch returned by the worker. */
 export interface ChunkBatchData {
-  chunks: SingleChunkData[];
+  chunks: WorkerChunkData[];
 }
 
 export interface ChunkWorkerApi {

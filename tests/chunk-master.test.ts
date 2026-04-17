@@ -3,6 +3,7 @@ import type { ChunkClient } from "../src/client/engine/chunks/manager";
 import { ChunkManager } from "../src/client/engine/chunks/manager";
 import { CubeType } from "../src/client/engine/render/cube-types";
 import { CHUNK_SIZE, SECTIONS_PER_CHUNK } from "../src/game/chunk";
+import { emptyPlacedObjectCounts } from "../src/game/object-placement";
 
 function createMockClient(): ChunkClient {
   return {
@@ -19,6 +20,8 @@ function createMockClient(): ChunkClient {
           numCubes: 1,
           sectionOffsets: new Uint32Array(SECTIONS_PER_CHUNK),
           sectionCounts: new Uint16Array(SECTIONS_PER_CHUNK),
+          placedObjects: [],
+          placedObjectCounts: emptyPlacedObjectCounts(),
         })),
       };
     },

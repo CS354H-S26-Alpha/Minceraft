@@ -582,6 +582,7 @@ export class Chunk {
       this.blocks = prefilled.blocks;
       this.fluidLevels = prefilled.fluidLevels ?? new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
       this.buildHeightMap();
+      this.rebuildPlacedObjects();
     } else {
       this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
       this.fluidLevels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
@@ -606,6 +607,46 @@ export class Chunk {
    * Rebuilds heightMap/surfaceTypesMap from the current `blocks` array. Used
    * when hydrating a Chunk from persisted data instead of terrain generation.
    */
+  private rebuildPlacedObjects(): void {
+    const topleftx = this.x - this.size / 2;
+    const topleftz = this.y - this.size / 2;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const { biome } = sampleColumn(this.seed, topleftx + j, topleftz + i);
+        this.biomeMap[this.size * i + j] = biome;
+      }
+    }
+    const anchors = generatePlacedObjectsForChunk({
+      seed: this.seed,
+      chunkOriginX: topleftx,
+      chunkOriginZ: topleftz,
+      chunkSize: this.size,
+      sampleAt: (localX, localZ) => {
+        const idx = localZ * this.size + localX;
+        const surfaceY = this.heightMap[idx] as number;
+        const center = surfaceY;
+        const north = localZ > 0 ? (this.heightMap[(localZ - 1) * this.size + localX] as number) : center;
+        const south = localZ + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX] as number) : center;
+        const east = localX + 1 < this.size ? (this.heightMap[localZ * this.size + localX + 1] as number) : center;
+        const west = localX > 0 ? (this.heightMap[localZ * this.size + localX - 1] as number) : center;
+        const northEast = localZ > 0 && localX + 1 < this.size ? (this.heightMap[(localZ - 1) * this.size + localX + 1] as number) : center;
+        const northWest = localZ > 0 && localX > 0 ? (this.heightMap[(localZ - 1) * this.size + localX - 1] as number) : center;
+        const southEast = localZ + 1 < this.size && localX + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX + 1] as number) : center;
+        const southWest = localZ + 1 < this.size && localX > 0 ? (this.heightMap[(localZ + 1) * this.size + localX - 1] as number) : center;
+        return {
+          biome: this.biomeMap[idx] as number,
+          surfaceY,
+          surfaceBlock: this.getBlock(localX, surfaceY, localZ),
+          northY: north, southY: south, eastY: east, westY: west,
+          northEastY: northEast, northWestY: northWest, southEastY: southEast, southWestY: southWest,
+          isSubmerged: false,
+          distanceToChunkEdge: Math.min(localX, localZ, this.size - 1 - localX, this.size - 1 - localZ),
+        };
+      },
+    });
+    this.placedObjectsData = this.applyVegetationStructures(anchors, topleftx, topleftz);
+  }
+
   private buildHeightMap(): void {
     const S = this.size;
     for (let z = 0; z < S; z++) {

@@ -4,7 +4,7 @@ import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
 import { createInventoryUiState } from "@/game/crafting";
 import { Player, type PlayerPublicState, type PlayerState } from "@/game/player";
-import type { RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
+import type { ChunkDataPacket, RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
 import { createSoundEffects } from "./sounds";
 
 /** Reactive server-side diagnostics derived from every tick. */
@@ -36,7 +36,7 @@ export function joinWorld(roomId: string) {
 
   const blockAckQueue: Array<{ seq: number; accepted: boolean }> = [];
   const blockChangesQueue: Array<{ x: number; y: number; z: number; blockType: number }> = [];
-  const chunkDataQueue: Array<Array<{ originX: number; originZ: number; blocks: Uint8Array }>> = [];
+  const chunkDataQueue: Array<ChunkDataPacket["chunks"]> = [];
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();

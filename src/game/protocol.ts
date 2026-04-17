@@ -1,4 +1,5 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
+import type { PlacedObject, PlacedObjectType } from "./object-placement";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
 /** Credentials returned after successful authentication. */
@@ -63,7 +64,7 @@ export interface BlockChangesPacket {
 /** Server-pushed chunk block data (RLE-encoded) for the receiving client. */
 export interface ChunkDataPacket {
   type: "chunkData";
-  chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>;
+  chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array; placedObjects: PlacedObject[]; placedObjectCounts: Record<PlacedObjectType, number> }>;
 }
 
 /** World-wide state — tick cost, time-of-day, etc. */

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey, chunkOrigin, rleDecodeBlocks, rleEncodeBlocks } from "@/game/chunk";
+import { emptyPlacedObjectCounts } from "@/game/object-placement";
 import type { ChunkGen } from "@/server/chunk-gen";
 import * as schema from "@/server/schema";
 
@@ -22,6 +23,8 @@ export interface ChunkBlob {
   originX: number;
   originZ: number;
   blocks: Uint8Array;
+  placedObjects: ReturnType<Chunk["placedObjects"]>;
+  placedObjectCounts: ReturnType<Chunk["placedObjectCounts"]>;
 }
 
 interface ChunkEntry {
@@ -168,7 +171,7 @@ export class ChunkStorage {
       const entry = this.chunks.get(key);
       if (entry) {
         this.touch(key);
-        hits.push({ originX, originZ, blocks: this.encodedBlocks(entry) });
+        hits.push({ originX, originZ, blocks: this.encodedBlocks(entry), placedObjects: entry.chunk.placedObjects(), placedObjectCounts: entry.chunk.placedObjectCounts() });
       } else {
         misses.push({ originX, originZ });
       }
@@ -197,7 +200,7 @@ export class ChunkStorage {
       const key = chunkKey(originX, originZ);
       const entry = this.chunks.get(key);
       if (!entry) continue;
-      result.push({ originX, originZ, blocks: this.encodedBlocks(entry) });
+      result.push({ originX, originZ, blocks: this.encodedBlocks(entry), placedObjects: entry.chunk.placedObjects(), placedObjectCounts: entry.chunk.placedObjectCounts() });
     }
     this.preGenerateNeighbors(generated);
     this.maybeEvict();
