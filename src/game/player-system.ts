@@ -111,6 +111,8 @@ export class PlayerSystem implements GameSystem {
     this.resetSession(playerId);
     this.inventoryUi.set(playerId, createInventoryUiState());
     this.pendingReconcile.add(playerId);
+
+    console.log(`Player ${name} joined room`);
   }
 
   /** Clears the departing player's input queue; their state remains for persistence. */
@@ -124,6 +126,8 @@ export class PlayerSystem implements GameSystem {
     this.inventoryUi.delete(playerId);
     this.pendingReconcile.delete(playerId);
     this.pendingSelfStateSync.delete(playerId);
+
+    console.log(`Player ${player?.state.name} left room`);
   }
 
   /**

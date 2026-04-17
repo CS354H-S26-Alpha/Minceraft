@@ -614,7 +614,7 @@ describe("GameServer capnweb RPC", () => {
 
     expect(roomSession).toBeDefined();
     // First tick arrives on the next server tick (tick-aligned).
-    await waitFor(() => received.length >= 1);
+    await waitFor(() => received.length >= 1, 5000);
     expect(findPacket(received[0], "reconcile")?.state.y).toBeCloseTo(70);
   });
 

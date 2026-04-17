@@ -50,6 +50,13 @@
       "when": 1776556800000,
       "tag": "0006_chunks",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1776643200000,
+      "tag": "0007_chunk_fluid_levels",
+      "breakpoints": true
     }
   ]
 }
