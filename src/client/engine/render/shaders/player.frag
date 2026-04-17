@@ -11,36 +11,32 @@ uniform float uFogFar;
 varying vec4 normal;
 varying vec4 wsPos;
 varying vec2 uv;
+varying vec3 baseColor;
+varying float headFrontFace;
 
 void main() {
-  vec3 skin = vec3(0.49, 0.73, 0.54);
-  vec3 dark = vec3(0.15, 0.1, 0.05);
+  vec3 kd = baseColor;
 
-  float face = 0.0;
+  if (headFrontFace > 0.5) {
+    vec2 pixelUv = floor(vec2(clamp(uv.x, 0.0, 0.999), clamp(1.0 - uv.y, 0.0, 0.999)) * 8.0);
+    vec3 hair = vec3(0.34, 0.2, 0.08);
+    vec3 eye = vec3(0.1, 0.08, 0.07);
+    vec3 highlight = vec3(0.93, 0.96, 1.0);
 
-  if (gl_FrontFacing) {
-    // Eyes: two circles at (0.3, 0.72) and (0.7, 0.72), radius 0.08
-    float eyeR = 0.08;
-    float leftEye = length(uv - vec2(0.3, 0.72));
-    float rightEye = length(uv - vec2(0.7, 0.72));
-    face += step(leftEye, eyeR) + step(rightEye, eyeR);
+    if (pixelUv.y <= 1.0 || (pixelUv.y == 2.0 && pixelUv.x <= 1.0) || (pixelUv.y == 2.0 && pixelUv.x >= 6.0)) {
+      kd = hair;
+    }
 
-    // Pupils: smaller circles inside eyes, radius 0.04
-    float pupilR = 0.04;
-    face += step(length(uv - vec2(0.3, 0.72)), pupilR) + step(length(uv - vec2(0.7, 0.72)), pupilR);
-
-    // Smile: arc from x=0.3 to x=0.7, centered at y=0.45
-    float smileCenterY = 0.52;
-    float smileDx = uv.x - 0.5;
-    float smileArc = smileCenterY - 0.12 * (1.0 - 4.0 * smileDx * smileDx);
-    float smileDist = abs(uv.y - smileArc);
-    float inSmileX = step(0.3, uv.x) * step(uv.x, 0.7);
-    float belowArc = step(smileArc, uv.y);
-    face += step(smileDist, 0.02) * inSmileX * belowArc;
+    if (pixelUv.y == 3.0 && (pixelUv.x == 2.0 || pixelUv.x == 5.0)) {
+      kd = highlight;
+    }
+    if (pixelUv.y == 3.0 && (pixelUv.x == 3.0 || pixelUv.x == 6.0)) {
+      kd = eye;
+    }
+    if (pixelUv.y == 5.0 && pixelUv.x >= 2.0 && pixelUv.x <= 5.0) {
+      kd = mix(kd, eye, 0.75);
+    }
   }
-
-  face = clamp(face, 0.0, 1.0);
-  vec3 kd = mix(skin, dark, face);
 
   vec4 n = gl_FrontFacing ? normal : -normal;
   vec4 lightDirection = uLightPos - wsPos;

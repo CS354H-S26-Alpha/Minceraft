@@ -190,6 +190,18 @@ export class Renderer {
     pass.addAttribute("aVertPos", 4, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, geo.positions);
     pass.addAttribute("aNorm", 4, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, geo.normals);
     pass.addAttribute("aUV", 2, gl.FLOAT, false, 2 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, geo.uvs);
+    for (const attr of geo.extraAttributes ?? []) {
+      pass.addAttribute(
+        attr.name,
+        attr.size,
+        gl.FLOAT,
+        false,
+        attr.size * Float32Array.BYTES_PER_ELEMENT,
+        0,
+        undefined,
+        attr.data,
+      );
+    }
 
     for (const attr of def.instancedAttributes) {
       pass.addInstancedAttribute(
