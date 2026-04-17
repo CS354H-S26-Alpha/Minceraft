@@ -409,7 +409,47 @@ describe("GameRoom Durable Object", () => {
     });
 
     const latest = bobTicks[bobTicks.length - 1];
+    expect(findPacket(latest, "applyForce")?.force.z).toBeLessThan(0);
     expect(findPacket(latest, "self")?.state.health).toBe(PLAYER_MAX_HEALTH - 2);
+  });
+
+  it("accepts post-hit victim movement that includes server-authoritative knockback", async () => {
+    const stub = makeRoomStub(roomName);
+    const aliceTicks: ServerTick[] = [];
+    const bobTicks: ServerTick[] = [];
+
+    await runInDurableObject(stub, async (room: GameRoom) => {
+      room.configureBlockSystem(TEST_BLOCK_OPTS);
+      room.join("alice", "Alice", (tick) => aliceTicks.push(tick));
+      room.join("bob", "Bob", (tick) => bobTicks.push(tick));
+      await room.runTick();
+
+      await wait(50);
+      room.sendPosition("bob", { sequence: 1, x: 0, y: 70, z: 18, yaw: Math.PI, pitch: 0 });
+      await room.runTick();
+
+      room.selectHotbarSlot("alice", 2);
+      await room.runTick();
+
+      room.attack("alice", {
+        targetPlayerId: "bob",
+        x: 0,
+        y: 70,
+        z: 20,
+        yaw: 0,
+        pitch: 0,
+      });
+      await room.runTick();
+
+      await wait(50);
+      room.sendPosition("bob", { sequence: 2, x: 0, y: 70, z: 16, yaw: Math.PI, pitch: 0 });
+      await room.runTick();
+    });
+
+    const aliceLatest = aliceTicks[aliceTicks.length - 1];
+    const bobLatest = bobTicks[bobTicks.length - 1];
+    expect(findPacket(aliceLatest, "players")?.players.bob?.z).toBeCloseTo(16);
+    expect(findPacket(bobLatest, "reconcile")).toBeUndefined();
   });
 
   it("uses the client-selected melee target even when another player is closer on the ray", async () => {

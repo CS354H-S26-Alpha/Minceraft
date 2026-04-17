@@ -10,6 +10,7 @@ import {
   type InventoryClickTarget,
   type InventoryUiState,
 } from "./crafting";
+import { computeMeleeKnockback, createForceVector, type ForceVector, isForceVector } from "./forces";
 import type { GameSystem, SystemContext } from "./game-system";
 import { ITEM_DEFINITIONS_BY_ID } from "./items";
 import {
@@ -33,7 +34,7 @@ import {
   toPublicPlayerState,
 } from "./player";
 import { canTargetPlayer } from "./player-targeting";
-import type { ServerPacket } from "./protocol";
+import type { ApplyForcePacket, ServerPacket } from "./protocol";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const BASE_MOVEMENT_WINDOW_MS = 100;
@@ -58,6 +59,7 @@ export class PlayerSystem implements GameSystem {
   private lastAcceptedAt = new Map<string, number>();
   private pendingReconcile = new Set<string>();
   private pendingSelfStateSync = new Set<string>();
+  private pendingForcePackets = new Map<string, ApplyForcePacket[]>();
 
   /** Restores all players from SQLite on DO startup. */
   hydrate(db: DrizzleSqliteDODatabase<typeof schema>): void {
@@ -190,6 +192,7 @@ export class PlayerSystem implements GameSystem {
     player.state.x = x;
     player.state.y = y;
     player.state.z = z;
+    player.clearAppliedForces();
 
     this.pendingPackets.delete(playerId);
     this.lastAcceptedAt.set(playerId, Date.now());
@@ -208,6 +211,8 @@ export class PlayerSystem implements GameSystem {
     for (const [id, packet] of this.pendingPackets) {
       const player = this.players.get(id);
       if (!player) continue;
+      const acceptedAt = this.lastAcceptedAt.get(id) ?? Date.now();
+      player.decayAppliedForces(Math.max(0, Date.now() - acceptedAt) / 1000);
       const prev = toPublicPlayerState(player.state);
       player.state.x = packet.x;
       player.state.y = packet.y;
@@ -247,6 +252,8 @@ export class PlayerSystem implements GameSystem {
       const ui = this.inventoryUi.get(playerId);
       if (ui) packets.push({ type: "inventoryUi", ui: cloneInventoryUiState(ui) });
     }
+    const forcePackets = this.pendingForcePackets.get(playerId);
+    if (forcePackets?.length) packets.push(...forcePackets);
 
     return packets;
   }
@@ -255,6 +262,7 @@ export class PlayerSystem implements GameSystem {
   clearPending(): void {
     this.pendingReconcile.clear();
     this.pendingSelfStateSync.clear();
+    this.pendingForcePackets.clear();
   }
 
   interactInventory(playerId: string, target: InventoryClickTarget): boolean {
@@ -330,6 +338,7 @@ export class PlayerSystem implements GameSystem {
     attacker.state.pitch = packet.pitch;
     if (attackerTurned) this.dirty.add(attackerId);
     if (!target.takeDamage(getHeldItemDamage(attacker.state))) return false;
+    this.applyForce(target.id, computeMeleeKnockback(attacker.state, target.state));
 
     this.dirty.add(target.id);
     if (target.state.health <= 0) {
@@ -464,7 +473,9 @@ export class PlayerSystem implements GameSystem {
 
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
-    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const player = this.players.get(prev.id);
+    const forcedHorizontal = player?.horizontalForceTravel(elapsedSeconds) ?? 0;
+    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + forcedHorizontal + MOVEMENT_TOLERANCE;
     const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;
@@ -494,11 +505,22 @@ export class PlayerSystem implements GameSystem {
         ...SPAWN_POSITION,
       }),
     );
+    player.clearAppliedForces();
     this.inventoryUi.set(playerId, createInventoryUiState());
     this.pendingPackets.delete(playerId);
     this.lastAcceptedAt.set(playerId, Date.now());
     this.pendingSelfStateSync.delete(playerId);
     this.pendingReconcile.add(playerId);
+  }
+
+  private applyForce(playerId: string, force: ForceVector): boolean {
+    if (!isForceVector(force)) return false;
+    const player = this.players.get(playerId);
+    if (!player?.applyForce(force)) return false;
+    const pending = this.pendingForcePackets.get(playerId) ?? [];
+    pending.push({ type: "applyForce", force: createForceVector(force.x, force.y, force.z) });
+    this.pendingForcePackets.set(playerId, pending);
+    return true;
   }
 }
 

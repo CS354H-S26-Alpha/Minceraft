@@ -66,6 +66,7 @@ export function joinWorld(roomId: string) {
         if (!current) {
           setPlayer(new Player(packet.state));
         } else {
+          current.clearAppliedForces();
           replicated()?.initialize(packet.state);
         }
         return;
@@ -84,6 +85,9 @@ export function joinWorld(roomId: string) {
       }
       case "inventoryUi":
         setInventoryUi(reconcile(packet.ui));
+        return;
+      case "applyForce":
+        player()?.applyForce(packet.force);
         return;
       case "world":
         setTickInfo("tickTimeMs", packet.tickTimeMs);
