@@ -67,6 +67,7 @@ export function joinWorld(roomId: string) {
           setPlayer(new Player(packet.state));
         } else {
           applyAuthoritativePlayerState(current, packet.state, true);
+          current.clearAppliedForces();
         }
         return;
       }
@@ -76,11 +77,15 @@ export function joinWorld(roomId: string) {
           setPlayer(new Player(packet.state));
         } else {
           applyAuthoritativePlayerState(current, packet.state, false);
+          current.clearAppliedForces();
         }
         return;
       }
       case "inventoryUi":
         setInventoryUi(reconcile(packet.ui));
+        return;
+      case "applyForce":
+        player()?.applyForce({ ...packet.force, y: 0 });
         return;
       case "world":
         setTickInfo("tickTimeMs", packet.tickTimeMs);
@@ -103,7 +108,7 @@ export function joinWorld(roomId: string) {
     if (includeTransform) {
       replicated()?.initialize(nextState);
     } else {
-      const { x, y, z, yaw, pitch, ...rest } = nextState;
+      const { x, y, z, yaw, pitch, vy, ...rest } = nextState;
       Object.assign(current.state, rest);
     }
     if (nextState.health < previousHealth) sounds.playPlayerHit();

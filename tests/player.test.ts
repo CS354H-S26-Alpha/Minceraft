@@ -84,6 +84,34 @@ describe("Player", () => {
     expect(a.state.z).toBeCloseTo(b.state.z);
   });
 
+  it("applies external force through shared movement physics", () => {
+    const player = P();
+
+    player.applyForce({ x: 6, y: 0, z: 0 });
+    player.step({ ...I(0, 0), dtSeconds: 0.1 });
+    const firstX = player.state.x;
+
+    player.step({ ...I(0, 0), dtSeconds: 0.1 });
+    const secondDelta = player.state.x - firstX;
+
+    expect(firstX).toBeGreaterThan(0.3);
+    expect(secondDelta).toBeGreaterThan(0.1);
+    expect(secondDelta).toBeLessThan(firstX);
+  });
+
+  it("clears all applied force components", () => {
+    const player = P();
+
+    player.applyForce({ x: 6, y: 4, z: 2 });
+    player.clearAppliedForces();
+    player.step({ ...I(0, 0), dtSeconds: 0.1 });
+
+    expect(player.state.x).toBeCloseTo(0);
+    expect(player.state.y).toBeCloseTo(0);
+    expect(player.state.z).toBeCloseTo(0);
+    expect(player.state.vy).toBeCloseTo(0);
+  });
+
   it("adds items into matching stacks before using empty slots", () => {
     const player = P();
     player.state.inventory = createEmptyInventory();

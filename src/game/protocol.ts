@@ -1,4 +1,5 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
+import type { ForceVector } from "./forces";
 import type { PlacedObject, PlacedObjectType } from "./object-placement";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
@@ -37,6 +38,12 @@ export interface ReconcilePacket {
 export interface InventoryUiPacket {
   type: "inventoryUi";
   ui: InventoryUiState;
+}
+
+/** Server-authoritative force impulse for the receiving entity. */
+export interface ApplyForcePacket {
+  type: "applyForce";
+  force: ForceVector;
 }
 
 /** A block mutation request sent by the client. */
@@ -89,6 +96,7 @@ export type ServerPacket =
   | SelfStatePacket
   | ReconcilePacket
   | InventoryUiPacket
+  | ApplyForcePacket
   | WorldStatePacket
   | BlockAckPacket
   | BlockChangesPacket
